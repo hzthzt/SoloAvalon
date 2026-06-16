@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": false,
+    "outDir": ".test-dist"
+  },
+  "include": [
+    "src/flowReview.ts",
+    "src/flowReview.test.ts",
+    "src/App.test.ts",
+    "src/node-test.d.ts"
+  ]
+}

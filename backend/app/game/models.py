@@ -1,0 +1,82 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+
+
+class Role(str, Enum):
+    MERLIN = "merlin"
+    ASSASSIN = "assassin"
+    MINION = "minion"
+    LOYAL_SERVANT = "loyal_servant"
+    UNKNOWN_EVIL = "unknown_evil"
+
+
+class Faction(str, Enum):
+    GOOD = "good"
+    EVIL = "evil"
+
+
+class Phase(str, Enum):
+    TEAM_PROPOSAL = "team_proposal"
+    SPEECH = "speech"
+    VOTING = "voting"
+    QUEST = "quest"
+    ASSASSINATION = "assassination"
+    COMPLETE = "complete"
+
+
+class Vote(str, Enum):
+    APPROVE = "approve"
+    REJECT = "reject"
+
+
+class MissionAction(str, Enum):
+    SUCCESS = "success"
+    FAIL = "fail"
+
+
+@dataclass(frozen=True)
+class Player:
+    id: str
+    seat_index: int
+    name: str
+    is_human: bool
+    role: Role
+    faction: Faction
+    llm_profile_id: str | None = None
+
+
+@dataclass(frozen=True)
+class MissionConfig:
+    round_number: int
+    team_size: int
+    fail_cards_required: int
+
+
+@dataclass(frozen=True)
+class GameState:
+    players: tuple[Player, ...]
+    missions: tuple[MissionConfig, ...]
+    current_round: int = 1
+    leader_index: int = 0
+    phase: Phase = Phase.TEAM_PROPOSAL
+    proposed_team: tuple[str, ...] = ()
+    speech_order: tuple[str, ...] = ()
+    speeches: dict[str, str] = field(default_factory=dict)
+    votes: dict[str, Vote] = field(default_factory=dict)
+    quest_actions: dict[str, MissionAction] = field(default_factory=dict)
+    quest_results: tuple[bool, ...] = ()
+    failed_team_votes: int = 0
+    forced_team: bool = False
+    winner: Faction | None = None
+    assassination_target_id: str | None = None
+
+
+@dataclass(frozen=True)
+class PrivateView:
+    viewer_player_id: str
+    players: tuple[Player, ...]
+    visible_roles: dict[str, Role | None]
+    known_evil_player_ids: list[str]
+

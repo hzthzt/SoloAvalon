@@ -1,0 +1,1069 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  Bot,
+  Check,
+  Download,
+  History,
+  MessageSquare,
+  Pencil,
+  Play,
+  RefreshCw,
+  Save,
+  Settings,
+  Shield,
+  Swords,
+  Trash2,
+  Users,
+  X
+} from "lucide-react";
+import {
+  createGame,
+  createProfile,
+  deleteGame,
+  deleteProfile,
+  exportGame,
+  GameEvent,
+  GameState,
+  GameSummary,
+  getGame,
+  listGameEvents,
+  listGames,
+  listProfiles,
+  LlmProfile,
+  LlmProfileInput,
+  submitAction,
+  submitHumanAiAction,
+  testProfile,
+  updateProfile
+} from "./api";
+import { buildFlowReview, eventsForFlowReview, feedItemsForDisplay } from "./flowReview";
+import type { FlowReview, InformationFeedItem, ReviewRound } from "./flowReview";
+
+type Tab = "game" | "profiles" | "logs";
+
+const missionSizes = [2, 3, 2, 3, 3];
+
+const emptyProfile: LlmProfileInput = {
+  id: "",
+  name: "",
+  base_url: "https://api.example.com/v1",
+  api_key: "",
+  model: "",
+  temperature: 0.7,
+  timeout: 30
+};
+
+export function App() {
+  const [tab, setTab] = useState<Tab>("game");
+  const [game, setGame] = useState<GameState | null>(null);
+  const [profiles, setProfiles] = useState<LlmProfile[]>([]);
+  const [games, setGames] = useState<GameSummary[]>([]);
+  const [aiNames, setAiNames] = useState(["AI 1", "AI 2", "AI 3", "AI 4"]);
+  const [defaultProfileId, setDefaultProfileId] = useState("");
+  const [aiProfileOverrides, setAiProfileOverrides] = useState(["", "", "", ""]);
+  const [autoPlayHuman, setAutoPlayHuman] = useState(false);
+  const [selectedTeam, setSelectedTeam] = useState<string[]>([]);
+  const [activeGameEvents, setActiveGameEvents] = useState<GameEvent[]>([]);
+  const [speech, setSpeech] = useState("");
+  const [assassinationTarget, setAssassinationTarget] = useState("");
+  const [profileForm, setProfileForm] = useState<LlmProfileInput>(emptyProfile);
+  const [profileTestResults, setProfileTestResults] = useState<Record<string, string>>({});
+  const [editingProfileId, setEditingProfileId] = useState("");
+  const [selectedLogGameId, setSelectedLogGameId] = useState("");
+  const [selectedLogPlayerNames, setSelectedLogPlayerNames] = useState<Record<string, string>>({});
+  const [eventLog, setEventLog] = useState<GameEvent[]>([]);
+  const [exportedLog, setExportedLog] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [autoPlaying, setAutoPlaying] = useState(false);
+
+  const requiredTeamSize = game ? missionSizes[game.current_round - 1] : 2;
+  const humanOnQuest = Boolean(game?.proposed_team.includes(game.human_player_id));
+  const canSaveProfile = Boolean(
+    profileForm.id.trim() &&
+      profileForm.name.trim() &&
+      profileForm.base_url.trim() &&
+      profileForm.model.trim() &&
+      (editingProfileId || profileForm.api_key.trim())
+  );
+  const selectedLogReview = useMemo(() => {
+    const names = new Map(Object.entries(selectedLogPlayerNames));
+    return buildFlowReview(eventLog, names);
+  }, [eventLog, selectedLogPlayerNames]);
+
+  useEffect(() => {
+    void refreshLists();
+  }, []);
+
+  useEffect(() => {
+    if (!game) {
+      return;
+    }
+    const current = selectedTeam.filter((playerId) =>
+      game.players.some((player) => player.id === playerId)
+    );
+    if (current.length === 0) {
+      setSelectedTeam([game.human_player_id]);
+    }
+  }, [game?.id, game?.current_round]);
+
+  async function refreshLists() {
+    await run(async () => {
+      const [profileList, gameList] = await Promise.all([listProfiles(), listGames()]);
+      setProfiles(profileList);
+      setGames(gameList);
+    });
+  }
+
+  async function applyActiveGame(updated: GameState, resetEvents = false) {
+    const stateEvents = updated.events ?? [];
+    setGame(updated);
+    setActiveGameEvents((current) =>
+      resetEvents ? stateEvents : eventsForFlowReview(stateEvents, current)
+    );
+    try {
+      const fetchedEvents = await listGameEvents(updated.id);
+      const freshestEvents = eventsForFlowReview(stateEvents, fetchedEvents);
+      setActiveGameEvents((current) =>
+        resetEvents ? freshestEvents : eventsForFlowReview(freshestEvents, current)
+      );
+    } catch {
+      setActiveGameEvents((current) =>
+        resetEvents ? stateEvents : eventsForFlowReview(stateEvents, current)
+      );
+    }
+  }
+
+  async function startGame() {
+    await run(async () => {
+      let created = await createGame({
+        ai_names: aiNames,
+        default_llm_profile_id: defaultProfileId || undefined,
+        ai_profile_overrides: Object.fromEntries(
+          aiProfileOverrides.map((profileId, index) => [
+            `player_${index + 2}`,
+            profileId || null
+          ])
+        )
+      });
+      await applyActiveGame(created, true);
+      if (autoPlayHuman) {
+        created = await driveHumanWithAi(created, true);
+      }
+      setSelectedTeam([created.human_player_id]);
+      setSpeech("");
+      setAssassinationTarget("");
+      setTab("game");
+      await refreshLists();
+    });
+  }
+
+  async function refreshGame() {
+    if (!game) {
+      return;
+    }
+    await run(async () => {
+      const updated = await getGame(game.id);
+      await applyActiveGame(updated);
+    });
+  }
+
+  async function sendAction(payload: Record<string, unknown>) {
+    if (!game) {
+      return;
+    }
+    await run(async () => {
+      const updated = await submitAction(game.id, payload);
+      await applyActiveGame(updated);
+      if (payload.action_type === "speak") {
+        setSpeech("");
+      }
+      await refreshLists();
+    });
+  }
+
+  async function sendHumanAiAction(repeat: boolean) {
+    if (!game) {
+      return;
+    }
+    await run(async () => {
+      const updated = await driveHumanWithAi(game, repeat);
+      await applyActiveGame(updated);
+      setSelectedTeam([updated.human_player_id]);
+      setSpeech("");
+      setAssassinationTarget("");
+      await refreshLists();
+    });
+  }
+
+  async function driveHumanWithAi(start: GameState, repeat: boolean) {
+    setAutoPlaying(true);
+    try {
+      let current = start;
+      const maxSteps = repeat ? 80 : 1;
+      for (let step = 0; step < maxSteps; step += 1) {
+        if (!current.next_human_action || current.phase === "complete") {
+          return current;
+        }
+        current = await submitHumanAiAction(current.id);
+        await applyActiveGame(current);
+        setSelectedTeam([current.human_player_id]);
+        if (repeat) {
+          await pauseForFlow();
+        }
+      }
+      if (current.next_human_action && current.phase !== "complete") {
+        setNotice("AI 接管已暂停：达到安全步数");
+      }
+      return current;
+    } finally {
+      setAutoPlaying(false);
+    }
+  }
+
+  async function saveProfile() {
+    await run(async () => {
+      if (editingProfileId) {
+        const { id: _id, ...payload } = profileForm;
+        await updateProfile(editingProfileId, payload);
+      } else {
+        await createProfile(profileForm);
+      }
+      resetProfileForm();
+      await refreshLists();
+    });
+  }
+
+  async function removeProfile(profileId: string) {
+    await run(async () => {
+      await deleteProfile(profileId);
+      if (editingProfileId === profileId) {
+        resetProfileForm();
+      }
+      await refreshLists();
+    });
+  }
+
+  function editProfile(profile: LlmProfile) {
+    setEditingProfileId(profile.id);
+    setProfileForm({
+      id: profile.id,
+      name: profile.name,
+      base_url: profile.base_url,
+      api_key: "",
+      model: profile.model,
+      temperature: profile.temperature,
+      timeout: profile.timeout
+    });
+  }
+
+  function resetProfileForm() {
+    setEditingProfileId("");
+    setProfileForm({ ...emptyProfile });
+  }
+
+  async function checkProfile(profileId: string) {
+    await run(async () => {
+      const result = await testProfile(profileId);
+      const resultText = JSON.stringify(result);
+      setProfileTestResults((current) => ({ ...current, [profileId]: resultText }));
+      setNotice(resultText);
+    });
+  }
+
+  async function removeGame(gameId: string) {
+    await run(async () => {
+      await deleteGame(gameId);
+      if (game?.id === gameId) {
+        setGame(null);
+        setActiveGameEvents([]);
+      }
+      if (selectedLogGameId === gameId) {
+        setSelectedLogGameId("");
+        setSelectedLogPlayerNames({});
+        setEventLog([]);
+        setExportedLog("");
+      }
+      await refreshLists();
+    });
+  }
+
+  async function showExport(gameId: string) {
+    await run(async () => {
+      const payload = await exportGame(gameId, true);
+      setSelectedLogGameId(gameId);
+      setExportedLog(JSON.stringify(payload, null, 2));
+    });
+  }
+
+  async function showEvents(gameId: string) {
+    await run(async () => {
+      const [events, logGame] = await Promise.all([listGameEvents(gameId, true), getGame(gameId)]);
+      setSelectedLogGameId(gameId);
+      setSelectedLogPlayerNames(
+        Object.fromEntries(logGame.players.map((player) => [player.id, player.name]))
+      );
+      setEventLog(events);
+    });
+  }
+
+  async function run(work: () => Promise<void>) {
+    setBusy(true);
+    setNotice("");
+    try {
+      await work();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const activeAction = game?.next_human_action;
+
+  return (
+    <main className="app-shell">
+      <header className="topbar">
+        <div>
+          <h1>SoloAvalon</h1>
+          <p>{game ? phaseLabel(game.phase) : "Local 5-player Avalon"}</p>
+        </div>
+        <nav className="tabs" aria-label="Main views">
+          <button className={tab === "game" ? "active" : ""} onClick={() => setTab("game")}>
+            <Swords size={18} /> 对局
+          </button>
+          <button
+            className={tab === "profiles" ? "active" : ""}
+            onClick={() => setTab("profiles")}
+          >
+            <Settings size={18} /> 模型
+          </button>
+          <button className={tab === "logs" ? "active" : ""} onClick={() => setTab("logs")}>
+            <History size={18} /> 日志
+          </button>
+        </nav>
+      </header>
+
+      {notice && <div className="notice">{notice}</div>}
+
+      {tab === "game" && (
+        <section className="game-layout">
+          <section className="panel setup-panel">
+            <div className="section-title">
+              <Play size={18} />
+              <h2>开局</h2>
+            </div>
+            <label>
+              默认模型
+              <select
+                value={defaultProfileId}
+                onChange={(event) => setDefaultProfileId(event.target.value)}
+              >
+                <option value="">Fallback</option>
+                {profiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="ai-name-grid">
+              {aiNames.map((name, index) => (
+                <div className="ai-config" key={index}>
+                  <label>
+                    AI {index + 1}
+                    <input
+                      value={name}
+                      onChange={(event) => {
+                        const next = [...aiNames];
+                        next[index] = event.target.value;
+                        setAiNames(next);
+                      }}
+                    />
+                  </label>
+                  <label>
+                    覆盖模型
+                    <select
+                      value={aiProfileOverrides[index]}
+                      onChange={(event) => {
+                        const next = [...aiProfileOverrides];
+                        next[index] = event.target.value;
+                        setAiProfileOverrides(next);
+                      }}
+                    >
+                      <option value="">默认</option>
+                      {profiles.map((profile) => (
+                        <option key={profile.id} value={profile.id}>
+                          {profile.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              ))}
+            </div>
+            <label className="switch-row">
+              <input
+                type="checkbox"
+                checked={autoPlayHuman}
+                onChange={(event) => setAutoPlayHuman(event.target.checked)}
+              />
+              <span>AI 接管真人</span>
+            </label>
+            <button className="primary" onClick={startGame} disabled={busy}>
+              <Play size={18} /> {autoPlayHuman ? "新对局并代打" : "新对局"}
+            </button>
+          </section>
+
+          {game && (
+            <>
+              <GameDesk
+                game={game}
+                requiredTeamSize={requiredTeamSize}
+                events={activeGameEvents}
+              />
+              <section className="panel action-panel">
+                <div className="section-title">
+                  <Shield size={18} />
+                  <h2>行动</h2>
+                  <button className="icon-button" onClick={refreshGame} title="刷新">
+                    <RefreshCw size={18} />
+                  </button>
+                </div>
+                <StatusStrip game={game} />
+                {activeAction && (
+                  <div className="button-row">
+                    <button disabled={busy || autoPlaying} onClick={() => sendHumanAiAction(false)}>
+                      <Bot size={18} /> AI 代打一步
+                    </button>
+                    <button
+                      className="primary"
+                      disabled={busy || autoPlaying}
+                      onClick={() => sendHumanAiAction(true)}
+                    >
+                      <Bot size={18} /> 连续代打
+                    </button>
+                  </div>
+                )}
+                {activeAction === "propose_team" && (
+                  <div className="action-block">
+                    <div className="mini-heading">队伍 {selectedTeam.length}/{requiredTeamSize}</div>
+                    <div className="check-grid">
+                      {game.players.map((player) => {
+                        const checked = selectedTeam.includes(player.id);
+                        const disabled = !checked && selectedTeam.length >= requiredTeamSize;
+                        return (
+                          <label key={player.id} className={checked ? "checked" : ""}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={disabled}
+                              onChange={() => {
+                                setSelectedTeam((current) =>
+                                  checked
+                                    ? current.filter((id) => id !== player.id)
+                                    : [...current, player.id]
+                                );
+                              }}
+                            />
+                            {player.name}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <button
+                      className="primary"
+                      disabled={selectedTeam.length !== requiredTeamSize || busy}
+                      onClick={() =>
+                        sendAction({ action_type: "propose_team", team: selectedTeam })
+                      }
+                    >
+                      <Users size={18} /> 提交队伍
+                    </button>
+                  </div>
+                )}
+
+                {activeAction === "speak" && (
+                  <div className="action-block">
+                    <textarea
+                      value={speech}
+                      onChange={(event) => setSpeech(event.target.value)}
+                      rows={5}
+                    />
+                    <button
+                      className="primary"
+                      disabled={!speech.trim() || busy}
+                      onClick={() => sendAction({ action_type: "speak", message: speech })}
+                    >
+                      <MessageSquare size={18} /> 发言
+                    </button>
+                  </div>
+                )}
+
+                {activeAction === "vote" && (
+                  <div className="button-row">
+                    <button
+                      className="primary"
+                      disabled={busy}
+                      onClick={() => sendAction({ action_type: "vote", vote: "approve" })}
+                    >
+                      <Check size={18} /> 赞成
+                    </button>
+                    <button
+                      className="danger"
+                      disabled={busy}
+                      onClick={() => sendAction({ action_type: "vote", vote: "reject" })}
+                    >
+                      <X size={18} /> 反对
+                    </button>
+                  </div>
+                )}
+
+                {activeAction === "mission_action" && humanOnQuest && (
+                  <div className="button-row">
+                    <button
+                      className="primary"
+                      disabled={busy}
+                      onClick={() =>
+                        sendAction({ action_type: "mission_action", mission_action: "success" })
+                      }
+                    >
+                      <Check size={18} /> 成功
+                    </button>
+                    {game.human_faction === "evil" && (
+                      <button
+                        className="danger"
+                        disabled={busy}
+                        onClick={() =>
+                          sendAction({ action_type: "mission_action", mission_action: "fail" })
+                        }
+                      >
+                        <X size={18} /> 失败
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {activeAction === "assassinate" && (
+                  <div className="action-block">
+                    <select
+                      value={assassinationTarget}
+                      onChange={(event) => setAssassinationTarget(event.target.value)}
+                    >
+                      <option value="">选择目标</option>
+                      {game.players
+                        .filter((player) => player.id !== game.human_player_id)
+                        .map((player) => (
+                          <option key={player.id} value={player.id}>
+                            {player.name}
+                          </option>
+                        ))}
+                    </select>
+                    <button
+                      className="danger"
+                      disabled={!assassinationTarget || busy}
+                      onClick={() =>
+                        sendAction({
+                          action_type: "assassinate",
+                          target_player_id: assassinationTarget
+                        })
+                      }
+                    >
+                      <Swords size={18} /> 刺杀
+                    </button>
+                  </div>
+                )}
+
+                {!activeAction && <div className="empty-state">等待 AI 或对局已结算</div>}
+              </section>
+            </>
+          )}
+        </section>
+      )}
+
+      {tab === "profiles" && (
+        <section className="two-column">
+          <section className="panel">
+            <div className="section-title">
+              <Save size={18} />
+              <h2>{editingProfileId ? "编辑模型" : "模型配置"}</h2>
+            </div>
+            <ProfileForm
+              form={profileForm}
+              setForm={setProfileForm}
+              isEditing={Boolean(editingProfileId)}
+            />
+            <div className="button-row">
+              <button className="primary" onClick={saveProfile} disabled={busy || !canSaveProfile}>
+                <Save size={18} /> 保存
+              </button>
+              {editingProfileId && (
+                <button onClick={resetProfileForm} disabled={busy}>
+                  <X size={18} /> 取消
+                </button>
+              )}
+            </div>
+          </section>
+          <section className="list-panel">
+            {profiles.map((profile) => (
+              <article className="profile-item" key={profile.id}>
+                <div>
+                  <h3>{profile.name}</h3>
+                  <p>{profile.model}</p>
+                  <span>{profile.api_key_masked}</span>
+                  {profileTestResults[profile.id] && (
+                    <code className="test-result">{profileTestResults[profile.id]}</code>
+                  )}
+                </div>
+                <div className="item-actions">
+                  <button onClick={() => editProfile(profile)} title="编辑">
+                    <Pencil size={17} />
+                  </button>
+                  <button onClick={() => checkProfile(profile.id)} title="测试">
+                    <Check size={17} />
+                  </button>
+                  <button onClick={() => removeProfile(profile.id)} title="删除">
+                    <Trash2 size={17} />
+                  </button>
+                </div>
+              </article>
+            ))}
+          </section>
+        </section>
+      )}
+
+      {tab === "logs" && (
+        <section className="two-column">
+          <section className="list-panel">
+            {games.map((summary) => (
+              <article className="profile-item" key={summary.id}>
+                <div>
+                  <h3>{summary.id}</h3>
+                  <p>
+                    {phaseLabel(summary.current_phase)} · {summary.status}
+                  </p>
+                  <span>{summary.winner ? `winner: ${summary.winner}` : "active log"}</span>
+                </div>
+                <div className="item-actions">
+                  <button onClick={() => showEvents(summary.id)} title="复盘">
+                    <History size={17} />
+                  </button>
+                  <button onClick={() => showExport(summary.id)} title="导出">
+                    <Download size={17} />
+                  </button>
+                  <button onClick={() => removeGame(summary.id)} title="删除">
+                    <Trash2 size={17} />
+                  </button>
+                </div>
+              </article>
+            ))}
+          </section>
+          <section className="log-detail-stack">
+            <ReplayDetail review={selectedLogReview} selectedGameId={selectedLogGameId} />
+            <section className="panel event-panel">
+              <div className="section-title">
+                <History size={18} />
+                <h2>事件流</h2>
+                {selectedLogGameId && <span className="subtle-id">{selectedLogGameId}</span>}
+              </div>
+              <div className="event-list">
+                {eventLog.length === 0 && <div className="empty-state">暂无事件</div>}
+                {eventLog.map((event) => (
+                  <article className="event-item" key={event.id}>
+                    <div className="event-meta">
+                      <span>#{event.event_index}</span>
+                      <strong>{eventLabel(event.event_type)}</strong>
+                      <time>{formatDateTime(event.created_at)}</time>
+                    </div>
+                    <pre>{JSON.stringify(eventPayloadForLog(event), null, 2)}</pre>
+                  </article>
+                ))}
+              </div>
+            </section>
+            <section className="panel export-panel">
+              <div className="section-title">
+                <Download size={18} />
+                <h2>导出</h2>
+              </div>
+              <pre>{exportedLog || "{}"}</pre>
+            </section>
+          </section>
+        </section>
+      )}
+    </main>
+  );
+}
+
+function pauseForFlow() {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, 280));
+}
+
+function GameDesk({
+  game,
+  requiredTeamSize,
+  events
+}: {
+  game: GameState;
+  requiredTeamSize: number;
+  events: GameEvent[];
+}) {
+  const leaderName = playerName(game, game.leader_player_id);
+  return (
+    <section className="desk">
+      <div className="desk-header">
+        <div>
+          <h2>第 {game.current_round} 轮任务</h2>
+          <p>
+            队长 {leaderName} · 需要 {requiredTeamSize} 人
+          </p>
+        </div>
+        <div className={`winner-badge ${game.winner ?? ""}`}>
+          {game.winner ? `${game.winner} wins` : phaseLabel(game.phase)}
+        </div>
+      </div>
+      <div className="quest-track">
+        {[0, 1, 2, 3, 4].map((index) => {
+          const result = game.quest_results[index];
+          return (
+            <span key={index} className={result ?? "pending"}>
+              {index + 1}
+            </span>
+          );
+        })}
+      </div>
+      <div className="seat-grid">
+        {game.players.map((player) => (
+          <article
+            className={[
+              "seat-card",
+              player.is_human ? "human" : "",
+              game.leader_player_id === player.id ? "leader" : "",
+              game.proposed_team.includes(player.id) ? "on-team" : ""
+            ].join(" ")}
+            key={player.id}
+          >
+            <div className="seat-index">{player.seat_index + 1}</div>
+            <h3>{player.name}</h3>
+            <p>{player.visible_role ? roleLabel(player.visible_role) : "未知身份"}</p>
+            <span>{player.is_human ? "真人" : "AI"}</span>
+          </article>
+        ))}
+      </div>
+      <GameFlow game={game} events={events} />
+    </section>
+  );
+}
+
+function GameFlow({ game, events }: { game: GameState; events: GameEvent[] }) {
+  const playerNames = useMemo(
+    () => new Map(game.players.map((player) => [player.id, player.name])),
+    [game.players]
+  );
+  const review = useMemo(() => buildFlowReview(events, playerNames), [events, playerNames]);
+  return (
+    <section className="game-flow" aria-live="polite">
+      <div className="flow-header">
+        <History size={16} />
+        <h3>信息流</h3>
+      </div>
+      <InformationFlowPanel review={review} />
+    </section>
+  );
+}
+
+function InformationFlowPanel({ review }: { review: FlowReview }) {
+  const items = useMemo(() => feedItemsForDisplay(review), [review]);
+  return (
+    <section className="information-flow-panel">
+      <div className="information-feed-list">
+        {items.length === 0 && <div className="empty-state">暂无信息</div>}
+        {items.map((item) => (
+          <InformationFeedItemView key={item.id} item={item} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function InformationFeedItemView({ item }: { item: InformationFeedItem }) {
+  if (item.type === "round") {
+    return <RoundSummary round={item.round} />;
+  }
+  const row = item.broadcast;
+  return (
+    <article className="broadcast-item">
+      <div className="flow-meta">
+        <span>#{row.eventIndex}</span>
+        <strong>第 {row.roundNumber} 轮</strong>
+        <time>{formatDateTime(row.createdAt)}</time>
+      </div>
+      <p>{row.text}</p>
+    </article>
+  );
+}
+
+function RoundSummary({ round }: { round: ReviewRound }) {
+  return (
+    <article className="round-card">
+      <div className="round-title">
+        <strong>第 {round.roundNumber} 轮</strong>
+        {round.questResult && <span>{questResultLabel(round.questResult.result)}</span>}
+      </div>
+      <div className="round-grid">
+        <div>
+          <h4>车队</h4>
+          {round.proposals.length === 0 && <p className="muted">尚未提车队</p>}
+          {round.proposals.map((proposal) => (
+            <p key={proposal.eventIndex}>
+              {proposal.leader}：{proposal.members.join("、")}
+            </p>
+          ))}
+        </div>
+        <div>
+          <h4>投票</h4>
+          {!round.vote && <p className="muted">尚未公开票型</p>}
+          {round.vote && (
+            <>
+              <p>赞成：{round.vote.approvals.join("、") || "无"}</p>
+              <p>反对：{round.vote.rejections.join("、") || "无"}</p>
+              <p>{round.vote.approved ? "车队通过" : "车队未通过"}</p>
+            </>
+          )}
+        </div>
+        <div>
+          <h4>发言</h4>
+          {round.speeches.length === 0 && <p className="muted">尚无发言</p>}
+          {round.speeches.map((speech) => (
+            <p key={speech.eventIndex}>
+              {speech.player}：{speech.message}
+            </p>
+          ))}
+        </div>
+        <div>
+          <h4>结算</h4>
+          {!round.questResult && !round.assassination && <p className="muted">尚未结算</p>}
+          {round.questResult && (
+            <p>
+              任务{questResultLabel(round.questResult.result)} · {round.questResult.successCount} 成功 /{" "}
+              {round.questResult.failCount} 失败
+            </p>
+          )}
+          {round.questActions.length > 0 && (
+            <>
+              <p>任务行动：</p>
+              {round.questActions.map((action) => (
+                <p key={action.eventIndex}>
+                  {action.player}：{missionActionLabel(action.action)}
+                </p>
+              ))}
+            </>
+          )}
+          {round.assassination && (
+            <p>
+              {round.assassination.assassin} 刺杀 {round.assassination.target} ·{" "}
+              {winnerLabel(round.assassination.winner)}
+            </p>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function ReplayDetail({
+  review,
+  selectedGameId
+}: {
+  review: FlowReview;
+  selectedGameId: string;
+}) {
+  return (
+    <section className="panel replay-panel">
+      <div className="section-title">
+        <History size={18} />
+        <h2>完整复盘</h2>
+        {selectedGameId && <span className="subtle-id">{selectedGameId}</span>}
+      </div>
+      <div className="replay-rounds">
+        {!selectedGameId && <div className="empty-state">选择一局查看复盘</div>}
+        {selectedGameId && review.rounds.length === 0 && (
+          <div className="empty-state">暂无公开复盘</div>
+        )}
+        {review.rounds.map((round) => (
+          <RoundSummary key={round.roundNumber} round={round} />
+        ))}
+      </div>
+      {review.broadcasts.length > 0 && (
+        <div className="replay-broadcasts">
+          <div className="flow-subheader">广播记录</div>
+          {review.broadcasts.map((row) => (
+            <article className="broadcast-item" key={row.id}>
+              <div className="flow-meta">
+                <span>#{row.eventIndex}</span>
+                <strong>第 {row.roundNumber} 轮</strong>
+                <time>{formatDateTime(row.createdAt)}</time>
+              </div>
+              <p>{row.text}</p>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function StatusStrip({ game }: { game: GameState }) {
+  return (
+    <div className="status-strip">
+      <span>{game.quest_results.filter((result) => result === "success").length} 成功</span>
+      <span>{game.quest_results.filter((result) => result === "fail").length} 失败</span>
+      <span>{game.votes_cast_count}/5 投票</span>
+      <span>{game.failed_team_votes} 轮拒绝</span>
+    </div>
+  );
+}
+
+function ProfileForm({
+  form,
+  setForm,
+  isEditing
+}: {
+  form: LlmProfileInput;
+  setForm: (form: LlmProfileInput) => void;
+  isEditing: boolean;
+}) {
+  const update = (patch: Partial<LlmProfileInput>) => setForm({ ...form, ...patch });
+  return (
+    <div className="profile-form">
+      <label>
+        ID
+        <input
+          value={form.id}
+          disabled={isEditing}
+          onChange={(event) => update({ id: event.target.value })}
+        />
+      </label>
+      <label>
+        名称
+        <input value={form.name} onChange={(event) => update({ name: event.target.value })} />
+      </label>
+      <label>
+        Base URL
+        <input
+          value={form.base_url}
+          onChange={(event) => update({ base_url: event.target.value })}
+        />
+      </label>
+      <label>
+        API Key
+        <input
+          type="password"
+          value={form.api_key}
+          onChange={(event) => update({ api_key: event.target.value })}
+        />
+      </label>
+      <label>
+        Model
+        <input value={form.model} onChange={(event) => update({ model: event.target.value })} />
+      </label>
+      <label>
+        Temperature
+        <input
+          type="number"
+          min="0"
+          max="2"
+          step="0.1"
+          value={form.temperature}
+          onChange={(event) => update({ temperature: Number(event.target.value) })}
+        />
+      </label>
+      <label>
+        Timeout
+        <input
+          type="number"
+          min="1"
+          value={form.timeout}
+          onChange={(event) => update({ timeout: Number(event.target.value) })}
+        />
+      </label>
+    </div>
+  );
+}
+
+function playerName(game: GameState, playerId: string) {
+  return game.players.find((player) => player.id === playerId)?.name ?? playerId;
+}
+
+function questResultLabel(result: string) {
+  const labels: Record<string, string> = {
+    success: "成功",
+    fail: "失败"
+  };
+  return labels[result] ?? result;
+}
+
+function winnerLabel(winner: string | null) {
+  const labels: Record<string, string> = {
+    good: "好人胜利",
+    evil: "恶方胜利"
+  };
+  return winner ? labels[winner] ?? `${winner} 胜利` : "胜负未定";
+}
+
+function roleLabel(role: string) {
+  const labels: Record<string, string> = {
+    merlin: "梅林",
+    assassin: "刺客",
+    minion: "爪牙",
+    loyal_servant: "忠臣",
+    unknown_evil: "恶方"
+  };
+  return labels[role] ?? role;
+}
+
+function phaseLabel(phase: string) {
+  const labels: Record<string, string> = {
+    team_proposal: "组队",
+    speech: "发言",
+    voting: "投票",
+    quest: "任务",
+    assassination: "刺杀",
+    complete: "结束"
+  };
+  return labels[phase] ?? phase;
+}
+
+function eventLabel(eventType: string) {
+  const labels: Record<string, string> = {
+    game_created: "开局",
+    roles_assigned: "身份分配",
+    private_view_recorded: "私有视图",
+    team_proposed: "组队",
+    speech: "发言",
+    vote_cast: "投票",
+    vote_result: "投票公开",
+    quest_action_submitted: "任务行动",
+    quest_result: "任务结算",
+    assassination: "刺杀",
+    ai_decision: "AI 决策"
+  };
+  return labels[eventType] ?? eventType;
+}
+
+function eventPayloadForLog(event: GameEvent) {
+  if (event.event_type !== "quest_action_submitted") {
+    return event.public_payload;
+  }
+  return {
+    ...event.public_payload,
+    mission_action: event.private_payload?.mission_action
+  };
+}
+
+function missionActionLabel(action: string) {
+  return questResultLabel(action);
+}
+
+function formatDateTime(value: string) {
+  return new Date(value).toLocaleString();
+}

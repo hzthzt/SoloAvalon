@@ -1,0 +1,62 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+
+def mask_api_key(api_key: str) -> str:
+    if not api_key:
+        return ""
+    if len(api_key) <= 8:
+        return "*" * len(api_key)
+    return f"{api_key[:4]}...{api_key[-4:]}"
+
+
+@dataclass(frozen=True)
+class LlmProfileInput:
+    name: str
+    base_url: str
+    api_key: str
+    model: str
+    temperature: float
+    timeout: float
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("profile name is required")
+        if not self.base_url.strip():
+            raise ValueError("base_url is required")
+        if not self.api_key:
+            raise ValueError("api_key is required")
+        if not self.model.strip():
+            raise ValueError("model is required")
+        if self.temperature < 0 or self.temperature > 2:
+            raise ValueError("temperature must be between 0 and 2")
+        if self.timeout <= 0:
+            raise ValueError("timeout must be positive")
+
+
+@dataclass(frozen=True)
+class LlmProfile:
+    id: str
+    name: str
+    base_url: str
+    api_key: str
+    model: str
+    temperature: float
+    timeout: float
+    created_at: str
+    updated_at: str
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "base_url": self.base_url,
+            "api_key_masked": mask_api_key(self.api_key),
+            "model": self.model,
+            "temperature": self.temperature,
+            "timeout": self.timeout,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
