@@ -31,9 +31,9 @@ class AiDecisionRepositoryTests(unittest.TestCase):
                         phase=Phase.SPEECH.value,
                         decision_type="speech",
                         input_summary="phase=speech;round=1;viewer=player_2;events=0",
-                        strategy_summary="fallback speech",
+                        strategy_summary="model speech",
                         output={"public_message": "I support this team."},
-                        model_name="fallback",
+                        model_name="test-model",
                         llm_profile_id=None,
                         prompt_template_name="speech",
                         prompt_template_version="prompt.v1",
@@ -44,7 +44,7 @@ class AiDecisionRepositoryTests(unittest.TestCase):
                         context_truncated=False,
                         output_raw=None,
                         output_parsed=None,
-                        validation_status="fallback",
+                        validation_status="valid",
                     )
                 )
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, TypeVar
 
 from backend.app.game.models import GameState, Phase
@@ -11,15 +11,16 @@ from backend.app.prompting.schemas import (
     mission_decision_from_output,
     parse_json_object,
     speech_decision_from_output,
+    speech_decision_from_text,
     team_decision_from_output,
     vote_decision_from_output,
+    vote_decision_from_text,
 )
 from backend.app.prompting.templates import PROMPT_TEMPLATE_VERSION, PromptBuilder
 
 from .context import ContextBuilder
 from .strategy import (
     AssassinationDecision,
-    FallbackStrategy,
     MissionActionDecision,
     SpeechDecision,
     TeamProposalDecision,
@@ -44,6 +45,41 @@ class AiTurnResult(Generic[DecisionT]):
     stable_prefix_hash: str
     context_summary: str
     context_truncated: bool
+    prompt_messages: list[dict[str, str]] = field(default_factory=list)
+
+
+class AiDecisionError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        error_type: str,
+        error_message: str,
+        input_summary: str,
+        output_raw: str | None,
+        output_parsed: dict[str, Any] | None,
+        prompt_template_name: str,
+        prompt_template_version: str,
+        context_builder_version: str,
+        stable_prefix_hash: str,
+        context_summary: str,
+        context_truncated: bool,
+        prompt_messages: list[dict[str, str]],
+    ):
+        super().__init__(error_message)
+        self.error_type = error_type
+        self.error_message = error_message
+        self.input_summary = input_summary
+        self.strategy_summary = f"AI 决策失败：{error_message}"
+        self.output_raw = output_raw
+        self.output_parsed = output_parsed
+        self.validation_status = "error"
+        self.prompt_template_name = prompt_template_name
+        self.prompt_template_version = prompt_template_version
+        self.context_builder_version = context_builder_version
+        self.stable_prefix_hash = stable_prefix_hash
+        self.context_summary = context_summary
+        self.context_truncated = context_truncated
+        self.prompt_messages = prompt_messages
 
 
 class AiPlayer:
@@ -52,12 +88,10 @@ class AiPlayer:
         provider: LlmProvider | Any | None = None,
         context_builder: ContextBuilder | None = None,
         prompt_builder: PromptBuilder | None = None,
-        fallback_strategy: FallbackStrategy | None = None,
     ):
         self._provider = provider or LlmProvider()
         self._context_builder = context_builder or ContextBuilder()
         self._prompt_builder = prompt_builder or PromptBuilder()
-        self._fallback = fallback_strategy or FallbackStrategy()
 
     def propose_team(
         self,
@@ -72,7 +106,7 @@ class AiPlayer:
             profile,
             Phase.TEAM_PROPOSAL,
             lambda output: team_decision_from_output(output, state),
-            lambda: self._fallback.propose_team(state, leader_player_id),
+            None,
             public_events=public_events,
         )
 
@@ -89,7 +123,7 @@ class AiPlayer:
             profile,
             Phase.SPEECH,
             speech_decision_from_output,
-            lambda: self._fallback.speak(state, player_id),
+            speech_decision_from_text,
             public_events=public_events,
         )
 
@@ -106,7 +140,7 @@ class AiPlayer:
             profile,
             Phase.VOTING,
             vote_decision_from_output,
-            lambda: self._fallback.vote(state, player_id),
+            vote_decision_from_text,
             public_events=public_events,
         )
 
@@ -123,7 +157,7 @@ class AiPlayer:
             profile,
             Phase.QUEST,
             lambda output: mission_decision_from_output(output, state, player_id),
-            lambda: self._fallback.mission_action(state, player_id),
+            None,
             public_events=public_events,
         )
 
@@ -140,7 +174,7 @@ class AiPlayer:
             profile,
             Phase.ASSASSINATION,
             lambda output: assassination_decision_from_output(output, state, assassin_player_id),
-            lambda: self._fallback.assassinate(state, assassin_player_id),
+            None,
             public_events=public_events,
         )
 
@@ -151,7 +185,7 @@ class AiPlayer:
         profile: LlmProfile,
         phase: Phase,
         parse_decision: Callable[[dict[str, Any]], DecisionT],
-        fallback: Callable[[], DecisionT],
+        parse_text_decision: Callable[[str], DecisionT] | None,
         public_events: list[dict[str, Any]] | None = None,
     ) -> AiTurnResult[DecisionT]:
         context = self._context_builder.build(state, player_id, phase, public_events=public_events)
@@ -160,12 +194,34 @@ class AiPlayer:
         output_parsed: dict[str, Any] | None = None
         try:
             output_raw = self._provider.chat_completion(profile, messages)
-            output_parsed = parse_json_object(output_raw)
-            decision = parse_decision(output_parsed)
+            if parse_text_decision is None:
+                output_parsed = parse_json_object(output_raw)
+                decision = parse_decision(output_parsed)
+            else:
+                try:
+                    output_parsed = parse_json_object(output_raw)
+                except Exception:
+                    output_parsed = None
+                    decision = parse_text_decision(output_raw)
+                else:
+                    decision = parse_decision(output_parsed)
             validation_status = "valid"
-        except Exception:
-            decision = fallback()
-            validation_status = "fallback"
+        except Exception as exc:
+            error_message = str(exc) or type(exc).__name__
+            raise AiDecisionError(
+                error_type=type(exc).__name__,
+                error_message=error_message,
+                input_summary=context.context_summary,
+                output_raw=output_raw,
+                output_parsed=output_parsed,
+                prompt_template_name=phase.value,
+                prompt_template_version=PROMPT_TEMPLATE_VERSION,
+                context_builder_version=context.context_builder_version,
+                stable_prefix_hash=context.stable_prefix_hash,
+                context_summary=context.context_summary,
+                context_truncated=context.context_truncated,
+                prompt_messages=messages,
+            ) from exc
         return AiTurnResult(
             decision=decision,
             input_summary=context.context_summary,
@@ -179,4 +235,5 @@ class AiPlayer:
             stable_prefix_hash=context.stable_prefix_hash,
             context_summary=context.context_summary,
             context_truncated=context.context_truncated,
+            prompt_messages=messages,
         )

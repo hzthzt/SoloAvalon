@@ -1,8 +1,11 @@
+import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
 
 from backend.app.api.games import GamesApi
+from backend.app.ai.player import AiPlayer
 from backend.app.services.game_service import GameService
 from backend.app.storage.database import connect_sqlite, initialize_database
 from backend.app.storage.event_store import EventStore
@@ -131,4 +134,39 @@ class GamesApiTests(unittest.TestCase):
 def _api(tmpdir):
     connection = connect_sqlite(":memory:")
     initialize_database(connection)
-    return GamesApi(GameService(connection))
+    return GamesApi(GameService(connection, ai_player=AiPlayer(provider=_DeterministicProvider())))
+
+
+class _DeterministicProvider:
+    def chat_completion(self, profile, messages):
+        text = "\n".join(message["content"] for message in messages)
+        if '"team"' in text:
+            return json.dumps(
+                {
+                    "team": _player_ids(text)[:2],
+                    "private_reason_summary": "测试模型选择合法车队。",
+                    "public_message": "我先给一个方便观察票型的车队。",
+                },
+                ensure_ascii=False,
+            )
+        if "当前阶段：发言" in text:
+            return "我先围绕当前车队观察大家的表态。"
+        if "当前阶段：投票" in text:
+            return "赞成，因为先推进这一轮更容易获得信息。"
+        if '"mission_action"' in text:
+            return json.dumps(
+                {
+                    "mission_action": "success",
+                    "private_reason_summary": "测试模型提交合法任务行动。",
+                },
+                ensure_ascii=False,
+            )
+        raise RuntimeError("unhandled test prompt")
+
+
+def _player_ids(text):
+    player_ids = []
+    for player_id in re.findall(r"player_\d+", text):
+        if player_id not in player_ids:
+            player_ids.append(player_id)
+    return player_ids

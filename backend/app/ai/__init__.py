@@ -1,5 +1,4 @@
 from .context import AiContext, ContextBuilder
-from .player import AiPlayer, AiTurnResult
-from .strategy import FallbackStrategy
+from .player import AiDecisionError, AiPlayer, AiTurnResult
 
-__all__ = ["AiContext", "AiPlayer", "AiTurnResult", "ContextBuilder", "FallbackStrategy"]
+__all__ = ["AiContext", "AiDecisionError", "AiPlayer", "AiTurnResult", "ContextBuilder"]

@@ -112,6 +112,14 @@ export function App() {
       const [profileList, gameList] = await Promise.all([listProfiles(), listGames()]);
       setProfiles(profileList);
       setGames(gameList);
+      setDefaultProfileId((current) =>
+        profileList.some((profile) => profile.id === current) ? current : profileList[0]?.id ?? ""
+      );
+      setAiProfileOverrides((current) =>
+        current.map((profileId) =>
+          profileId && !profileList.some((profile) => profile.id === profileId) ? "" : profileId
+        )
+      );
     });
   }
 
@@ -359,10 +367,12 @@ export function App() {
                 value={defaultProfileId}
                 onChange={(event) => setDefaultProfileId(event.target.value)}
               >
-                <option value="">Fallback</option>
+                <option value="" disabled>
+                  请选择模型
+                </option>
                 {profiles.map((profile) => (
                   <option key={profile.id} value={profile.id}>
-                    {profile.name}
+                    {profile.name} / {profile.model}
                   </option>
                 ))}
               </select>
@@ -410,7 +420,7 @@ export function App() {
               />
               <span>AI 接管真人</span>
             </label>
-            <button className="primary" onClick={startGame} disabled={busy}>
+            <button className="primary" onClick={startGame} disabled={busy || !defaultProfileId}>
               <Play size={18} /> {autoPlayHuman ? "新对局并代打" : "新对局"}
             </button>
           </section>
@@ -609,7 +619,20 @@ export function App() {
               <article className="profile-item" key={profile.id}>
                 <div>
                   <h3>{profile.name}</h3>
-                  <p>{profile.model}</p>
+                  <dl className="profile-runtime-fields">
+                    <div>
+                      <dt>ID</dt>
+                      <dd>{profile.id}</dd>
+                    </div>
+                    <div>
+                      <dt>Base URL</dt>
+                      <dd>{profile.base_url}</dd>
+                    </div>
+                    <div>
+                      <dt>Model</dt>
+                      <dd>{profile.model}</dd>
+                    </div>
+                  </dl>
                   <span>{profile.api_key_masked}</span>
                   {profileTestResults[profile.id] && (
                     <code className="test-result">{profileTestResults[profile.id]}</code>
@@ -676,6 +699,7 @@ export function App() {
                       <time>{formatDateTime(event.created_at)}</time>
                     </div>
                     <pre>{JSON.stringify(eventPayloadForLog(event), null, 2)}</pre>
+                    <AiPromptDetails event={event} />
                   </article>
                 ))}
               </div>
@@ -912,6 +936,26 @@ function ReplayDetail({
   );
 }
 
+function AiPromptDetails({ event }: { event: GameEvent }) {
+  const messages = promptMessagesForLog(event);
+  if (messages.length === 0) {
+    return null;
+  }
+  return (
+    <details className="prompt-details">
+      <summary>展开 AI 提示词</summary>
+      <div className="prompt-message-list">
+        {messages.map((message, index) => (
+          <section className="prompt-message" key={`${message.role}-${index}`}>
+            <strong>{message.role}</strong>
+            <pre>{message.content}</pre>
+          </section>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function StatusStrip({ game }: { game: GameState }) {
   return (
     <div className="status-strip">
@@ -1058,6 +1102,25 @@ function eventPayloadForLog(event: GameEvent) {
     ...event.public_payload,
     mission_action: event.private_payload?.mission_action
   };
+}
+
+function promptMessagesForLog(event: GameEvent) {
+  const value = event.private_payload?.prompt_messages;
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((item) => {
+    if (!isRecord(item)) {
+      return [];
+    }
+    const role = typeof item.role === "string" ? item.role : "";
+    const content = typeof item.content === "string" ? item.content : "";
+    return role && content ? [{ role, content }] : [];
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function missionActionLabel(action: string) {

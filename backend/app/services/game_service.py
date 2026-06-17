@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import sqlite3
-import uuid
 from dataclasses import asdict, is_dataclass, replace
+from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Callable
 
-from backend.app.ai.player import AiPlayer, AiTurnResult
+from backend.app.ai.player import AiDecisionError, AiPlayer, AiTurnResult
 from backend.app.game.events import (
     build_game_created_payloads,
     build_private_view_payloads,
@@ -62,7 +62,7 @@ class GameService:
         default_llm_profile_id: str | None = None,
         ai_profile_overrides: dict[str, str | None] | None = None,
     ) -> dict[str, Any]:
-        game_id = f"game_{uuid.uuid4().hex[:12]}"
+        game_id = _timestamp_game_id()
         state = create_five_player_game(seed=seed)
         state = _apply_ai_configuration(state, ai_names or [], ai_profile_overrides or {})
         self._games.save_new_game(
@@ -159,11 +159,18 @@ class GameService:
 
         profile = self._profile_for_ai(game_id, human.id)
         if action_type == "propose_team":
-            result = self._ai_player.propose_team(
-                state,
+            result = self._run_ai_turn(
+                game_id,
                 human.id,
+                Phase.TEAM_PROPOSAL,
+                "team_proposal",
                 profile,
-                public_events=self._public_events_for_ai(game_id),
+                lambda: self._ai_player.propose_team(
+                    state,
+                    human.id,
+                    profile,
+                    public_events=self._public_events_for_ai(game_id),
+                ),
             )
             state = propose_team(state, human.id, result.decision.team)
             self._log_ai_decision(game_id, human.id, Phase.TEAM_PROPOSAL, "team_proposal", profile, result)
@@ -173,11 +180,18 @@ class GameService:
                 {"leader_player_id": human.id, "team": list(state.proposed_team)},
             )
         elif action_type == "speak":
-            result = self._ai_player.speak(
-                state,
+            result = self._run_ai_turn(
+                game_id,
                 human.id,
+                Phase.SPEECH,
+                "speech",
                 profile,
-                public_events=self._public_events_for_ai(game_id),
+                lambda: self._ai_player.speak(
+                    state,
+                    human.id,
+                    profile,
+                    public_events=self._public_events_for_ai(game_id),
+                ),
             )
             state = record_speech(state, human.id, result.decision.public_message)
             self._log_ai_decision(game_id, human.id, Phase.SPEECH, "speech", profile, result)
@@ -187,11 +201,18 @@ class GameService:
                 {"player_id": human.id, "message": result.decision.public_message},
             )
         elif action_type == "vote":
-            result = self._ai_player.vote(
-                state,
+            result = self._run_ai_turn(
+                game_id,
                 human.id,
+                Phase.VOTING,
+                "vote",
                 profile,
-                public_events=self._public_events_for_ai(game_id),
+                lambda: self._ai_player.vote(
+                    state,
+                    human.id,
+                    profile,
+                    public_events=self._public_events_for_ai(game_id),
+                ),
             )
             state = cast_vote(state, human.id, result.decision.vote)
             self._log_ai_decision(game_id, human.id, Phase.VOTING, "vote", profile, result)
@@ -201,11 +222,18 @@ class GameService:
                 {"player_id": human.id, "vote": result.decision.vote.value},
             )
         elif action_type == "mission_action":
-            result = self._ai_player.mission_action(
-                state,
+            result = self._run_ai_turn(
+                game_id,
                 human.id,
+                Phase.QUEST,
+                "mission_action",
                 profile,
-                public_events=self._public_events_for_ai(game_id),
+                lambda: self._ai_player.mission_action(
+                    state,
+                    human.id,
+                    profile,
+                    public_events=self._public_events_for_ai(game_id),
+                ),
             )
             state = submit_quest_action(state, human.id, result.decision.mission_action)
             self._log_ai_decision(game_id, human.id, Phase.QUEST, "mission_action", profile, result)
@@ -216,11 +244,18 @@ class GameService:
                 {"mission_action": result.decision.mission_action.value},
             )
         elif action_type == "assassinate":
-            result = self._ai_player.assassinate(
-                state,
+            result = self._run_ai_turn(
+                game_id,
                 human.id,
+                Phase.ASSASSINATION,
+                "assassination",
                 profile,
-                public_events=self._public_events_for_ai(game_id),
+                lambda: self._ai_player.assassinate(
+                    state,
+                    human.id,
+                    profile,
+                    public_events=self._public_events_for_ai(game_id),
+                ),
             )
             state = assassinate(state, human.id, result.decision.target_player_id)
             self._log_ai_decision(game_id, human.id, Phase.ASSASSINATION, "assassination", profile, result)
@@ -264,11 +299,18 @@ class GameService:
             if state.phase == Phase.TEAM_PROPOSAL:
                 leader = state.players[state.leader_index]
                 profile = self._profile_for_ai(game_id, leader.id)
-                result = self._ai_player.propose_team(
-                    state,
+                result = self._run_ai_turn(
+                    game_id,
                     leader.id,
+                    state.phase,
+                    "team_proposal",
                     profile,
-                    public_events=self._public_events_for_ai(game_id),
+                    lambda: self._ai_player.propose_team(
+                        state,
+                        leader.id,
+                        profile,
+                        public_events=self._public_events_for_ai(game_id),
+                    ),
                 )
                 state = propose_team(state, leader.id, result.decision.team)
                 self._log_ai_decision(game_id, leader.id, state.phase, "team_proposal", profile, result)
@@ -280,11 +322,18 @@ class GameService:
             elif state.phase == Phase.SPEECH:
                 next_speaker_id = state.speech_order[len(state.speeches)]
                 profile = self._profile_for_ai(game_id, next_speaker_id)
-                result = self._ai_player.speak(
-                    state,
+                result = self._run_ai_turn(
+                    game_id,
                     next_speaker_id,
+                    Phase.SPEECH,
+                    "speech",
                     profile,
-                    public_events=self._public_events_for_ai(game_id),
+                    lambda: self._ai_player.speak(
+                        state,
+                        next_speaker_id,
+                        profile,
+                        public_events=self._public_events_for_ai(game_id),
+                    ),
                 )
                 state = record_speech(state, next_speaker_id, result.decision.public_message)
                 self._log_ai_decision(game_id, next_speaker_id, Phase.SPEECH, "speech", profile, result)
@@ -299,11 +348,18 @@ class GameService:
                     if player.is_human or player.id in state.votes:
                         continue
                     profile = self._profile_for_ai(game_id, player.id)
-                    result = self._ai_player.vote(
-                        state,
+                    result = self._run_ai_turn(
+                        game_id,
                         player.id,
+                        Phase.VOTING,
+                        "vote",
                         profile,
-                        public_events=self._public_events_for_ai(game_id),
+                        lambda: self._ai_player.vote(
+                            state,
+                            player.id,
+                            profile,
+                            public_events=self._public_events_for_ai(game_id),
+                        ),
                     )
                     state = cast_vote(state, player.id, result.decision.vote)
                     self._log_ai_decision(game_id, player.id, Phase.VOTING, "vote", profile, result)
@@ -330,11 +386,18 @@ class GameService:
                     if player_id == human.id or player_id in state.quest_actions:
                         continue
                     profile = self._profile_for_ai(game_id, player_id)
-                    result = self._ai_player.mission_action(
-                        state,
+                    result = self._run_ai_turn(
+                        game_id,
                         player_id,
+                        Phase.QUEST,
+                        "mission_action",
                         profile,
-                        public_events=self._public_events_for_ai(game_id),
+                        lambda: self._ai_player.mission_action(
+                            state,
+                            player_id,
+                            profile,
+                            public_events=self._public_events_for_ai(game_id),
+                        ),
                     )
                     state = submit_quest_action(state, player_id, result.decision.mission_action)
                     self._log_ai_decision(game_id, player_id, Phase.QUEST, "mission_action", profile, result)
@@ -360,11 +423,18 @@ class GameService:
             elif state.phase == Phase.ASSASSINATION:
                 assassin = next(player for player in state.players if player.role.value == "assassin")
                 profile = self._profile_for_ai(game_id, assassin.id)
-                result = self._ai_player.assassinate(
-                    state,
+                result = self._run_ai_turn(
+                    game_id,
                     assassin.id,
+                    Phase.ASSASSINATION,
+                    "assassination",
                     profile,
-                    public_events=self._public_events_for_ai(game_id),
+                    lambda: self._ai_player.assassinate(
+                        state,
+                        assassin.id,
+                        profile,
+                        public_events=self._public_events_for_ai(game_id),
+                    ),
                 )
                 state = assassinate(state, assassin.id, result.decision.target_player_id)
                 self._log_ai_decision(game_id, assassin.id, Phase.ASSASSINATION, "assassination", profile, result)
@@ -421,11 +491,11 @@ class GameService:
             return self._profiles.resolve_profile_for_player(game_id, player_id)
         except ValueError:
             return LlmProfile(
-                id="fallback",
-                name="Fallback",
+                id="unconfigured",
+                name="Unconfigured",
                 base_url="",
                 api_key="",
-                model="fallback",
+                model="unconfigured",
                 temperature=0.0,
                 timeout=1.0,
                 created_at="",
@@ -503,6 +573,83 @@ class GameService:
         public_payload, private_payload = payloads
         self._events.append_event(game_id, event_type, public_payload, private_payload)
 
+    def _run_ai_turn(
+        self,
+        game_id: str,
+        player_id: str,
+        phase: Phase,
+        decision_type: str,
+        profile: LlmProfile,
+        call: Callable[[], AiTurnResult[Any]],
+    ) -> AiTurnResult[Any]:
+        try:
+            return call()
+        except AiDecisionError as exc:
+            self._log_ai_error(game_id, player_id, phase, decision_type, profile, exc)
+            raise
+
+    def _log_ai_error(
+        self,
+        game_id: str,
+        player_id: str,
+        phase: Phase,
+        decision_type: str,
+        profile: LlmProfile,
+        error: AiDecisionError,
+    ) -> None:
+        output = {
+            "error_type": error.error_type,
+            "error_message": error.error_message,
+        }
+        self._ai_decisions.save_decision(
+            AiDecisionInput(
+                game_id=game_id,
+                player_id=player_id,
+                phase=phase.value,
+                decision_type=decision_type,
+                input_summary=error.input_summary,
+                strategy_summary=error.strategy_summary,
+                output=output,
+                model_name=profile.model,
+                llm_profile_id=None if profile.id == "unconfigured" else profile.id,
+                prompt_template_name=error.prompt_template_name,
+                prompt_template_version=error.prompt_template_version,
+                context_builder_version=error.context_builder_version,
+                stable_prefix_hash=error.stable_prefix_hash,
+                cache_strategy="stable-prefix-v1",
+                context_summary=error.context_summary,
+                context_truncated=error.context_truncated,
+                output_raw=error.output_raw,
+                output_parsed=error.output_parsed,
+                validation_status=error.validation_status,
+            )
+        )
+        self._events.append_event(
+            game_id,
+            "ai_decision",
+            {
+                "player_id": player_id,
+                "phase": phase.value,
+                "decision_type": decision_type,
+                "validation_status": error.validation_status,
+                "strategy_summary": error.strategy_summary,
+            },
+            {
+                "input_summary": error.input_summary,
+                "output_raw": error.output_raw,
+                "output_parsed": error.output_parsed,
+                "error_type": error.error_type,
+                "error_message": error.error_message,
+                "prompt_template_name": error.prompt_template_name,
+                "prompt_template_version": error.prompt_template_version,
+                "prompt_messages": error.prompt_messages,
+                "context_builder_version": error.context_builder_version,
+                "stable_prefix_hash": error.stable_prefix_hash,
+                "context_summary": error.context_summary,
+                "context_truncated": error.context_truncated,
+            },
+        )
+
     def _log_ai_decision(
         self,
         game_id: str,
@@ -522,7 +669,7 @@ class GameService:
                 strategy_summary=result.strategy_summary,
                 output=_json_ready(result.decision),
                 model_name=profile.model,
-                llm_profile_id=None if profile.id == "fallback" else profile.id,
+                llm_profile_id=None if profile.id == "unconfigured" else profile.id,
                 prompt_template_name=result.prompt_template_name,
                 prompt_template_version=result.prompt_template_version,
                 context_builder_version=result.context_builder_version,
@@ -560,6 +707,7 @@ class GameService:
                 "output_parsed": result.output_parsed,
                 "prompt_template_name": result.prompt_template_name,
                 "prompt_template_version": result.prompt_template_version,
+                "prompt_messages": result.prompt_messages,
                 "context_builder_version": result.context_builder_version,
                 "stable_prefix_hash": result.stable_prefix_hash,
                 "context_summary": result.context_summary,
@@ -639,6 +787,10 @@ def _apply_ai_configuration(
         )
         ai_index += 1
     return replace(state, players=tuple(players))
+
+
+def _timestamp_game_id() -> str:
+    return datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
 
 def _human_player(state: GameState) -> Player:

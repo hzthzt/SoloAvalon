@@ -476,6 +476,33 @@ label {
   padding: 8px;
 }
 
+.profile-runtime-fields {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+}
+
+.profile-runtime-fields div {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+
+.profile-runtime-fields dt,
+.profile-runtime-fields dd {
+  color: #5e6b7a;
+  font-size: 12px;
+  margin: 0;
+}
+
+.profile-runtime-fields dt {
+  font-weight: 800;
+}
+
+.profile-runtime-fields dd {
+  overflow-wrap: anywhere;
+}
+
 .status-strip {
   display: grid;
   gap: 8px;
@@ -604,6 +631,35 @@ label {
   padding: 10px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.prompt-details {
+  border-top: 1px solid #d9e1ea;
+  padding-top: 8px;
+}
+
+.prompt-details summary {
+  color: #19324d;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.prompt-message-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.prompt-message {
+  display: grid;
+  gap: 5px;
+}
+
+.prompt-message strong {
+  color: #5e6b7a;
+  font-size: 12px;
+  text-transform: uppercase;
 }
 
 .subtle-id {

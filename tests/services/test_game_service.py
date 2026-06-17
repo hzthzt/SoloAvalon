@@ -1,9 +1,11 @@
+import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
 
 import backend.app.services.game_service as game_service_module
-from backend.app.ai.player import AiTurnResult
+from backend.app.ai.player import AiDecisionError, AiPlayer, AiTurnResult
 from backend.app.ai.strategy import SpeechDecision
 from backend.app.game.models import Phase, Role
 from backend.app.services.game_service import GameService
@@ -37,6 +39,14 @@ class GameServiceTests(unittest.TestCase):
             events = service.list_events(state["id"])
             self.assertEqual(events[0].event_type, "game_created")
             self.assertEqual(events[1].event_type, "roles_assigned")
+
+    def test_create_game_uses_timestamp_id(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = _service(tmpdir)
+
+            state = service.create_game(seed=20260615)
+
+            self.assertRegex(state["id"], r"^\d{8}_\d{6}_\d{6}$")
 
     def test_human_actions_trigger_ai_until_next_human_decision(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -118,6 +128,47 @@ class GameServiceTests(unittest.TestCase):
             self.assertIn("speech", {decision.decision_type for decision in decisions})
             self.assertTrue(all(decision.prompt_template_version for decision in decisions))
 
+    def test_ai_decision_private_event_includes_prompt_messages(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = _service(tmpdir)
+            state = service.create_game(seed=1)
+
+            service.submit_human_ai_action(state["id"])
+            ai_events = [
+                event for event in service.list_events(state["id"]) if event.event_type == "ai_decision"
+            ]
+
+            self.assertGreater(len(ai_events), 0)
+            prompt_messages = ai_events[0].private_payload["prompt_messages"]
+            roles = [message["role"] for message in prompt_messages]
+            self.assertEqual(roles[0], "system")
+            self.assertIn("user", roles)
+            self.assertIn("Prompt", prompt_messages[0]["content"])
+            self.assertTrue(
+                any("玩家视角" in message["content"] for message in prompt_messages)
+            )
+
+    def test_ai_failure_is_logged_and_raised_without_synthetic_decision(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            class FailingProvider:
+                def chat_completion(self, profile, messages):
+                    raise RuntimeError("provider offline")
+
+            service = _service(tmpdir, ai_player=AiPlayer(provider=FailingProvider()))
+            state = service.create_game(seed=1)
+
+            with self.assertRaises(AiDecisionError):
+                service.submit_human_ai_action(state["id"])
+
+            ai_events = [
+                event for event in service.list_events(state["id"]) if event.event_type == "ai_decision"
+            ]
+            self.assertEqual(len(ai_events), 1)
+            self.assertEqual(ai_events[0].public_payload["validation_status"], "error")
+            self.assertIn("provider offline", ai_events[0].private_payload["error_message"])
+            self.assertGreater(len(ai_events[0].private_payload["prompt_messages"]), 0)
+            self.assertNotIn("team_proposed", {event.event_type for event in service.list_events(state["id"])})
+
     def test_ai_turns_are_persisted_as_private_memory_snapshots(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             service = _service(tmpdir)
@@ -158,7 +209,7 @@ class GameServiceTests(unittest.TestCase):
                         strategy_summary="recorded public history",
                         output_raw=None,
                         output_parsed=None,
-                        validation_status="fallback",
+                        validation_status="valid",
                         prompt_template_name="speech",
                         prompt_template_version="prompt.v1",
                         context_builder_version="context-builder.v1",
@@ -236,7 +287,7 @@ class GameServiceTests(unittest.TestCase):
             connection = connect_sqlite(database_path)
             try:
                 initialize_database(connection)
-                service = GameService(connection)
+                service = GameService(connection, ai_player=AiPlayer(provider=_DeterministicProvider()))
                 state = service.create_game(seed=1)
                 state = service.submit_human_action(
                     state["id"],
@@ -277,4 +328,63 @@ class GameServiceTests(unittest.TestCase):
 def _service(tmpdir, ai_player=None):
     connection = connect_sqlite(":memory:")
     initialize_database(connection)
+    if ai_player is None:
+        ai_player = AiPlayer(provider=_DeterministicProvider())
     return GameService(connection, ai_player=ai_player)
+
+
+class _DeterministicProvider:
+    def chat_completion(self, profile, messages):
+        text = "\n".join(message["content"] for message in messages)
+        if '"team"' in text:
+            team_size = _team_size(text)
+            return json.dumps(
+                {
+                    "team": _player_ids(text)[:team_size],
+                    "private_reason_summary": "测试模型选择合法车队。",
+                    "public_message": "我先给一个方便观察票型的车队。",
+                },
+                ensure_ascii=False,
+            )
+        if "当前阶段：发言" in text:
+            return "我先围绕当前车队观察大家的表态，投票分布会很有价值。"
+        if "当前阶段：投票" in text:
+            return "赞成，因为这轮可以先让任务结果和票型信息落地。"
+        if '"mission_action"' in text:
+            return json.dumps(
+                {
+                    "mission_action": "success",
+                    "private_reason_summary": "测试模型提交合法任务行动。",
+                },
+                ensure_ascii=False,
+            )
+        if '"target_player_id"' in text:
+            viewer = _viewer_id(text)
+            candidates = [player_id for player_id in _player_ids(text) if player_id != viewer]
+            return json.dumps(
+                {
+                    "target_player_id": candidates[0],
+                    "private_reason_summary": "测试模型选择合法刺杀目标。",
+                    "candidate_ranking": candidates,
+                },
+                ensure_ascii=False,
+            )
+        raise RuntimeError("unhandled test prompt")
+
+
+def _team_size(text):
+    match = re.search(r"team_size=(\d+)", text)
+    return int(match.group(1)) if match else 2
+
+
+def _player_ids(text):
+    player_ids = []
+    for player_id in re.findall(r"player_\d+", text):
+        if player_id not in player_ids:
+            player_ids.append(player_id)
+    return player_ids
+
+
+def _viewer_id(text):
+    match = re.search(r"你是 (player_\d+)", text)
+    return match.group(1) if match else ""
