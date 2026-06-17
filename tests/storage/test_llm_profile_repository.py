@@ -59,7 +59,7 @@ class LlmProfileRepositoryTests(unittest.TestCase):
             finally:
                 connection.close()
 
-    def test_public_profile_dict_never_exposes_api_key(self):
+    def test_public_profile_dict_exposes_api_key_for_local_config_ui(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
             try:
@@ -69,8 +69,8 @@ class LlmProfileRepositoryTests(unittest.TestCase):
                 profile = repository.create_profile("profile_1", profile_input())
 
                 public_dict = profile.to_public_dict()
+                self.assertEqual(public_dict["api_key"], "test-key-1234567890abcdef")
                 self.assertEqual(public_dict["api_key_masked"], "test...cdef")
-                self.assertNotIn("api_key", public_dict)
             finally:
                 connection.close()
 

@@ -53,6 +53,7 @@ class LlmProfile:
             "id": self.id,
             "name": self.name,
             "base_url": self.base_url,
+            "api_key": self.api_key,
             "api_key_masked": mask_api_key(self.api_key),
             "model": self.model,
             "temperature": self.temperature,

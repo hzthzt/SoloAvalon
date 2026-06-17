@@ -30,3 +30,9 @@ test("profile list shows runtime configuration fields", () => {
   assert.equal(source.includes("profile.base_url"), true);
   assert.equal(source.includes("profile.model"), true);
 });
+
+test("model edit form displays plain api key from saved profile", () => {
+  assert.equal(source.includes("api_key: profile.api_key"), true);
+  assert.equal(source.includes('type="password"'), false);
+  assert.equal(source.includes("profile.api_key"), true);
+});

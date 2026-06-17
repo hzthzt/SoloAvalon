@@ -46,13 +46,13 @@ class LlmProfileTests(unittest.TestCase):
         self.assertNotIn("max_tokens", {field.name for field in fields(LlmProfileInput)})
         self.assertNotIn("max_tokens", {field.name for field in fields(LlmProfile)})
 
-    def test_public_dict_never_exposes_full_api_key(self):
+    def test_public_dict_includes_plain_api_key_for_local_config_ui(self):
         profile = LlmProfile(**_profile_kwargs())
 
         public_dict = profile.to_public_dict()
 
+        self.assertEqual(public_dict["api_key"], "test-key-1234567890abcdef")
         self.assertEqual(public_dict["api_key_masked"], "test...cdef")
-        self.assertNotIn("api_key", public_dict)
         self.assertNotIn("max_tokens", public_dict)
 
     def test_input_validation_rejects_invalid_runtime_values(self):

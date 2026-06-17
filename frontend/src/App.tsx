@@ -258,7 +258,7 @@ export function App() {
       id: profile.id,
       name: profile.name,
       base_url: profile.base_url,
-      api_key: "",
+      api_key: profile.api_key,
       model: profile.model,
       temperature: profile.temperature,
       timeout: profile.timeout
@@ -632,8 +632,11 @@ export function App() {
                       <dt>Model</dt>
                       <dd>{profile.model}</dd>
                     </div>
+                    <div>
+                      <dt>API Key</dt>
+                      <dd>{profile.api_key}</dd>
+                    </div>
                   </dl>
-                  <span>{profile.api_key_masked}</span>
                   {profileTestResults[profile.id] && (
                     <code className="test-result">{profileTestResults[profile.id]}</code>
                   )}
@@ -1001,7 +1004,7 @@ function ProfileForm({
       <label>
         API Key
         <input
-          type="password"
+          type="text"
           value={form.api_key}
           onChange={(event) => update({ api_key: event.target.value })}
         />

@@ -56,6 +56,7 @@ export type LlmProfile = {
   id: string;
   name: string;
   base_url: string;
+  api_key: string;
   api_key_masked: string;
   model: string;
   temperature: number;
