@@ -491,6 +491,48 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["model"], "model")
         self.assertNotIn("max_tokens", captured["payload"])
 
+    def test_llm_provider_retries_timeout_errors_until_success(self):
+        attempts = []
+
+        def transport(url, headers, payload, timeout):
+            attempts.append(timeout)
+            if len(attempts) < 3:
+                raise TimeoutError("The read operation timed out")
+            return {
+                "choices": [
+                    {"message": {"content": json.dumps({"vote": "approve"})}}
+                ]
+            }
+
+        profile_kwargs = test_profile().__dict__ | {"timeout_retries": 5}
+        provider = LlmProvider(transport=transport)
+
+        content = provider.chat_completion(
+            LlmProfile(**profile_kwargs),
+            messages=[{"role": "user", "content": "vote"}],
+        )
+
+        self.assertEqual(json.loads(content), {"vote": "approve"})
+        self.assertEqual(len(attempts), 3)
+
+    def test_llm_provider_stops_after_configured_timeout_retries(self):
+        attempts = []
+
+        def transport(url, headers, payload, timeout):
+            attempts.append(timeout)
+            raise TimeoutError("The read operation timed out")
+
+        profile_kwargs = test_profile().__dict__ | {"timeout_retries": 2}
+        provider = LlmProvider(transport=transport)
+
+        with self.assertRaises(TimeoutError):
+            provider.chat_completion(
+                LlmProfile(**profile_kwargs),
+                messages=[{"role": "user", "content": "vote"}],
+            )
+
+        self.assertEqual(len(attempts), 3)
+
     def test_ai_player_raises_when_model_returns_illegal_vote(self):
         class BadProvider:
             def chat_completion(self, profile, messages):

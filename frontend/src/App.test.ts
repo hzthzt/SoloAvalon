@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const apiSource = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
 
 test("start game UI does not expose seed controls", () => {
   assert.equal(source.includes("Seed"), false);
@@ -29,6 +30,17 @@ test("profile list shows runtime configuration fields", () => {
   assert.equal(source.includes("profile.id"), true);
   assert.equal(source.includes("profile.base_url"), true);
   assert.equal(source.includes("profile.model"), true);
+});
+
+test("model profile form exposes timeout retry configuration", () => {
+  assert.equal(source.includes("timeout_retries: 5"), true);
+  assert.equal(source.includes("profile.timeout_retries"), true);
+  assert.equal(apiSource.includes("timeout_retries: number"), true);
+});
+
+test("ai timeout notice offers manual retry", () => {
+  assert.equal(source.includes("manualRetryRepeat"), true);
+  assert.equal(source.includes("手动重试"), true);
 });
 
 test("model edit form displays plain api key from saved profile", () => {

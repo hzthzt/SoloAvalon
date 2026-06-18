@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+from backend.app.ai.player import AiDecisionError
 from backend.app.services.event_visibility import (
     hide_unsettled_vote_values,
     public_event_dicts,
@@ -105,7 +106,20 @@ def build_games_router(service: GameService):
 def _call(handler):
     try:
         return handler()
+    except AiDecisionError as exc:
+        if HTTPException is None:
+            raise
+        raise HTTPException(
+            status_code=_ai_decision_status_code(exc),
+            detail=f"AI 决策失败：{exc.error_message}",
+        ) from exc
     except ValueError as exc:
         if HTTPException is None:
             raise
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _ai_decision_status_code(error: AiDecisionError) -> int:
+    if error.error_type == "TimeoutError":
+        return 504
+    return 502

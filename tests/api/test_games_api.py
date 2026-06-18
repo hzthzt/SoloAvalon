@@ -4,8 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import backend.app.api.games as games_module
 from backend.app.api.games import GamesApi
-from backend.app.ai.player import AiPlayer
+from backend.app.ai.player import AiDecisionError, AiPlayer
 from backend.app.services.game_service import GameService
 from backend.app.storage.database import connect_sqlite, initialize_database
 from backend.app.storage.event_store import EventStore
@@ -66,6 +67,21 @@ class GamesApiTests(unittest.TestCase):
 
             self.assertEqual(updated["phase"], "speech")
             self.assertEqual(updated["next_human_action"], "speak")
+
+    def test_route_wrapper_reports_ai_timeout_as_gateway_timeout(self):
+        def fail_with_timeout():
+            raise _ai_decision_error("TimeoutError", "The read operation timed out")
+
+        original_http_exception = games_module.HTTPException
+        games_module.HTTPException = _FakeHTTPException
+        try:
+            with self.assertRaises(_FakeHTTPException) as captured:
+                games_module._call(fail_with_timeout)
+        finally:
+            games_module.HTTPException = original_http_exception
+
+        self.assertEqual(captured.exception.status_code, 504)
+        self.assertEqual(captured.exception.detail, "AI 决策失败：The read operation timed out")
 
     def test_list_events_hides_private_payload_by_default(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -138,6 +154,23 @@ def _api(tmpdir):
     return GamesApi(GameService(connection, ai_player=AiPlayer(provider=_DeterministicProvider())))
 
 
+def _ai_decision_error(error_type, error_message):
+    return AiDecisionError(
+        error_type=error_type,
+        error_message=error_message,
+        input_summary="测试输入摘要",
+        output_raw=None,
+        output_parsed=None,
+        prompt_template_name="speech",
+        prompt_template_version="prompt.v1",
+        context_builder_version="context-builder.v1",
+        stable_prefix_hash="hash",
+        context_summary="测试上下文摘要",
+        context_truncated=False,
+        prompt_messages=[],
+    )
+
+
 class _DeterministicProvider:
     def chat_completion(self, profile, messages):
         text = "\n".join(message["content"] for message in messages)
@@ -175,6 +208,13 @@ class _DeterministicProvider:
                 ensure_ascii=False,
             )
         raise RuntimeError("unhandled test prompt")
+
+
+class _FakeHTTPException(Exception):
+    def __init__(self, status_code, detail):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
 
 
 def _player_ids(text):

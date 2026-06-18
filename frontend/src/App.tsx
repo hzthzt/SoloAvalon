@@ -17,6 +17,7 @@ import {
   X
 } from "lucide-react";
 import {
+  ApiError,
   createGame,
   createProfile,
   deleteGame,
@@ -50,7 +51,8 @@ const emptyProfile: LlmProfileInput = {
   api_key: "",
   model: "",
   temperature: 0.7,
-  timeout: 30
+  timeout: 30,
+  timeout_retries: 5
 };
 
 export function App() {
@@ -75,6 +77,7 @@ export function App() {
   const [eventLog, setEventLog] = useState<GameEvent[]>([]);
   const [exportedLog, setExportedLog] = useState("");
   const [notice, setNotice] = useState("");
+  const [manualRetryRepeat, setManualRetryRepeat] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [autoPlaying, setAutoPlaying] = useState(false);
 
@@ -85,6 +88,8 @@ export function App() {
       profileForm.name.trim() &&
       profileForm.base_url.trim() &&
       profileForm.model.trim() &&
+      Number.isFinite(profileForm.timeout_retries) &&
+      profileForm.timeout_retries >= 0 &&
       (editingProfileId || profileForm.api_key.trim())
   );
   const selectedLogReview = useMemo(() => {
@@ -202,7 +207,12 @@ export function App() {
       setSelectedTeam([updated.human_player_id]);
       setSpeech("");
       setAssassinationTarget("");
+      setManualRetryRepeat(null);
       await refreshLists();
+    }, (error) => {
+      if (isAiTimeoutError(error)) {
+        setManualRetryRepeat(repeat);
+      }
     });
   }
 
@@ -263,7 +273,8 @@ export function App() {
       api_key: profile.api_key,
       model: profile.model,
       temperature: profile.temperature,
-      timeout: profile.timeout
+      timeout: profile.timeout,
+      timeout_retries: profile.timeout_retries
     });
   }
 
@@ -317,13 +328,15 @@ export function App() {
     });
   }
 
-  async function run(work: () => Promise<void>) {
+  async function run(work: () => Promise<void>, onError?: (error: unknown) => void) {
     setBusy(true);
     setNotice("");
+    setManualRetryRepeat(null);
     try {
       await work();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
+      onError?.(error);
     } finally {
       setBusy(false);
     }
@@ -354,7 +367,20 @@ export function App() {
         </nav>
       </header>
 
-      {notice && <div className="notice">{notice}</div>}
+      {notice && (
+        <div className="notice">
+          <span>{notice}</span>
+          {manualRetryRepeat !== null && game?.next_human_action && (
+            <button
+              type="button"
+              onClick={() => sendHumanAiAction(manualRetryRepeat)}
+              disabled={busy || autoPlaying}
+            >
+              <RefreshCw size={16} /> 手动重试
+            </button>
+          )}
+        </div>
+      )}
 
       {tab === "game" && (
         <section className="game-layout">
@@ -637,6 +663,10 @@ export function App() {
                     <div>
                       <dt>Model</dt>
                       <dd>{profile.model}</dd>
+                    </div>
+                    <div>
+                      <dt>Timeout Retries</dt>
+                      <dd>{profile.timeout_retries}</dd>
                     </div>
                     <div>
                       <dt>API Key</dt>
@@ -1040,8 +1070,21 @@ function ProfileForm({
           onChange={(event) => update({ timeout: Number(event.target.value) })}
         />
       </label>
+      <label>
+        Timeout Retries
+        <input
+          type="number"
+          min="0"
+          value={form.timeout_retries}
+          onChange={(event) => update({ timeout_retries: Number(event.target.value) })}
+        />
+      </label>
     </div>
   );
+}
+
+function isAiTimeoutError(error: unknown) {
+  return error instanceof ApiError && error.status === 504 && error.message.startsWith("AI 决策失败");
 }
 
 function playerName(game: GameState, playerId: string) {

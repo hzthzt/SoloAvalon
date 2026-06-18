@@ -32,6 +32,7 @@ class LlmProfileRepository:
             model=profile_input.model,
             temperature=profile_input.temperature,
             timeout=profile_input.timeout,
+            timeout_retries=profile_input.timeout_retries,
             created_at=now,
             updated_at=now,
         )
@@ -72,6 +73,7 @@ class LlmProfileRepository:
                 model=profile_input.model,
                 temperature=profile_input.temperature,
                 timeout=profile_input.timeout,
+                timeout_retries=profile_input.timeout_retries,
                 created_at=profile.created_at,
                 updated_at=now,
             )
@@ -151,6 +153,7 @@ def _profile_from_payload(payload: Any) -> LlmProfile:
         model=_required_string(payload, "model"),
         temperature=float(payload["temperature"]),
         timeout=float(payload["timeout"]),
+        timeout_retries=int(payload.get("timeout_retries", 5)),
         created_at=_required_string(payload, "created_at"),
         updated_at=_required_string(payload, "updated_at"),
     )
@@ -165,6 +168,7 @@ def _profile_to_payload(profile: LlmProfile) -> dict[str, Any]:
         "model": profile.model,
         "temperature": profile.temperature,
         "timeout": profile.timeout,
+        "timeout_retries": profile.timeout_retries,
         "created_at": profile.created_at,
         "updated_at": profile.updated_at,
     }

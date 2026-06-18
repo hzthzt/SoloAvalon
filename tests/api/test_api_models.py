@@ -48,9 +48,25 @@ class ApiModelsTests(unittest.TestCase):
                 "model": "deepseek-chat",
                 "temperature": "0.7",
                 "timeout": "30",
+                "timeout_retries": "3",
             }
         )
 
         self.assertEqual(request.temperature, 0.7)
         self.assertFalse(hasattr(request, "max_tokens"))
         self.assertEqual(request.timeout, 30.0)
+        self.assertEqual(request.timeout_retries, 3)
+
+    def test_llm_profile_request_defaults_timeout_retries_to_five(self):
+        request = LlmProfileRequest.from_payload(
+            {
+                "name": "DeepSeek",
+                "base_url": "https://api.example.com/v1",
+                "api_key": "test-api-key",
+                "model": "deepseek-chat",
+                "temperature": 0.7,
+                "timeout": 30,
+            }
+        )
+
+        self.assertEqual(request.timeout_retries, 5)

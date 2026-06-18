@@ -49,6 +49,7 @@ class LlmProfileRequest:
     model: str
     temperature: float
     timeout: float
+    timeout_retries: int = 5
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "LlmProfileRequest":
@@ -59,6 +60,7 @@ class LlmProfileRequest:
             model=_required_string(payload, "model"),
             temperature=float(payload["temperature"]),
             timeout=float(payload["timeout"]),
+            timeout_retries=int(payload.get("timeout_retries", 5)),
         )
 
     def to_input(self) -> LlmProfileInput:
@@ -69,6 +71,7 @@ class LlmProfileRequest:
             model=self.model,
             temperature=self.temperature,
             timeout=self.timeout,
+            timeout_retries=self.timeout_retries,
         )
 
 

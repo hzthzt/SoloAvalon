@@ -20,6 +20,7 @@ class LlmProfileInput:
     model: str
     temperature: float
     timeout: float
+    timeout_retries: int = 5
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -34,6 +35,8 @@ class LlmProfileInput:
             raise ValueError("temperature must be between 0 and 2")
         if self.timeout <= 0:
             raise ValueError("timeout must be positive")
+        if self.timeout_retries < 0:
+            raise ValueError("timeout_retries must be non-negative")
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,11 @@ class LlmProfile:
     timeout: float
     created_at: str
     updated_at: str
+    timeout_retries: int = 5
+
+    def __post_init__(self) -> None:
+        if self.timeout_retries < 0:
+            raise ValueError("timeout_retries must be non-negative")
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -58,6 +66,7 @@ class LlmProfile:
             "model": self.model,
             "temperature": self.temperature,
             "timeout": self.timeout,
+            "timeout_retries": self.timeout_retries,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }

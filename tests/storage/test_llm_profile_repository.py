@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 from backend.app.llm.profiles import LlmProfileInput
@@ -71,6 +72,41 @@ class LlmProfileRepositoryTests(unittest.TestCase):
                 public_dict = profile.to_public_dict()
                 self.assertEqual(public_dict["api_key"], "test-key-1234567890abcdef")
                 self.assertEqual(public_dict["api_key_masked"], "test...cdef")
+            finally:
+                connection.close()
+
+    def test_legacy_profile_config_defaults_timeout_retries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = _config_path(tmpdir)
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "id": "legacy_profile",
+                                "name": "Legacy",
+                                "base_url": "https://api.example.com/v1",
+                                "api_key": "test-key-1234567890abcdef",
+                                "model": "legacy-chat",
+                                "temperature": 0.7,
+                                "timeout": 30.0,
+                                "created_at": "2026-06-15T00:00:00Z",
+                                "updated_at": "2026-06-15T00:00:00Z",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
+            try:
+                initialize_database(connection)
+                repository = _repository(connection, tmpdir)
+
+                loaded = repository.get_profile("legacy_profile")
+
+                self.assertEqual(loaded.timeout_retries, 5)
             finally:
                 connection.close()
 

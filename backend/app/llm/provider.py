@@ -28,11 +28,11 @@ class LlmProvider:
             "Authorization": f"Bearer {profile.api_key}",
             "Content-Type": "application/json",
         }
-        response = self._transport(
+        response = self._send_with_timeout_retries(
+            profile,
             _completion_url(profile.base_url),
             headers,
             payload,
-            profile.timeout,
         )
         choices = response.get("choices")
         if not choices:
@@ -41,6 +41,21 @@ class LlmProvider:
         if not isinstance(content, str):
             raise ValueError("llm response did not include message content")
         return content
+
+    def _send_with_timeout_retries(
+        self,
+        profile: LlmProfile,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        for retry_index in range(profile.timeout_retries + 1):
+            try:
+                return self._transport(url, headers, payload, profile.timeout)
+            except TimeoutError:
+                if retry_index >= profile.timeout_retries:
+                    raise
+        raise RuntimeError("unreachable timeout retry state")
 
 
 def _completion_url(base_url: str) -> str:

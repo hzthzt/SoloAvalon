@@ -112,12 +112,22 @@ label {
 }
 
 .notice {
+  align-items: center;
   background: #fff7dd;
   border: 1px solid #e2c76d;
   border-radius: 8px;
   color: #6d5210;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
   margin-bottom: 14px;
   padding: 10px 12px;
+}
+
+.notice button {
+  min-height: 34px;
+  padding: 6px 10px;
 }
 
 .game-layout {

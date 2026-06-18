@@ -62,6 +62,7 @@ export type LlmProfile = {
   model: string;
   temperature: number;
   timeout: number;
+  timeout_retries: number;
   created_at: string;
   updated_at: string;
 };
@@ -74,6 +75,7 @@ export type LlmProfileInput = {
   model: string;
   temperature: number;
   timeout: number;
+  timeout_retries: number;
 };
 
 const jsonHeaders = { "Content-Type": "application/json" };
@@ -172,10 +174,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // Keep the HTTP status message.
     }
-    throw new Error(message);
+    throw new ApiError(response.status, message);
   }
   if (response.status === 204) {
     return undefined as T;
   }
   return response.json() as Promise<T>;
+}
+
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
 }

@@ -53,8 +53,18 @@ class LlmProfileTests(unittest.TestCase):
 
         self.assertEqual(public_dict["api_key"], "test-key-1234567890abcdef")
         self.assertEqual(public_dict["api_key_masked"], "test...cdef")
+        self.assertEqual(public_dict["timeout_retries"], 5)
         self.assertNotIn("max_tokens", public_dict)
+
+    def test_profiles_default_to_five_timeout_retries(self):
+        profile_input = LlmProfileInput(**_profile_input_kwargs())
+        profile = LlmProfile(**_profile_kwargs())
+
+        self.assertEqual(profile_input.timeout_retries, 5)
+        self.assertEqual(profile.timeout_retries, 5)
 
     def test_input_validation_rejects_invalid_runtime_values(self):
         with self.assertRaises(ValueError):
             LlmProfileInput(**_profile_input_kwargs(temperature=-0.1))
+        with self.assertRaises(ValueError):
+            LlmProfileInput(**_profile_input_kwargs(timeout_retries=-1))
