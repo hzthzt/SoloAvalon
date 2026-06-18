@@ -7,24 +7,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from backend.app.game.models import GameState, Phase, Role
-from backend.app.game.rules import private_view_for_player
+from backend.app.game.rules import STANDARD_FACTION_COUNTS, private_view_for_player
+from backend.app.prompting.config import PromptTemplateConfig, load_prompt_template_config
 
 
 CONTEXT_BUILDER_VERSION = "context-builder.v1"
 
 ROLE_DISPLAY_ORDER = (Role.MERLIN, Role.LOYAL_SERVANT, Role.ASSASSIN, Role.MINION)
-ROLE_LABELS = {
-    Role.MERLIN: "梅林",
-    Role.LOYAL_SERVANT: "忠臣",
-    Role.ASSASSIN: "刺客",
-    Role.MINION: "爪牙",
-}
-ROLE_DESCRIPTIONS = {
-    Role.MERLIN: "梅林：好人阵营，知道恶方玩家，但不知道具体恶方身份。",
-    Role.LOYAL_SERVANT: "忠臣：好人阵营，没有额外身份信息。",
-    Role.ASSASSIN: "刺客：恶方阵营，知道恶方同伴，并在刺杀阶段选择刺杀目标。",
-    Role.MINION: "爪牙：恶方阵营，知道恶方同伴。",
-}
 
 
 @dataclass(frozen=True)
@@ -44,8 +33,13 @@ class AiContext:
 
 
 class ContextBuilder:
-    def __init__(self, max_recent_events: int | None = None):
+    def __init__(
+        self,
+        max_recent_events: int | None = None,
+        prompt_config: PromptTemplateConfig | None = None,
+    ):
         self.max_recent_events = max_recent_events
+        self._prompt_config = prompt_config or load_prompt_template_config()
 
     def build(
         self,
@@ -105,7 +99,7 @@ class ContextBuilder:
             sort_keys=True,
             separators=(",", ":"),
         )
-        stable_prefix = _stable_prefix_for_state(state)
+        stable_prefix = _stable_prefix_for_state(state, self._prompt_config)
         context_summary = (
             f"phase={state.phase.value};round={state.current_round};"
             f"viewer={viewer.id};events={len(recent_events)}"
@@ -129,33 +123,62 @@ def _role_value(role: Role | None) -> str | None:
     return role.value if role is not None else None
 
 
-def _stable_prefix_for_state(state: GameState) -> str:
+def _stable_prefix_for_state(state: GameState, prompt_config: PromptTemplateConfig) -> str:
     role_counts = Counter(player.role for player in state.players)
+    good_count, evil_count = _faction_counts_for_state(state)
     return "\n".join(
         [
-            "SoloAvalon 阿瓦隆玩家设定。",
-            "你正在扮演本局的一名阿瓦隆游戏玩家。",
-            "你所有公开发言和理由默认使用简体中文。",
-            f"本局共有 {len(state.players)} 名玩家。",
-            f"身份配置：{_role_config_summary(role_counts)}。",
-            "身份信息：",
-            *_role_description_lines(role_counts),
-            "你只能使用提示中提供的合法可见信息，不要假设未提供的隐藏真相。",
+            prompt_config.section_titles["system"],
+            *prompt_config.system_lines,
+            "",
+            prompt_config.section_titles["game_config"],
+            prompt_config.labels["player_count"].format(count=len(state.players)),
+            prompt_config.labels["faction_counts"].format(
+                good_count=good_count,
+                evil_count=evil_count,
+            ),
+            prompt_config.labels["mission_config_header"],
+            *_mission_config_lines(state, prompt_config),
+            "",
+            prompt_config.labels["role_config_header"],
+            *_role_description_lines(role_counts, prompt_config),
         ]
     )
 
 
-def _role_config_summary(role_counts: Counter[Role]) -> str:
-    return "、".join(
-        f"{_role_label(role)} {count} 名"
-        for role, count in _roles_in_display_order(role_counts)
-    )
+def _faction_counts_for_state(state: GameState) -> tuple[int, int]:
+    configured_counts = STANDARD_FACTION_COUNTS.get(len(state.players))
+    if configured_counts is not None:
+        return configured_counts
+    good_count = sum(1 for player in state.players if player.faction.value == "good")
+    return good_count, len(state.players) - good_count
 
 
-def _role_description_lines(role_counts: Counter[Role]) -> list[str]:
+def _mission_config_lines(state: GameState, prompt_config: PromptTemplateConfig) -> list[str]:
     return [
-        f"- {ROLE_DESCRIPTIONS.get(role, f'{_role_label(role)}：按当前游戏规则行动。')}"
-        for role, _count in _roles_in_display_order(role_counts)
+        prompt_config.labels["mission_config_line"].format(
+            round_number=mission.round_number,
+            team_size=mission.team_size,
+            fail_cards_required=mission.fail_cards_required,
+        )
+        for mission in state.missions
+    ]
+
+
+def _role_description_lines(
+    role_counts: Counter[Role],
+    prompt_config: PromptTemplateConfig,
+) -> list[str]:
+    return [
+        prompt_config.labels["role_config_line"].format(
+            role_label=_role_label(role, prompt_config),
+            count=count,
+            description=prompt_config.role_descriptions.get(
+                role.value,
+                prompt_config.role_gameplay.get("default", "按当前游戏规则行动。"),
+            ),
+        )
+        for role, count in _roles_in_display_order(role_counts)
     ]
 
 
@@ -179,8 +202,8 @@ def _roles_in_display_order(role_counts: Counter[Role]) -> list[tuple[Role, int]
     return ordered
 
 
-def _role_label(role: Role) -> str:
-    return ROLE_LABELS.get(role, role.value)
+def _role_label(role: Role, prompt_config: PromptTemplateConfig) -> str:
+    return prompt_config.role_labels.get(role.value, role.value)
 
 
 def _legal_actions(state: GameState, player_id: str, phase: Phase) -> dict[str, Any]:

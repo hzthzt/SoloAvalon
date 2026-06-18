@@ -16,7 +16,7 @@ from backend.app.prompting.schemas import (
     vote_decision_from_output,
     vote_decision_from_text,
 )
-from backend.app.prompting.templates import PROMPT_TEMPLATE_VERSION, PromptBuilder
+from backend.app.prompting.templates import PromptBuilder
 
 from .context import ContextBuilder
 from .strategy import (
@@ -215,7 +215,7 @@ class AiPlayer:
                 output_raw=output_raw,
                 output_parsed=output_parsed,
                 prompt_template_name=phase.value,
-                prompt_template_version=PROMPT_TEMPLATE_VERSION,
+                prompt_template_version=self._prompt_builder.version,
                 context_builder_version=context.context_builder_version,
                 stable_prefix_hash=context.stable_prefix_hash,
                 context_summary=context.context_summary,
@@ -230,7 +230,7 @@ class AiPlayer:
             output_parsed=output_parsed,
             validation_status=validation_status,
             prompt_template_name=phase.value,
-            prompt_template_version=PROMPT_TEMPLATE_VERSION,
+            prompt_template_version=self._prompt_builder.version,
             context_builder_version=context.context_builder_version,
             stable_prefix_hash=context.stable_prefix_hash,
             context_summary=context.context_summary,

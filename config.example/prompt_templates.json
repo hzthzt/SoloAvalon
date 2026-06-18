@@ -1,0 +1,126 @@
+{
+  "version": "prompt.v7",
+  "section_titles": {
+    "system": "【系统】",
+    "game_config": "【本局配置】",
+    "player_view": "【你的视角】",
+    "public_record": "【公开记录】",
+    "action": "【本次行动】"
+  },
+  "system_lines": [
+    "你正在扮演一名阿瓦隆玩家。",
+    "请根据后续提供的玩家视角和公开记录进行判断。",
+    "所有公开发言使用简体中文，语气像正常阿瓦隆玩家讨论局势。",
+    "发言时要有具体判断、疑点或推进理由，不要复述模板句式。"
+  ],
+  "labels": {
+    "prompt_version": "Prompt 模板版本：{version}",
+    "player_count": "玩家人数：{count}。",
+    "faction_counts": "阵营人数：好人 {good_count} 人，恶方 {evil_count} 人。",
+    "mission_config_header": "任务配置：",
+    "mission_config_line": "- 第 {round_number} 轮：车队 {team_size} 人，任务失败需要 {fail_cards_required} 张失败票。",
+    "role_config_header": "本局身份：",
+    "role_config_line": "- {role_label} {count} 名：{description}",
+    "player_id": "你是 {player_id}。",
+    "role": "身份：{role_label}。",
+    "faction": "阵营：{faction_label}。",
+    "role_gameplay": "身份玩法：{gameplay}",
+    "extra_information": "你的额外信息：{extra_information}",
+    "public_players": "公开玩家：{players}。",
+    "empty_public_record": "- 暂无公开记录。",
+    "json_only": "只返回 JSON：",
+    "team_size": "本轮车队人数：{team_size}。",
+    "available_players": "可选玩家：{players}。",
+    "mission_actions": "可选任务行动：{actions}。",
+    "assassination_targets": "可选目标：{targets}。"
+  },
+  "role_labels": {
+    "merlin": "梅林",
+    "loyal_servant": "忠臣",
+    "assassin": "刺客",
+    "minion": "爪牙",
+    "unknown_evil": "未知恶方"
+  },
+  "faction_labels": {
+    "good": "好人",
+    "evil": "恶方"
+  },
+  "vote_labels": {
+    "approve": "赞成",
+    "reject": "反对"
+  },
+  "quest_result_labels": {
+    "success": "成功",
+    "fail": "失败"
+  },
+  "role_descriptions": {
+    "merlin": "好人阵营，知道哪些玩家属于恶方，公开发言要避免暴露自己。",
+    "loyal_servant": "好人阵营，没有额外身份信息，需要通过公开信息推理。",
+    "assassin": "恶方阵营，知道恶方同伴，若好人完成 3 次任务，可刺杀梅林翻盘。",
+    "minion": "恶方阵营，知道恶方同伴，配合恶方影响组队、投票和任务。"
+  },
+  "role_gameplay": {
+    "merlin": "你知道哪些玩家属于恶方，但公开发言要避免暴露自己。",
+    "loyal_servant": "你没有额外信息，需要通过组队、发言、投票和任务结果判断谁可信。",
+    "assassin": "你需要隐藏恶方身份，影响组队和投票，并在好人完成 3 次任务后刺杀梅林。",
+    "minion": "你需要隐藏恶方身份，配合同伴影响组队、投票和任务结果。",
+    "default": "按当前身份目标行动。"
+  },
+  "extra_information": {
+    "merlin_known_evil": "{players} 属于恶方。",
+    "evil_teammates": "{players} 是恶方同伴。",
+    "none": "无。"
+  },
+  "event_templates": {
+    "team_proposed": "第 {round_number} 轮，{leader} 提交车队：{team}。",
+    "speech": "{player_id} 发言：{message}",
+    "vote_result_with_votes": "投票结果：车队{approved_text}。赞成：{approvals}；反对：{rejections}。",
+    "vote_result_without_votes": "投票结果：车队{approved_text}。",
+    "unsettled_vote_visible": "{player_id} 已投票：{vote_label}。",
+    "unsettled_vote_hidden": "已投票：{players}，票型尚未公开。",
+    "quest_submitted": "任务成员 {players} 已提交任务行动。",
+    "quest_result_with_cards": "第 {round_number} 轮任务结果：{result_text}。成功票 {success_cards}，失败票 {fail_cards}。",
+    "quest_result_without_cards": "第 {round_number} 轮任务结果：{result_text}。",
+    "assassination": "{assassin} 刺杀 {target}。",
+    "assassination_with_winner": "{assassin} 刺杀 {target}，胜者 {winner}。",
+    "unknown_event": "{event_type}：{payload}"
+  },
+  "action_prompts": {
+    "propose_team": {
+      "lines": [
+        "现在轮到你组队。"
+      ],
+      "json": "{\"team\":[\"player_id\"],\"public_message\":\"公开说明组队理由\",\"private_reason_summary\":\"简要说明你的判断依据\"}"
+    },
+    "speak": {
+      "lines": [
+        "现在轮到你发言。"
+      ],
+      "json": "{\"public_message\":\"你要公开说出的一段中文发言\",\"private_reason_summary\":\"简要说明你的判断依据\"}"
+    },
+    "vote": {
+      "lines": [
+        "现在轮到你投票。"
+      ],
+      "json": "{\"vote\":\"approve|reject\",\"private_reason_summary\":\"简要说明你的判断依据\"}"
+    },
+    "mission_action": {
+      "lines": [
+        "现在轮到你提交任务行动。"
+      ],
+      "json": "{\"mission_action\":\"{mission_actions}\",\"private_reason_summary\":\"简要说明你的任务行动依据\"}"
+    },
+    "assassinate": {
+      "lines": [
+        "现在轮到你选择刺杀目标。"
+      ],
+      "json": "{\"target_player_id\":\"player_id\",\"candidate_ranking\":[\"player_id\"],\"private_reason_summary\":\"简要说明谁最像梅林\"}"
+    },
+    "none": {
+      "lines": [
+        "当前没有可执行动作。"
+      ],
+      "json": "{}"
+    }
+  }
+}

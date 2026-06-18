@@ -38,7 +38,7 @@ class PromptingAndProviderTests(unittest.TestCase):
 
         self.assertEqual(messages[0]["role"], "system")
         self.assertIn(context.stable_prefix, messages[0]["content"])
-        self.assertTrue(any("玩家视角" in message["content"] for message in messages))
+        self.assertTrue(any("【你的视角】" in message["content"] for message in messages))
         self.assertNotIn(context.dynamic_private_suffix, messages[0]["content"])
 
     def test_stable_prefix_keeps_only_default_player_and_role_setup(self):
@@ -46,13 +46,18 @@ class PromptingAndProviderTests(unittest.TestCase):
         context = ContextBuilder().build(state, state.players[1].id, Phase.SPEECH)
 
         self.assertIn("扮演", context.stable_prefix)
-        self.assertIn("5 名玩家", context.stable_prefix)
+        self.assertIn("【本局配置】", context.stable_prefix)
+        self.assertIn("玩家人数：5", context.stable_prefix)
+        self.assertIn("阵营人数：好人 3 人，恶方 2 人", context.stable_prefix)
+        self.assertIn("第 1 轮：车队 2 人，任务失败需要 1 张失败票", context.stable_prefix)
         self.assertIn("梅林", context.stable_prefix)
         self.assertIn("忠臣", context.stable_prefix)
         self.assertIn("刺客", context.stable_prefix)
         self.assertIn("爪牙", context.stable_prefix)
+        self.assertNotIn("SoloAvalon", context.stable_prefix)
+        self.assertNotIn("隐藏真相", context.stable_prefix)
+        self.assertNotIn("推测未提供", context.stable_prefix)
         self.assertNotIn("好人阵营在 3 次任务成功后获胜", context.stable_prefix)
-        self.assertNotIn("公开发言要像真人玩家讨论", context.stable_prefix)
 
     def test_stable_prefix_uses_current_game_role_configuration(self):
         state = GameState(
@@ -69,12 +74,41 @@ class PromptingAndProviderTests(unittest.TestCase):
 
         context = ContextBuilder().build(state, "player_2", Phase.SPEECH)
 
-        self.assertIn("6 名玩家", context.stable_prefix)
+        self.assertIn("玩家人数：6", context.stable_prefix)
+        self.assertIn("阵营人数：好人 4 人，恶方 2 人", context.stable_prefix)
         self.assertIn("忠臣 3 名", context.stable_prefix)
+        self.assertIn("第 1 轮：车队 2 人，任务失败需要 1 张失败票", context.stable_prefix)
         self.assertNotIn("5 人局", context.stable_prefix)
         self.assertNotIn("忠臣 2 名", context.stable_prefix)
-        self.assertIn("梅林：好人阵营", context.stable_prefix)
-        self.assertIn("刺客：恶方阵营", context.stable_prefix)
+        self.assertIn("梅林 1 名：好人阵营", context.stable_prefix)
+        self.assertIn("刺客 1 名：恶方阵营", context.stable_prefix)
+
+    def test_stable_prefix_formats_seven_player_mission_configuration(self):
+        state = GameState(
+            players=(
+                Player("player_1", 0, "You", True, Role.MERLIN, Faction.GOOD),
+                Player("player_2", 1, "AI 1", False, Role.LOYAL_SERVANT, Faction.GOOD),
+                Player("player_3", 2, "AI 2", False, Role.LOYAL_SERVANT, Faction.GOOD),
+                Player("player_4", 3, "AI 3", False, Role.LOYAL_SERVANT, Faction.GOOD),
+                Player("player_5", 4, "AI 4", False, Role.ASSASSIN, Faction.EVIL),
+                Player("player_6", 5, "AI 5", False, Role.MINION, Faction.EVIL),
+                Player("player_7", 6, "AI 6", False, Role.MINION, Faction.EVIL),
+            ),
+            missions=(
+                MissionConfig(round_number=1, team_size=2, fail_cards_required=1),
+                MissionConfig(round_number=2, team_size=3, fail_cards_required=1),
+                MissionConfig(round_number=3, team_size=3, fail_cards_required=1),
+                MissionConfig(round_number=4, team_size=4, fail_cards_required=2),
+                MissionConfig(round_number=5, team_size=4, fail_cards_required=1),
+            ),
+        )
+
+        context = ContextBuilder().build(state, "player_2", Phase.SPEECH)
+
+        self.assertIn("玩家人数：7", context.stable_prefix)
+        self.assertIn("阵营人数：好人 4 人，恶方 3 人", context.stable_prefix)
+        self.assertIn("第 4 轮：车队 4 人，任务失败需要 2 张失败票", context.stable_prefix)
+        self.assertIn("爪牙 2 名", context.stable_prefix)
 
     def test_prompt_builder_requests_chinese_player_discussion_from_visible_context(self):
         state = create_five_player_game(seed=20)
@@ -94,27 +128,42 @@ class PromptingAndProviderTests(unittest.TestCase):
 
         self.assertIn("简体中文", prompt_text)
         self.assertIn("正常阿瓦隆玩家", prompt_text)
-        self.assertIn("角色信息", prompt_text)
-        self.assertIn("对局信息", prompt_text)
-        self.assertIn("历史记录", prompt_text)
-        self.assertIn("legal_actions", prompt_text)
-        self.assertIn("直接输出", prompt_text)
+        self.assertIn("【你的视角】", prompt_text)
+        self.assertIn("身份玩法", prompt_text)
+        self.assertIn("你的额外信息", prompt_text)
+        self.assertIn("【公开记录】", prompt_text)
+        self.assertIn("【本次行动】", prompt_text)
+        self.assertIn("只返回 JSON", prompt_text)
+        self.assertNotIn("当前局面", prompt_text)
+        self.assertNotIn("公开时间线", prompt_text)
+        self.assertNotIn("当前行动", prompt_text)
+        for schema_key in (
+            "private_view",
+            "public_state",
+            "recent_public_events",
+            "legal_actions",
+        ):
+            self.assertNotIn(schema_key, prompt_text)
 
-    def test_speech_and_vote_prompts_do_not_include_json_schema(self):
+    def test_speech_and_vote_prompts_use_minimal_json_contracts(self):
         state = create_five_player_game(seed=20)
         state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
 
-        for phase in (Phase.SPEECH, Phase.VOTING):
-            context = ContextBuilder().build(state, state.players[1].id, phase)
-            prompt_text = "\n".join(
-                message["content"] for message in PromptBuilder().build_messages(context, phase)
-            )
+        speech_context = ContextBuilder().build(state, state.players[1].id, Phase.SPEECH)
+        speech_prompt = "\n".join(
+            message["content"] for message in PromptBuilder().build_messages(speech_context, Phase.SPEECH)
+        )
+        self.assertIn('{"public_message"', speech_prompt)
+        self.assertIn('"private_reason_summary"', speech_prompt)
+        self.assertNotIn('"stance"', speech_prompt)
 
-            self.assertNotIn("JSON", prompt_text)
-            self.assertNotIn("public_message", prompt_text)
-            self.assertNotIn("private_reason_summary", prompt_text)
-            self.assertNotIn('"vote"', prompt_text)
-            self.assertIn("直接输出", prompt_text)
+        vote_context = ContextBuilder().build(state, state.players[1].id, Phase.VOTING)
+        vote_prompt = "\n".join(
+            message["content"] for message in PromptBuilder().build_messages(vote_context, Phase.VOTING)
+        )
+        self.assertIn('{"vote"', vote_prompt)
+        self.assertIn('"private_reason_summary"', vote_prompt)
+        self.assertNotIn('"public_reason"', vote_prompt)
 
     def test_speech_prompt_discourages_repeated_stock_phrasing(self):
         state = create_five_player_game(seed=20)
@@ -128,7 +177,7 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertIn("不要复述", prompt_text)
         self.assertIn("模板句式", prompt_text)
 
-    def test_prompt_builder_retains_old_events_as_incremental_messages(self):
+    def test_prompt_builder_presents_old_events_as_chronological_timeline(self):
         state = create_five_player_game(seed=20)
         events = [
             {
@@ -151,15 +200,69 @@ class PromptingAndProviderTests(unittest.TestCase):
 
         messages = PromptBuilder().build_messages(context, Phase.SPEECH)
         contents = [message["content"] for message in messages]
+        timeline = next(content for content in contents if content.startswith("【公开记录】"))
 
-        self.assertTrue(any("#1 player_1 提交车队" in content for content in contents))
-        self.assertTrue(any("#2 player_2 发言" in content for content in contents))
+        self.assertIn("#1 第 1 轮，player_1 提交车队", timeline)
+        self.assertIn("#2 player_2 发言", timeline)
         self.assertFalse(any("新增公开信息" in content for content in contents))
         self.assertLess(
-            next(index for index, content in enumerate(contents) if "#1 player_1 提交车队" in content),
-            next(index for index, content in enumerate(contents) if "#2 player_2 发言" in content),
+            timeline.index("#1 第 1 轮，player_1 提交车队"),
+            timeline.index("#2 player_2 发言"),
         )
-        self.assertTrue(contents[-1].startswith("当前决策"))
+        self.assertTrue(contents[-1].startswith("【本次行动】"))
+
+    def test_prompt_builder_summarizes_vote_and_quest_results_with_counts(self):
+        state = create_five_player_game(seed=20)
+        events = [
+            {
+                "event_index": 1,
+                "event_type": "team_proposed",
+                "public_payload": {"leader_player_id": "player_1", "team": ["player_1", "player_2"]},
+            },
+            {"event_index": 2, "event_type": "vote_cast", "public_payload": {"player_id": "player_1", "vote": "approve"}},
+            {"event_index": 3, "event_type": "vote_cast", "public_payload": {"player_id": "player_2", "vote": "approve"}},
+            {"event_index": 4, "event_type": "vote_cast", "public_payload": {"player_id": "player_3", "vote": "reject"}},
+            {"event_index": 5, "event_type": "vote_result", "public_payload": {"approved": True, "failed_team_votes": 0}},
+            {"event_index": 6, "event_type": "quest_action_submitted", "public_payload": {"player_id": "player_1"}},
+            {"event_index": 7, "event_type": "quest_action_submitted", "public_payload": {"player_id": "player_2"}},
+            {
+                "event_index": 8,
+                "event_type": "quest_result",
+                "public_payload": {
+                    "quest_results": ["fail"],
+                    "success_cards": 1,
+                    "fail_cards": 1,
+                },
+            },
+        ]
+        context = ContextBuilder().build(
+            state,
+            state.players[1].id,
+            Phase.SPEECH,
+            public_events=events,
+        )
+
+        prompt_text = "\n".join(
+            message["content"] for message in PromptBuilder().build_messages(context, Phase.SPEECH)
+        )
+
+        self.assertIn("投票结果：车队通过。赞成：player_1、player_2；反对：player_3。", prompt_text)
+        self.assertNotIn("player_1 已投票", prompt_text)
+        self.assertIn("任务成员 player_1、player_2 已提交任务行动。", prompt_text)
+        self.assertIn("第 1 轮任务结果：失败。成功票 1，失败票 1。", prompt_text)
+
+    def test_identity_view_uses_role_specific_gameplay_and_extra_information(self):
+        state = create_five_player_game(seed=11)
+        merlin = next(player for player in state.players if player.role == Role.MERLIN)
+        evil_ids = [player.id for player in state.players if player.faction == Faction.EVIL]
+
+        context = ContextBuilder().build(state, merlin.id, Phase.SPEECH)
+        prompt_text = "\n".join(
+            message["content"] for message in PromptBuilder().build_messages(context, Phase.SPEECH)
+        )
+
+        self.assertIn("身份玩法：你知道哪些玩家属于恶方", prompt_text)
+        self.assertIn(f"你的额外信息：{evil_ids[0]}、{evil_ids[1]} 属于恶方。", prompt_text)
 
     def test_player_facing_prompt_omits_parenthetical_noise(self):
         state = create_five_player_game(seed=20)
@@ -201,6 +304,27 @@ class PromptingAndProviderTests(unittest.TestCase):
 
         self.assertEqual(result.validation_status, "valid")
         self.assertEqual(result.decision.public_message, "我觉得这轮先看车队票型，暂时不急着下定论。")
+        self.assertEqual(result.decision.stance, "uncertain")
+
+    def test_ai_player_accepts_json_speech_without_stance(self):
+        class JsonProvider:
+            def chat_completion(self, profile, messages):
+                return json.dumps(
+                    {
+                        "public_message": "这轮我先看车队结构和后续票型。",
+                        "private_reason_summary": "发言阶段不强制给 stance。",
+                    },
+                    ensure_ascii=False,
+                )
+
+        state = create_five_player_game(seed=21)
+        state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
+        speaker = state.players[3]
+
+        result = AiPlayer(provider=JsonProvider()).speak(state, speaker.id, test_profile())
+
+        self.assertEqual(result.validation_status, "valid")
+        self.assertEqual(result.decision.public_message, "这轮我先看车队结构和后续票型。")
         self.assertEqual(result.decision.stance, "uncertain")
 
     def test_ai_player_accepts_plain_text_vote_output(self):
@@ -307,5 +431,5 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertIsNone(captured.exception.output_raw)
         self.assertIn("provider offline", captured.exception.error_message)
         self.assertTrue(
-            any("当前阶段：投票" in message["content"] for message in captured.exception.prompt_messages)
+            any("现在轮到你投票" in message["content"] for message in captured.exception.prompt_messages)
         )

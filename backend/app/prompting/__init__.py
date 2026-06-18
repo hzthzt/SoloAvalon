@@ -1,3 +1,1 @@
-from .templates import PromptBuilder
-
-__all__ = ["PromptBuilder"]
+__all__: list[str] = []

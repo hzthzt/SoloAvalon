@@ -222,26 +222,29 @@ class GameService:
                 {"player_id": human.id, "vote": result.decision.vote.value},
             )
         elif action_type == "mission_action":
-            result = self._run_ai_turn(
-                game_id,
-                human.id,
-                Phase.QUEST,
-                "mission_action",
-                profile,
-                lambda: self._ai_player.mission_action(
-                    state,
+            if human.faction == Faction.GOOD:
+                state = submit_quest_action(state, human.id, MissionAction.SUCCESS)
+            else:
+                result = self._run_ai_turn(
+                    game_id,
                     human.id,
+                    Phase.QUEST,
+                    "mission_action",
                     profile,
-                    public_events=self._public_events_for_ai(game_id),
-                ),
-            )
-            state = submit_quest_action(state, human.id, result.decision.mission_action)
-            self._log_ai_decision(game_id, human.id, Phase.QUEST, "mission_action", profile, result)
+                    lambda: self._ai_player.mission_action(
+                        state,
+                        human.id,
+                        profile,
+                        public_events=self._public_events_for_ai(game_id),
+                    ),
+                )
+                state = submit_quest_action(state, human.id, result.decision.mission_action)
+                self._log_ai_decision(game_id, human.id, Phase.QUEST, "mission_action", profile, result)
             self._events.append_event(
                 game_id,
                 "quest_action_submitted",
                 {"player_id": human.id},
-                {"mission_action": result.decision.mission_action.value},
+                {"mission_action": state.quest_actions[human.id].value},
             )
         elif action_type == "assassinate":
             result = self._run_ai_turn(
@@ -385,6 +388,16 @@ class GameService:
                 for player_id in state.proposed_team:
                     if player_id == human.id or player_id in state.quest_actions:
                         continue
+                    player = next(player for player in state.players if player.id == player_id)
+                    if player.faction == Faction.GOOD:
+                        state = submit_quest_action(state, player_id, MissionAction.SUCCESS)
+                        self._events.append_event(
+                            game_id,
+                            "quest_action_submitted",
+                            {"player_id": player_id},
+                            {"mission_action": MissionAction.SUCCESS.value},
+                        )
+                        continue
                     profile = self._profile_for_ai(game_id, player_id)
                     result = self._run_ai_turn(
                         game_id,
@@ -410,12 +423,20 @@ class GameService:
                 if human.id in state.proposed_team and human.id not in state.quest_actions:
                     self._set_state(game_id, state)
                     return state
+                success_cards = sum(
+                    1 for action in state.quest_actions.values() if action == MissionAction.SUCCESS
+                )
+                fail_cards = sum(
+                    1 for action in state.quest_actions.values() if action == MissionAction.FAIL
+                )
                 state = finalize_quest(state)
                 self._events.append_event(
                     game_id,
                     "quest_result",
                     {
                         "quest_results": ["success" if result else "fail" for result in state.quest_results],
+                        "success_cards": success_cards,
+                        "fail_cards": fail_cards,
                         "phase": state.phase.value,
                         "winner": state.winner.value if state.winner else None,
                     },

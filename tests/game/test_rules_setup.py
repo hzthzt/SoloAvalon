@@ -1,7 +1,12 @@
 import unittest
 
 from backend.app.game.models import Faction, Phase, Role
-from backend.app.game.rules import create_five_player_game, private_view_for_player
+from backend.app.game.rules import (
+    STANDARD_FACTION_COUNTS,
+    STANDARD_MISSION_CONFIGS,
+    create_five_player_game,
+    private_view_for_player,
+)
 
 
 def player_with_role(state, role):
@@ -9,6 +14,36 @@ def player_with_role(state, role):
 
 
 class RulesSetupTests(unittest.TestCase):
+    def test_standard_mission_and_faction_configs_cover_five_to_ten_players(self):
+        self.assertEqual(
+            {
+                player_count: [
+                    (mission.team_size, mission.fail_cards_required)
+                    for mission in missions
+                ]
+                for player_count, missions in STANDARD_MISSION_CONFIGS.items()
+            },
+            {
+                5: [(2, 1), (3, 1), (2, 1), (3, 1), (3, 1)],
+                6: [(2, 1), (3, 1), (4, 1), (3, 1), (4, 1)],
+                7: [(2, 1), (3, 1), (3, 1), (4, 2), (4, 1)],
+                8: [(3, 1), (4, 1), (4, 1), (5, 2), (5, 1)],
+                9: [(3, 1), (4, 1), (4, 1), (5, 2), (5, 1)],
+                10: [(3, 1), (4, 1), (4, 1), (5, 2), (5, 1)],
+            },
+        )
+        self.assertEqual(
+            STANDARD_FACTION_COUNTS,
+            {
+                5: (3, 2),
+                6: (4, 2),
+                7: (4, 3),
+                8: (5, 3),
+                9: (6, 3),
+                10: (6, 4),
+            },
+        )
+
     def test_create_five_player_game_assigns_standard_roles(self):
         state = create_five_player_game(seed=20260615, human_seat_index=0)
 

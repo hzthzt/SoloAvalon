@@ -7,7 +7,7 @@ from pathlib import Path
 import backend.app.services.game_service as game_service_module
 from backend.app.ai.player import AiDecisionError, AiPlayer, AiTurnResult
 from backend.app.ai.strategy import SpeechDecision
-from backend.app.game.models import Phase, Role
+from backend.app.game.models import Faction, Phase, Role
 from backend.app.services.game_service import GameService
 from backend.app.storage.ai_decision_repository import AiDecisionRepository
 from backend.app.storage.ai_memory_repository import AiMemoryRepository
@@ -145,8 +145,21 @@ class GameServiceTests(unittest.TestCase):
             self.assertIn("user", roles)
             self.assertIn("Prompt", prompt_messages[0]["content"])
             self.assertTrue(
-                any("玩家视角" in message["content"] for message in prompt_messages)
+                any("【你的视角】" in message["content"] for message in prompt_messages)
             )
+            prompt_text = "\n".join(message["content"] for message in prompt_messages)
+            self.assertIn("【本局配置】", prompt_text)
+            self.assertIn("【公开记录】", prompt_text)
+            self.assertIn("【本次行动】", prompt_text)
+            self.assertNotIn("SoloAvalon", prompt_text)
+            self.assertNotIn("隐藏真相", prompt_text)
+            for schema_key in (
+                "private_view",
+                "public_state",
+                "recent_public_events",
+                "legal_actions",
+            ):
+                self.assertNotIn(schema_key, prompt_text)
 
     def test_ai_failure_is_logged_and_raised_without_synthetic_decision(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -190,6 +203,59 @@ class GameServiceTests(unittest.TestCase):
             self.assertGreaterEqual(len(snapshots), 4)
             self.assertTrue(all("suspicions" in snapshot.memory_payload for snapshot in snapshots))
             self.assertTrue(all("key_observations" in snapshot.memory_payload for snapshot in snapshots))
+
+    def test_good_quest_actions_are_submitted_without_llm_prompt(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            class NoMissionPromptProvider(_DeterministicProvider):
+                def chat_completion(self, profile, messages):
+                    text = "\n".join(message["content"] for message in messages)
+                    if '"mission_action"' in text:
+                        raise RuntimeError("good mission action should not call provider")
+                    return super().chat_completion(profile, messages)
+
+            service = _service(tmpdir, ai_player=AiPlayer(provider=NoMissionPromptProvider()))
+            state = service.create_game(seed=4)
+            internal_state = service._state(state["id"])
+            good_ai = next(
+                player
+                for player in internal_state.players
+                if not player.is_human and player.faction == Faction.GOOD
+            )
+
+            state = service.submit_human_action(
+                state["id"],
+                "propose_team",
+                {"team": ["player_1", good_ai.id]},
+            )
+            state = service.submit_human_action(
+                state["id"],
+                "speak",
+                {"message": "我先带一个好验证的队伍。"},
+            )
+            state = service.submit_human_action(
+                state["id"],
+                "vote",
+                {"vote": "approve"},
+            )
+            state = service.submit_human_ai_action(state["id"])
+
+            self.assertEqual(state["current_round"], 2)
+            quest_submitters = [
+                event.public_payload["player_id"]
+                for event in service.list_events(state["id"])
+                if event.event_type == "quest_action_submitted"
+            ]
+            self.assertIn("player_1", quest_submitters)
+            self.assertIn(good_ai.id, quest_submitters)
+            decisions = AiDecisionRepository(service.connection).list_decisions(state["id"])
+            self.assertNotIn(
+                ("mission_action", good_ai.id),
+                {(decision.decision_type, decision.player_id) for decision in decisions},
+            )
+            self.assertNotIn(
+                ("mission_action", "player_1"),
+                {(decision.decision_type, decision.player_id) for decision in decisions},
+            )
 
     def test_ai_turns_receive_public_event_history(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -346,10 +412,22 @@ class _DeterministicProvider:
                 },
                 ensure_ascii=False,
             )
-        if "当前阶段：发言" in text:
-            return "我先围绕当前车队观察大家的表态，投票分布会很有价值。"
-        if "当前阶段：投票" in text:
-            return "赞成，因为这轮可以先让任务结果和票型信息落地。"
+        if "现在轮到你发言" in text:
+            return json.dumps(
+                {
+                    "public_message": "我先围绕当前车队观察大家的表态，投票分布会很有价值。",
+                    "private_reason_summary": "测试模型输出发言。",
+                },
+                ensure_ascii=False,
+            )
+        if "现在轮到你投票" in text:
+            return json.dumps(
+                {
+                    "vote": "approve",
+                    "private_reason_summary": "测试模型投赞成票。",
+                },
+                ensure_ascii=False,
+            )
         if '"mission_action"' in text:
             return json.dumps(
                 {
@@ -373,7 +451,7 @@ class _DeterministicProvider:
 
 
 def _team_size(text):
-    match = re.search(r"team_size=(\d+)", text)
+    match = re.search(r"车队人数：(\d+)", text)
     return int(match.group(1)) if match else 2
 
 

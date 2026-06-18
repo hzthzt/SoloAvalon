@@ -46,7 +46,7 @@ def team_decision_from_output(output: dict[str, Any], state: GameState) -> TeamP
 
 
 def speech_decision_from_output(output: dict[str, Any]) -> SpeechDecision:
-    stance = _string(output, "stance")
+    stance = str(output.get("stance", "uncertain"))
     if stance not in {"support_team", "oppose_team", "uncertain"}:
         raise ValueError("invalid speech stance")
     return SpeechDecision(

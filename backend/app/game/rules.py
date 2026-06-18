@@ -28,13 +28,61 @@ STANDARD_FIVE_PLAYER_ROLES: tuple[Role, ...] = (
     Role.LOYAL_SERVANT,
 )
 
-FIVE_PLAYER_MISSIONS: tuple[MissionConfig, ...] = (
-    MissionConfig(round_number=1, team_size=2, fail_cards_required=1),
-    MissionConfig(round_number=2, team_size=3, fail_cards_required=1),
-    MissionConfig(round_number=3, team_size=2, fail_cards_required=1),
-    MissionConfig(round_number=4, team_size=3, fail_cards_required=1),
-    MissionConfig(round_number=5, team_size=3, fail_cards_required=1),
-)
+STANDARD_MISSION_CONFIGS: dict[int, tuple[MissionConfig, ...]] = {
+    5: (
+        MissionConfig(round_number=1, team_size=2, fail_cards_required=1),
+        MissionConfig(round_number=2, team_size=3, fail_cards_required=1),
+        MissionConfig(round_number=3, team_size=2, fail_cards_required=1),
+        MissionConfig(round_number=4, team_size=3, fail_cards_required=1),
+        MissionConfig(round_number=5, team_size=3, fail_cards_required=1),
+    ),
+    6: (
+        MissionConfig(round_number=1, team_size=2, fail_cards_required=1),
+        MissionConfig(round_number=2, team_size=3, fail_cards_required=1),
+        MissionConfig(round_number=3, team_size=4, fail_cards_required=1),
+        MissionConfig(round_number=4, team_size=3, fail_cards_required=1),
+        MissionConfig(round_number=5, team_size=4, fail_cards_required=1),
+    ),
+    7: (
+        MissionConfig(round_number=1, team_size=2, fail_cards_required=1),
+        MissionConfig(round_number=2, team_size=3, fail_cards_required=1),
+        MissionConfig(round_number=3, team_size=3, fail_cards_required=1),
+        MissionConfig(round_number=4, team_size=4, fail_cards_required=2),
+        MissionConfig(round_number=5, team_size=4, fail_cards_required=1),
+    ),
+    8: (
+        MissionConfig(round_number=1, team_size=3, fail_cards_required=1),
+        MissionConfig(round_number=2, team_size=4, fail_cards_required=1),
+        MissionConfig(round_number=3, team_size=4, fail_cards_required=1),
+        MissionConfig(round_number=4, team_size=5, fail_cards_required=2),
+        MissionConfig(round_number=5, team_size=5, fail_cards_required=1),
+    ),
+    9: (
+        MissionConfig(round_number=1, team_size=3, fail_cards_required=1),
+        MissionConfig(round_number=2, team_size=4, fail_cards_required=1),
+        MissionConfig(round_number=3, team_size=4, fail_cards_required=1),
+        MissionConfig(round_number=4, team_size=5, fail_cards_required=2),
+        MissionConfig(round_number=5, team_size=5, fail_cards_required=1),
+    ),
+    10: (
+        MissionConfig(round_number=1, team_size=3, fail_cards_required=1),
+        MissionConfig(round_number=2, team_size=4, fail_cards_required=1),
+        MissionConfig(round_number=3, team_size=4, fail_cards_required=1),
+        MissionConfig(round_number=4, team_size=5, fail_cards_required=2),
+        MissionConfig(round_number=5, team_size=5, fail_cards_required=1),
+    ),
+}
+
+STANDARD_FACTION_COUNTS: dict[int, tuple[int, int]] = {
+    5: (3, 2),
+    6: (4, 2),
+    7: (4, 3),
+    8: (5, 3),
+    9: (6, 3),
+    10: (6, 4),
+}
+
+FIVE_PLAYER_MISSIONS: tuple[MissionConfig, ...] = STANDARD_MISSION_CONFIGS[5]
 
 
 def faction_for_role(role: Role) -> Faction:
