@@ -31,18 +31,34 @@ class StartupEntryTests(unittest.TestCase):
         self.assertIn("backend-install.out.log", ps_text)
         self.assertIn("backend-install.err.log", ps_text)
         self.assertIn("Invoke-LoggedChecked", ps_text)
-        self.assertIn("Existing SoloAvalon services are already reachable", ps_text)
-        self.assertLess(
-            ps_text.index("Existing SoloAvalon services are already reachable"),
-            ps_text.index("Install backend dependencies"),
-        )
 
-    def test_startup_script_checks_model_profile_api_before_reusing_services(self) -> None:
+    def test_startup_script_restarts_project_services_and_finds_fallback_ports(self) -> None:
+        ps_text = (ROOT / "scripts" / "start-dev.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("Get-ListeningProcessIds", ps_text)
+        self.assertIn("Stop-ProjectServiceProcesses", ps_text)
+        self.assertIn("Stop-ProjectServiceOnPort", ps_text)
+        self.assertIn("Find-AvailablePort", ps_text)
+        self.assertIn("Test-BackendServiceProcess", ps_text)
+        self.assertIn("Test-FrontendServiceProcess", ps_text)
+        self.assertIn("SOLOAVALON_BACKEND_URL", ps_text)
+        self.assertIn("SOLOAVALON_FRONTEND_ORIGIN", ps_text)
+        self.assertNotIn("Existing SoloAvalon services are already reachable", ps_text)
+
+    def test_startup_script_checks_model_profile_api_before_reporting_ready(self) -> None:
         ps_text = (ROOT / "scripts" / "start-dev.ps1").read_text(encoding="utf-8")
 
         self.assertIn('$BackendProfilesUrl = "http://127.0.0.1:$BackendPort/api/llm-profiles"', ps_text)
-        self.assertIn("Test-HttpReady $BackendProfilesUrl", ps_text)
         self.assertIn('Wait-ForHttp "Backend model profile API" $BackendProfilesUrl', ps_text)
+
+    def test_runtime_configuration_accepts_dynamic_dev_ports(self) -> None:
+        vite_text = (ROOT / "frontend" / "vite.config.ts").read_text(encoding="utf-8")
+        main_text = (ROOT / "backend" / "app" / "main.py").read_text(encoding="utf-8")
+
+        self.assertIn("SOLOAVALON_BACKEND_URL", vite_text)
+        self.assertIn("http://127.0.0.1:8000", vite_text)
+        self.assertIn("SOLOAVALON_FRONTEND_ORIGIN", main_text)
+        self.assertIn("http://127.0.0.1:5173", main_text)
 
     def test_readme_documents_one_click_start(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

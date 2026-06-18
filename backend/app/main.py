@@ -33,6 +33,14 @@ def _database_path() -> str:
     )
 
 
+def _frontend_origins() -> list[str]:
+    origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    configured_origin = os.environ.get("SOLOAVALON_FRONTEND_ORIGIN")
+    if configured_origin and configured_origin not in origins:
+        origins.append(configured_origin)
+    return origins
+
+
 connection = connect_sqlite(_database_path())
 initialize_database(connection)
 game_service = GameService(connection)
@@ -43,7 +51,7 @@ app = FastAPI(title="SoloAvalon")
 if CORSMiddleware is not None:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=_frontend_origins(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

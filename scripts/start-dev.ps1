@@ -10,6 +10,7 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $FrontendRoot = Join-Path $ProjectRoot "frontend"
 $LogDir = Join-Path $ProjectRoot "logs"
+$BackendBaseUrl = "http://127.0.0.1:$BackendPort"
 $BackendUrl = "http://127.0.0.1:$BackendPort/api/games"
 $BackendProfilesUrl = "http://127.0.0.1:$BackendPort/api/llm-profiles"
 $FrontendUrl = "http://127.0.0.1:$FrontendPort"
@@ -30,6 +31,13 @@ function Write-Step {
 
     Write-Host ""
     Write-Host "==> $Message"
+}
+
+function Set-DevUrls {
+    $script:BackendBaseUrl = "http://127.0.0.1:$BackendPort"
+    $script:BackendUrl = "http://127.0.0.1:$BackendPort/api/games"
+    $script:BackendProfilesUrl = "http://127.0.0.1:$BackendPort/api/llm-profiles"
+    $script:FrontendUrl = "http://127.0.0.1:$FrontendPort"
 }
 
 function Get-RequiredCommand {
@@ -148,6 +156,160 @@ function Test-PortInUse {
     }
 }
 
+function Get-ListeningProcessIds {
+    param([int]$Port)
+
+    try {
+        return @(
+            Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+                Select-Object -ExpandProperty OwningProcess -Unique
+        )
+    }
+    catch {
+        return @()
+    }
+}
+
+function Get-ProcessCommandLine {
+    param([int]$ProcessId)
+
+    try {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction Stop
+        if ($process -and $process.CommandLine) {
+            return [string]$process.CommandLine
+        }
+    }
+    catch {
+        return ""
+    }
+
+    return ""
+}
+
+function Test-BackendServiceProcess {
+    param([string]$CommandLine)
+
+    return $CommandLine -match "uvicorn" -and $CommandLine -match "backend\.app\.main:app"
+}
+
+function Test-FrontendServiceProcess {
+    param([string]$CommandLine)
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+        return $false
+    }
+
+    $normalizedCommandLine = $CommandLine.ToLowerInvariant().Replace("/", "\")
+    $normalizedFrontendRoot = ([string]$FrontendRoot).ToLowerInvariant().Replace("/", "\")
+    return $normalizedCommandLine.Contains("vite") -and $normalizedCommandLine.Contains($normalizedFrontendRoot)
+}
+
+function Wait-ForPortRelease {
+    param(
+        [int]$Port,
+        [int]$Attempts = 20
+    )
+
+    for ($i = 1; $i -le $Attempts; $i++) {
+        if (-not (Test-PortInUse $Port)) {
+            return $true
+        }
+
+        Start-Sleep -Milliseconds 250
+    }
+
+    return $false
+}
+
+function Stop-ProjectServiceOnPort {
+    param(
+        [string]$Name,
+        [int]$Port,
+        [scriptblock]$IsProjectProcess
+    )
+
+    $stoppedAny = $false
+    $processIds = @(Get-ListeningProcessIds -Port $Port)
+    foreach ($processId in $processIds) {
+        $commandLine = Get-ProcessCommandLine -ProcessId $processId
+        if (& $IsProjectProcess $commandLine) {
+            Write-Step "Stopping existing $Name on port $Port"
+            Write-Host "$Name PID: $processId"
+            Stop-Process -Id $processId -Force -ErrorAction Stop
+            $stoppedAny = $true
+        }
+    }
+
+    return $stoppedAny
+}
+
+function Stop-ProjectServiceProcesses {
+    param(
+        [string]$Name,
+        [scriptblock]$IsProjectProcess
+    )
+
+    $stoppedCount = 0
+    try {
+        $processes = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    }
+    catch {
+        return $stoppedCount
+    }
+
+    foreach ($process in $processes) {
+        if (-not $process.CommandLine -or [int]$process.ProcessId -eq $PID) {
+            continue
+        }
+
+        if (& $IsProjectProcess ([string]$process.CommandLine)) {
+            Write-Step "Stopping existing $Name process"
+            Write-Host "$Name PID: $($process.ProcessId)"
+            Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+            $stoppedCount += 1
+        }
+    }
+
+    return $stoppedCount
+}
+
+function Find-AvailablePort {
+    param(
+        [string]$Name,
+        [int]$PreferredPort,
+        [scriptblock]$IsProjectProcess,
+        [int]$SearchLimit = 100
+    )
+
+    $lastPort = $PreferredPort + $SearchLimit - 1
+    for ($port = $PreferredPort; $port -le $lastPort; $port++) {
+        if (-not (Test-PortInUse $port)) {
+            if ($port -ne $PreferredPort) {
+                Write-Host "$Name preferred port $PreferredPort is unavailable; using $port."
+            }
+            return $port
+        }
+
+        $stoppedProjectService = Stop-ProjectServiceOnPort `
+            -Name $Name `
+            -Port $port `
+            -IsProjectProcess $IsProjectProcess
+
+        if ($stoppedProjectService -and (Wait-ForPortRelease -Port $port)) {
+            if ($port -ne $PreferredPort) {
+                Write-Host "$Name preferred port $PreferredPort is unavailable; using $port."
+            }
+            return $port
+        }
+
+        if (-not $stoppedProjectService) {
+            Write-Host "$Name port $port is used by another process; trying next port."
+        }
+    }
+
+    throw "No available port found for $Name in range $PreferredPort-$lastPort."
+}
+
 function Wait-ForHttp {
     param(
         [string]$Name,
@@ -219,24 +381,32 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 Write-Host "SoloAvalon local development launcher"
 Write-Host "Project root: $ProjectRoot"
 
-$backendReady = Test-HttpReady $BackendUrl
-$backendProfilesReady = Test-HttpReady $BackendProfilesUrl
-$frontendReady = Test-HttpReady $FrontendUrl
-
-if ($backendReady -and -not $backendProfilesReady) {
-    throw "Existing backend API is reachable, but the model profile API is failing. Stop the old backend service before starting again."
+$stoppedProjectServices = 0
+$stoppedProjectServices += Stop-ProjectServiceProcesses `
+    -Name "Backend API" `
+    -IsProjectProcess ${function:Test-BackendServiceProcess}
+$stoppedProjectServices += Stop-ProjectServiceProcesses `
+    -Name "Frontend Vite" `
+    -IsProjectProcess ${function:Test-FrontendServiceProcess}
+if ($stoppedProjectServices -gt 0) {
+    Start-Sleep -Milliseconds 500
 }
 
-if ($backendReady -and $backendProfilesReady -and $frontendReady) {
-    Write-Step "Existing SoloAvalon services are already reachable"
-    Write-Host "Frontend: $FrontendUrl"
-    Write-Host "Backend: http://127.0.0.1:$BackendPort"
-    Write-Host "Logs: $LogDir"
-    if (-not $NoOpen) {
-        Start-Process $FrontendUrl | Out-Null
-    }
-    exit 0
-}
+$BackendPort = Find-AvailablePort `
+    -Name "Backend API" `
+    -PreferredPort $BackendPort `
+    -IsProjectProcess ${function:Test-BackendServiceProcess}
+$FrontendPort = Find-AvailablePort `
+    -Name "Frontend Vite" `
+    -PreferredPort $FrontendPort `
+    -IsProjectProcess ${function:Test-FrontendServiceProcess}
+Set-DevUrls
+
+$env:SOLOAVALON_BACKEND_URL = $BackendBaseUrl
+$env:SOLOAVALON_FRONTEND_ORIGIN = $FrontendUrl
+
+Write-Host "Frontend URL: $FrontendUrl"
+Write-Host "Backend URL: $BackendBaseUrl"
 
 $python = Get-RequiredCommand "python" "Install Python 3.10 or newer and make sure python is in PATH."
 $npm = Get-NpmCommand
@@ -312,14 +482,6 @@ else {
 
 $startedProcesses = @()
 try {
-    if (Test-PortInUse $BackendPort) {
-        throw "Port $BackendPort is already in use. Stop the old backend service before starting."
-    }
-
-    if (Test-PortInUse $FrontendPort) {
-        throw "Port $FrontendPort is already in use. Stop the old frontend service before starting."
-    }
-
     $backendProcess = Start-LoggedProcess `
         -Name "Backend API" `
         -FilePath $BackendPython `
@@ -368,6 +530,6 @@ catch {
 Write-Host ""
 Write-Host "SoloAvalon is running"
 Write-Host "Frontend: $FrontendUrl"
-Write-Host "Backend: http://127.0.0.1:$BackendPort"
+Write-Host "Backend: $BackendBaseUrl"
 Write-Host "Logs: $LogDir"
 Write-Host "Stop services: Get-Process -Id $($backendProcess.Id),$($frontendProcess.Id) | Stop-Process"
