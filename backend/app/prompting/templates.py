@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from backend.app.ai.context import AiContext
@@ -42,11 +43,12 @@ class PromptBuilder:
 def _player_view_message(context: AiContext, prompt_config: PromptTemplateConfig) -> str:
     role = context.private_view["viewer_role"]
     faction = context.private_view["viewer_faction"]
+    player_labels = _player_label_map(context.public_state["players"])
     return "\n".join(
         [
             prompt_config.section_titles["player_view"],
             prompt_config.labels["player_id"].format(
-                player_id=context.private_view["viewer_player_id"]
+                player_id=_player_label(context.private_view["viewer_player_id"], player_labels)
             ),
             prompt_config.labels["role"].format(
                 role_label=_role_label(role, prompt_config)
@@ -62,7 +64,7 @@ def _player_view_message(context: AiContext, prompt_config: PromptTemplateConfig
             ),
             *_role_detail_tip_lines(role, prompt_config),
             prompt_config.labels["extra_information"].format(
-                extra_information=_extra_information_text(context, prompt_config)
+                extra_information=_extra_information_text(context, prompt_config, player_labels)
             ),
             prompt_config.labels["public_players"].format(
                 players=_player_ids_text(context.public_state["players"])
@@ -72,10 +74,12 @@ def _player_view_message(context: AiContext, prompt_config: PromptTemplateConfig
 
 
 def _public_record_message(context: AiContext, prompt_config: PromptTemplateConfig) -> str:
+    player_labels = _player_label_map(context.public_state["players"])
     lines = [prompt_config.section_titles["public_record"]]
     record_lines = _public_record_lines(
         _player_visible_events(context.recent_public_events),
         prompt_config,
+        player_labels,
     )
     if not record_lines:
         lines.append(prompt_config.labels["empty_public_record"])
@@ -172,6 +176,7 @@ def _player_visible_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]
 def _public_record_lines(
     events: list[dict[str, Any]],
     prompt_config: PromptTemplateConfig,
+    player_labels: dict[str, str],
 ) -> list[str]:
     lines: list[str] = []
     pending_votes: list[tuple[str, str]] = []
@@ -186,7 +191,7 @@ def _public_record_lines(
         if event_type == "vote_cast":
             pending_votes.append(
                 (
-                    _payload_text(public_payload, "player_id"),
+                    _payload_player_text(public_payload, player_labels, "player_id"),
                     _payload_text(public_payload, "vote"),
                 )
             )
@@ -198,7 +203,7 @@ def _public_record_lines(
             continue
 
         if event_type == "quest_action_submitted":
-            submitter = _payload_text(public_payload, "player_id")
+            submitter = _payload_player_text(public_payload, player_labels, "player_id")
             if submitter:
                 pending_quest_submitters.append(submitter)
             continue
@@ -228,8 +233,8 @@ def _public_record_lines(
 
         if event_type == "team_proposed":
             round_number = completed_quests + 1
-            leader = _payload_text(public_payload, "leader_player_id", "leader")
-            team = _join_or_none(_payload_list(public_payload, "team"))
+            leader = _payload_player_text(public_payload, player_labels, "leader_player_id", "leader")
+            team = _join_or_none(_payload_player_list(public_payload, "team", player_labels))
             lines.append(
                 prompt_config.event_templates["team_proposed"].format(
                     round_number=round_number,
@@ -238,8 +243,8 @@ def _public_record_lines(
                 )
             )
         elif event_type == "speech":
-            player = _payload_text(public_payload, "player_id")
-            message = _payload_text(public_payload, "message")
+            player = _payload_player_text(public_payload, player_labels, "player_id")
+            message = _replace_player_ids(_payload_text(public_payload, "message"), player_labels)
             lines.append(
                 prompt_config.event_templates["speech"].format(
                     player_id=player,
@@ -247,8 +252,8 @@ def _public_record_lines(
                 )
             )
         elif event_type == "assassination":
-            assassin = _payload_text(public_payload, "assassin_player_id")
-            target = _payload_text(public_payload, "target_player_id")
+            assassin = _payload_player_text(public_payload, player_labels, "assassin_player_id")
+            target = _payload_player_text(public_payload, player_labels, "target_player_id")
             winner = _payload_text(public_payload, "winner")
             template_key = "assassination_with_winner" if winner else "assassination"
             lines.append(
@@ -262,7 +267,7 @@ def _public_record_lines(
             lines.append(
                 prompt_config.event_templates["unknown_event"].format(
                     event_type=event_type,
-                    payload=_plain_payload_text(public_payload),
+                    payload=_plain_payload_text(public_payload, player_labels),
                 )
             )
 
@@ -379,6 +384,7 @@ def _role_detail_tip_lines(role: object, prompt_config: PromptTemplateConfig) ->
 def _extra_information_text(
     context: AiContext,
     prompt_config: PromptTemplateConfig,
+    player_labels: dict[str, str],
 ) -> str:
     role = str(context.private_view["viewer_role"])
     known_evil_ids = context.private_view.get("known_evil_player_ids", [])
@@ -386,21 +392,65 @@ def _extra_information_text(
     known_good_ids = context.private_view.get("known_good_player_ids", [])
     if role == "merlin" and known_evil_ids:
         return prompt_config.extra_information["merlin_known_evil"].format(
-            players=_join_or_none(known_evil_ids)
+            players=_join_player_labels(known_evil_ids, player_labels)
         )
     if role == "percival" and merlin_candidate_ids:
         return prompt_config.extra_information["percival_merlin_candidates"].format(
-            players=_join_or_none(merlin_candidate_ids)
+            players=_join_player_labels(merlin_candidate_ids, player_labels)
         )
     if known_good_ids:
         return prompt_config.extra_information["known_good"].format(
-            players=_join_or_none(known_good_ids)
+            players=_join_player_labels(known_good_ids, player_labels)
         )
     if context.private_view.get("viewer_faction") == "evil" and known_evil_ids:
         return prompt_config.extra_information["evil_teammates"].format(
-            players=_join_or_none(known_evil_ids)
+            players=_join_player_labels(known_evil_ids, player_labels)
         )
     return prompt_config.extra_information["none"]
+
+
+_PLAYER_ID_PATTERN = re.compile(r"(?<![A-Za-z0-9_])player_(\d+)(?![A-Za-z0-9_])")
+
+
+def _player_label_map(players: object) -> dict[str, str]:
+    if not isinstance(players, list):
+        return {}
+    labels: dict[str, str] = {}
+    for player in players:
+        if not isinstance(player, dict):
+            continue
+        player_id = str(player.get("id", ""))
+        if not player_id:
+            continue
+        labels[player_id] = _seat_player_label(player) or _default_player_label(player_id)
+    return labels
+
+
+def _player_label(player_id: object, player_labels: dict[str, str]) -> str:
+    text = str(player_id)
+    return player_labels.get(text, _default_player_label(text))
+
+
+def _default_player_label(player_id: str) -> str:
+    match = _PLAYER_ID_PATTERN.fullmatch(player_id)
+    if match:
+        return f"玩家{match.group(1)}"
+    return player_id
+
+
+def _seat_player_label(player: dict[str, Any]) -> str:
+    seat_index = player.get("seat_index")
+    if isinstance(seat_index, int):
+        return f"玩家{seat_index + 1}"
+    return ""
+
+
+def _replace_player_ids(text: str, player_labels: dict[str, str]) -> str:
+    def replace_match(match: re.Match[str]) -> str:
+        player_id = f"player_{match.group(1)}"
+        return player_labels.get(player_id, f"玩家{match.group(1)}")
+
+    return _PLAYER_ID_PATTERN.sub(replace_match, text)
 
 
 def _player_ids_text(players: object) -> str:
@@ -411,11 +461,11 @@ def _player_ids_text(players: object) -> str:
         if not isinstance(player, dict):
             continue
         player_id = str(player.get("id", ""))
-        name = str(player.get("name", ""))
-        if name and player_id and name != player_id:
-            parts.append(f"{name}({player_id})")
+        label = _seat_player_label(player)
+        if label:
+            parts.append(label)
         elif player_id:
-            parts.append(player_id)
+            parts.append(_default_player_label(player_id))
     return _join_or_none(parts)
 
 
@@ -452,6 +502,15 @@ def _payload_text(payload: dict[str, Any], *keys: str) -> str:
     return ""
 
 
+def _payload_player_text(
+    payload: dict[str, Any],
+    player_labels: dict[str, str],
+    *keys: str,
+) -> str:
+    value = _payload_text(payload, *keys)
+    return _player_label(value, player_labels) if value else ""
+
+
 def _payload_list(payload: dict[str, Any], key: str) -> list[str]:
     value = payload.get(key)
     if not isinstance(value, list):
@@ -459,10 +518,31 @@ def _payload_list(payload: dict[str, Any], key: str) -> list[str]:
     return [str(item) for item in value]
 
 
-def _plain_payload_text(payload: dict[str, Any]) -> str:
+def _payload_player_list(
+    payload: dict[str, Any],
+    key: str,
+    player_labels: dict[str, str],
+) -> list[str]:
+    return [_player_label(item, player_labels) for item in _payload_list(payload, key)]
+
+
+def _plain_payload_text(payload: dict[str, Any], player_labels: dict[str, str]) -> str:
     if not payload:
         return "无公开详情。"
-    return "；".join(f"{key}={value}" for key, value in sorted(payload.items()))
+    return "；".join(
+        f"{key}={_replace_player_ids(str(value), player_labels)}"
+        for key, value in sorted(payload.items())
+    )
+
+
+def _join_player_labels(values: object, player_labels: dict[str, str]) -> str:
+    if isinstance(values, list):
+        items = [_player_label(value, player_labels) for value in values if str(value)]
+    elif isinstance(values, tuple):
+        items = [_player_label(value, player_labels) for value in values if str(value)]
+    else:
+        items = [_player_label(values, player_labels)] if values else []
+    return "、".join(items) if items else "无"
 
 
 def _join_or_none(values: object) -> str:

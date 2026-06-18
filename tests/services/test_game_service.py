@@ -115,6 +115,38 @@ class GameServiceTests(unittest.TestCase):
             self.assertEqual(state["phase"], Phase.QUEST.value)
             self.assertEqual(state["next_human_action"], "mission_action")
 
+    def test_public_state_and_events_normalize_legacy_player_ids_in_speeches(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = _service(tmpdir)
+            state = service.create_game(seed=2)
+
+            state = service.submit_human_action(
+                state["id"],
+                "propose_team",
+                {"team": ["player_1", "player_2"]},
+            )
+            state = service.submit_human_action(
+                state["id"],
+                "speak",
+                {"message": "我继续信任player_1和player_2。"},
+            )
+
+            speech_messages = list(state["speeches"].values())
+            public_speech_events = [
+                event for event in state["events"] if event["event_type"] == "speech"
+            ]
+
+            self.assertIn("我继续信任玩家1和玩家2。", speech_messages)
+            self.assertTrue(
+                all("player_1" not in message and "player_2" not in message for message in speech_messages)
+            )
+            self.assertTrue(
+                any(
+                    event["public_payload"]["message"] == "我继续信任玩家1和玩家2。"
+                    for event in public_speech_events
+                )
+            )
+
     def test_ai_can_submit_current_human_decision_for_testing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             service = _service(tmpdir)

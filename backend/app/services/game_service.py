@@ -36,7 +36,7 @@ from backend.app.storage.ai_memory_repository import (
 )
 from backend.app.storage.game_repository import GameRepository, GameSummary
 from backend.app.storage.llm_profile_repository import LlmProfileRepository
-from .event_visibility import public_event_dicts
+from .event_visibility import normalize_public_player_references, public_event_dicts
 
 
 class GameService:
@@ -559,7 +559,10 @@ class GameService:
             ],
             "proposed_team": list(state.proposed_team),
             "speech_order": list(state.speech_order),
-            "speeches": dict(state.speeches),
+            "speeches": {
+                player_id: normalize_public_player_references(message)
+                for player_id, message in state.speeches.items()
+            },
             "votes_cast_count": len(state.votes),
             "quest_actions_submitted_count": len(state.quest_actions),
             "quest_results": ["success" if result else "fail" for result in state.quest_results],

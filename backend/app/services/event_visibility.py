@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict
 from typing import Any
 
@@ -11,8 +12,23 @@ def public_event_dicts(events: list[EventRecord]) -> list[dict[str, Any]]:
     for event in events:
         payload = asdict(event)
         payload.pop("private_payload", None)
+        payload["public_payload"] = normalize_public_payload(
+            str(payload["event_type"]),
+            payload["public_payload"],
+        )
         payloads.append(payload)
     return hide_unsettled_vote_values(payloads)
+
+
+def normalize_public_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    if event_type == "speech" and "message" in normalized:
+        normalized["message"] = normalize_public_player_references(str(normalized["message"]))
+    return normalized
+
+
+def normalize_public_player_references(text: str) -> str:
+    return re.sub(r"(?<![A-Za-z0-9_])player_(\d+)(?![A-Za-z0-9_])", r"玩家\1", text)
 
 
 def hide_unsettled_vote_values(events: list[dict[str, Any]]) -> list[dict[str, Any]]:

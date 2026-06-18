@@ -50,7 +50,7 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertIn("身份：派西维尔。", prompt_text)
         self.assertIn("身份策略：", prompt_text)
         self.assertIn("梅林候选", prompt_text)
-        self.assertIn("player_1、player_5", prompt_text)
+        self.assertIn("玩家1、玩家5", prompt_text)
 
     def test_stable_prefix_uses_game_facts_without_prompt_metadata(self):
         state = GameState(
@@ -207,6 +207,38 @@ class PromptingAndProviderTests(unittest.TestCase):
         ):
             self.assertNotIn(schema_key, prompt_text)
 
+    def test_speech_prompt_uses_seat_names_without_internal_player_ids(self):
+        state = create_five_player_game(seed=20)
+        state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
+        events = [
+            {
+                "event_index": 1,
+                "event_type": "team_proposed",
+                "public_payload": {"leader_player_id": "player_1", "team": ["player_1", "player_2"]},
+            },
+            {
+                "event_index": 2,
+                "event_type": "speech",
+                "public_payload": {"player_id": "player_2", "message": "我支持player_1和player_2。"},
+            },
+        ]
+        context = ContextBuilder().build(
+            state,
+            state.players[1].id,
+            Phase.SPEECH,
+            public_events=events,
+        )
+
+        prompt_text = "\n".join(
+            message["content"] for message in PromptBuilder().build_messages(context, Phase.SPEECH)
+        )
+
+        self.assertIn("你是 玩家2。", prompt_text)
+        self.assertIn("公开玩家：玩家1、玩家2、玩家3、玩家4、玩家5。", prompt_text)
+        self.assertIn("#1 第 1 轮，玩家1 提交车队：玩家1、玩家2。", prompt_text)
+        self.assertIn("#2 玩家2 发言：我支持玩家1和玩家2。", prompt_text)
+        self.assertNotRegex(prompt_text, r"player_\d+")
+
     def test_speech_and_vote_prompts_use_minimal_json_contracts(self):
         state = create_five_player_game(seed=20)
         state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
@@ -264,12 +296,12 @@ class PromptingAndProviderTests(unittest.TestCase):
         contents = [message["content"] for message in messages]
         timeline = next(content for content in contents if content.startswith("【公开记录】"))
 
-        self.assertIn("#1 第 1 轮，player_1 提交车队", timeline)
-        self.assertIn("#2 player_2 发言", timeline)
+        self.assertIn("#1 第 1 轮，玩家1 提交车队", timeline)
+        self.assertIn("#2 玩家2 发言", timeline)
         self.assertFalse(any("新增公开信息" in content for content in contents))
         self.assertLess(
-            timeline.index("#1 第 1 轮，player_1 提交车队"),
-            timeline.index("#2 player_2 发言"),
+            timeline.index("#1 第 1 轮，玩家1 提交车队"),
+            timeline.index("#2 玩家2 发言"),
         )
         self.assertTrue(contents[-1].startswith("【本次行动】"))
 
@@ -308,9 +340,9 @@ class PromptingAndProviderTests(unittest.TestCase):
             message["content"] for message in PromptBuilder().build_messages(context, Phase.SPEECH)
         )
 
-        self.assertIn("投票结果：车队通过。赞成：player_1、player_2；反对：player_3。", prompt_text)
+        self.assertIn("投票结果：车队通过。赞成：玩家1、玩家2；反对：玩家3。", prompt_text)
         self.assertNotIn("player_1 已投票", prompt_text)
-        self.assertIn("任务成员 player_1、player_2 已提交任务行动。", prompt_text)
+        self.assertIn("任务成员 玩家1、玩家2 已提交任务行动。", prompt_text)
         self.assertIn("第 1 轮任务结果：失败。成功票 1，失败票 1。", prompt_text)
 
     def test_identity_view_uses_role_specific_gameplay_and_extra_information(self):
@@ -324,7 +356,8 @@ class PromptingAndProviderTests(unittest.TestCase):
         )
 
         self.assertIn("身份玩法：你知道哪些玩家属于恶方", prompt_text)
-        self.assertIn(f"你的额外信息：{evil_ids[0]}、{evil_ids[1]} 属于恶方。", prompt_text)
+        evil_labels = "、".join(f"玩家{int(player_id.split('_')[1])}" for player_id in evil_ids)
+        self.assertIn(f"你的额外信息：{evil_labels} 属于恶方。", prompt_text)
 
     def test_player_facing_prompt_omits_parenthetical_noise(self):
         state = create_five_player_game(seed=20)
@@ -388,6 +421,28 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertEqual(result.validation_status, "valid")
         self.assertEqual(result.decision.public_message, "这轮我先看车队结构和后续票型。")
         self.assertEqual(result.decision.stance, "uncertain")
+
+    def test_ai_player_extracts_malformed_speech_json_without_private_summary_leak(self):
+        class AlmostJsonProvider:
+            def chat_completion(self, profile, messages):
+                return (
+                    '{"public_message":"第一轮我继续信任player_1和player_2，'
+                    '第二轮可以考虑带player_3。",'
+                    '"private_reason_summary":"这段不能公开。”}'
+                )
+
+        state = create_five_player_game(seed=21)
+        state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
+        speaker = state.players[3]
+
+        result = AiPlayer(provider=AlmostJsonProvider()).speak(state, speaker.id, test_profile())
+
+        self.assertEqual(
+            result.decision.public_message,
+            "第一轮我继续信任玩家1和玩家2，第二轮可以考虑带玩家3。",
+        )
+        self.assertNotIn("private_reason_summary", result.decision.public_message)
+        self.assertNotIn("这段不能公开", result.decision.public_message)
 
     def test_ai_player_accepts_plain_text_vote_output(self):
         class TextProvider:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from backend.app.ai.strategy import (
@@ -14,14 +15,7 @@ from backend.app.game.models import Faction, GameState, MissionAction, Vote
 
 
 def parse_json_object(raw: str) -> dict[str, Any]:
-    text = raw.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
+    text = _strip_code_fence(raw)
     parsed = json.loads(text)
     if not isinstance(parsed, dict):
         raise ValueError("model output must be a JSON object")
@@ -41,7 +35,7 @@ def team_decision_from_output(output: dict[str, Any], state: GameState) -> TeamP
     return TeamProposalDecision(
         team=tuple(team),
         private_reason_summary=_string(output, "private_reason_summary"),
-        public_message=str(output.get("public_message", "")),
+        public_message=_normalize_public_player_references(str(output.get("public_message", ""))),
     )
 
 
@@ -50,14 +44,17 @@ def speech_decision_from_output(output: dict[str, Any]) -> SpeechDecision:
     if stance not in {"support_team", "oppose_team", "uncertain"}:
         raise ValueError("invalid speech stance")
     return SpeechDecision(
-        public_message=_string(output, "public_message"),
+        public_message=_normalize_public_player_references(_string(output, "public_message")),
         stance=stance,
         private_reason_summary=_string(output, "private_reason_summary"),
     )
 
 
 def speech_decision_from_text(raw: str) -> SpeechDecision:
-    text = _plain_text(raw)
+    text = _extracted_public_message(raw) or _plain_text(raw)
+    if _looks_like_json_object(text):
+        raise ValueError("invalid speech JSON output")
+    text = _normalize_public_player_references(text)
     return SpeechDecision(
         public_message=text,
         stance=_infer_stance(text),
@@ -132,6 +129,13 @@ def _string(output: dict[str, Any], key: str) -> str:
 
 
 def _plain_text(raw: str) -> str:
+    text = _strip_code_fence(raw)
+    if not text:
+        raise ValueError("model output text is required")
+    return text
+
+
+def _strip_code_fence(raw: str) -> str:
     text = raw.strip()
     if text.startswith("```"):
         lines = text.splitlines()
@@ -140,9 +144,31 @@ def _plain_text(raw: str) -> str:
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         text = "\n".join(lines).strip()
-    if not text:
-        raise ValueError("model output text is required")
     return text
+
+
+def _extracted_public_message(raw: str) -> str | None:
+    text = _strip_code_fence(raw)
+    match = re.search(r'"public_message"\s*:\s*"((?:\\.|[^"\\])*)"', text)
+    if not match:
+        return None
+    encoded = f'"{match.group(1)}"'
+    try:
+        value = json.loads(encoded)
+    except json.JSONDecodeError:
+        value = match.group(1).replace('\\"', '"')
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value
+
+
+def _looks_like_json_object(text: str) -> bool:
+    stripped = text.lstrip()
+    return stripped.startswith("{") or '"private_reason_summary"' in stripped
+
+
+def _normalize_public_player_references(text: str) -> str:
+    return re.sub(r"(?<![A-Za-z0-9_])player_(\d+)(?![A-Za-z0-9_])", r"玩家\1", text)
 
 
 def _infer_stance(text: str) -> str:
