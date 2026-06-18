@@ -58,6 +58,7 @@ export function App() {
   const [game, setGame] = useState<GameState | null>(null);
   const [profiles, setProfiles] = useState<LlmProfile[]>([]);
   const [games, setGames] = useState<GameSummary[]>([]);
+  const [humanName, setHumanName] = useState("真人玩家");
   const [aiNames, setAiNames] = useState(["AI 1", "AI 2", "AI 3", "AI 4"]);
   const [defaultProfileId, setDefaultProfileId] = useState("");
   const [aiProfileOverrides, setAiProfileOverrides] = useState(["", "", "", ""]);
@@ -145,6 +146,7 @@ export function App() {
   async function startGame() {
     await run(async () => {
       let created = await createGame({
+        human_name: humanName,
         ai_names: aiNames,
         default_llm_profile_id: defaultProfileId || undefined,
         ai_profile_overrides: Object.fromEntries(
@@ -376,6 +378,10 @@ export function App() {
                   </option>
                 ))}
               </select>
+            </label>
+            <label>
+              真人昵称
+              <input value={humanName} onChange={(event) => setHumanName(event.target.value)} />
             </label>
             <div className="ai-name-grid">
               {aiNames.map((name, index) => (
@@ -771,7 +777,8 @@ function GameDesk({
           >
             <div className="seat-index">{player.seat_index + 1}</div>
             <h3>{player.name}</h3>
-            <p>{player.visible_role ? roleLabel(player.visible_role) : "未知身份"}</p>
+            {player.original_name && <p className="original-name">{player.original_name}</p>}
+            <p className="visible-role">{player.visible_role ? roleLabel(player.visible_role) : "未知身份"}</p>
             <span>{player.is_human ? "真人" : "AI"}</span>
           </article>
         ))}

@@ -19,7 +19,7 @@ class GameServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             service = _service(tmpdir)
 
-            state = service.create_game(seed=20260615)
+            state = service.create_game(seed=2)
 
             self.assertEqual(state["phase"], Phase.TEAM_PROPOSAL.value)
             self.assertEqual(state["human_player_id"], "player_1")
@@ -44,14 +44,50 @@ class GameServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             service = _service(tmpdir)
 
-            state = service.create_game(seed=20260615)
+            state = service.create_game(seed=2)
 
             self.assertRegex(state["id"], r"^\d{8}_\d{6}_\d{6}$")
+
+    def test_create_game_returns_anonymous_names_and_keeps_original_names_out_of_prompt(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = _service(tmpdir)
+
+            state = service.create_game(
+                seed=20260619,
+                human_name="张三",
+                ai_names=["阿尔法", "贝塔", "伽马", "德尔塔"],
+            )
+
+            self.assertEqual(
+                [player["name"] for player in state["players"]],
+                ["玩家1", "玩家2", "玩家3", "玩家4", "玩家5"],
+            )
+            human = next(player for player in state["players"] if player["is_human"])
+            self.assertNotEqual(human["id"], "player_1")
+            self.assertEqual(human["original_name"], "张三")
+            self.assertCountEqual(
+                [player["original_name"] for player in state["players"] if not player["is_human"]],
+                ["阿尔法", "贝塔", "伽马", "德尔塔"],
+            )
+
+            ai_events = [
+                event for event in service.list_events(state["id"]) if event.event_type == "ai_decision"
+            ]
+            self.assertGreater(len(ai_events), 0)
+            prompt_text = "\n".join(
+                message["content"]
+                for event in ai_events
+                for message in event.private_payload["prompt_messages"]
+            )
+            self.assertIn("玩家1", prompt_text)
+            self.assertNotIn("张三", prompt_text)
+            for original_name in ("阿尔法", "贝塔", "伽马", "德尔塔"):
+                self.assertNotIn(original_name, prompt_text)
 
     def test_human_actions_trigger_ai_until_next_human_decision(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             service = _service(tmpdir)
-            state = service.create_game(seed=1)
+            state = service.create_game(seed=2)
 
             state = service.submit_human_action(
                 state["id"],
@@ -82,7 +118,7 @@ class GameServiceTests(unittest.TestCase):
     def test_ai_can_submit_current_human_decision_for_testing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             service = _service(tmpdir)
-            state = service.create_game(seed=1)
+            state = service.create_game(seed=2)
 
             updated = service.submit_human_ai_action(state["id"])
             decisions = AiDecisionRepository(service.connection).list_decisions(state["id"])
@@ -95,7 +131,7 @@ class GameServiceTests(unittest.TestCase):
     def test_ai_controlled_state_includes_public_event_flow(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             service = _service(tmpdir)
-            state = service.create_game(seed=1)
+            state = service.create_game(seed=2)
 
             updated = service.submit_human_ai_action(state["id"])
 
@@ -109,7 +145,7 @@ class GameServiceTests(unittest.TestCase):
     def test_ai_turns_are_persisted_as_ai_decisions(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             service = _service(tmpdir)
-            state = service.create_game(seed=1)
+            state = service.create_game(seed=2)
 
             state = service.submit_human_action(
                 state["id"],
@@ -131,7 +167,7 @@ class GameServiceTests(unittest.TestCase):
     def test_ai_decision_private_event_includes_prompt_messages(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             service = _service(tmpdir)
-            state = service.create_game(seed=1)
+            state = service.create_game(seed=2)
 
             service.submit_human_ai_action(state["id"])
             ai_events = [
@@ -167,7 +203,7 @@ class GameServiceTests(unittest.TestCase):
                     raise RuntimeError("provider offline")
 
             service = _service(tmpdir, ai_player=AiPlayer(provider=FailingProvider()))
-            state = service.create_game(seed=1)
+            state = service.create_game(seed=2)
 
             with self.assertRaises(AiDecisionError):
                 service.submit_human_ai_action(state["id"])
@@ -184,7 +220,7 @@ class GameServiceTests(unittest.TestCase):
     def test_ai_turns_are_persisted_as_private_memory_snapshots(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             service = _service(tmpdir)
-            state = service.create_game(seed=1)
+            state = service.create_game(seed=2)
 
             state = service.submit_human_action(
                 state["id"],
@@ -213,7 +249,7 @@ class GameServiceTests(unittest.TestCase):
                     return super().chat_completion(profile, messages)
 
             service = _service(tmpdir, ai_player=AiPlayer(provider=NoMissionPromptProvider()))
-            state = service.create_game(seed=0)
+            state = service.create_game(seed=2)
             internal_state = service._state(state["id"])
             good_ai = next(
                 player
@@ -285,7 +321,7 @@ class GameServiceTests(unittest.TestCase):
 
             ai_player = RecordingAiPlayer()
             service = _service(tmpdir, ai_player=ai_player)
-            state = service.create_game(seed=1)
+            state = service.create_game(seed=2)
             state = service.submit_human_action(
                 state["id"],
                 "propose_team",
@@ -353,7 +389,7 @@ class GameServiceTests(unittest.TestCase):
             try:
                 initialize_database(connection)
                 service = GameService(connection, ai_player=AiPlayer(provider=_DeterministicProvider()))
-                state = service.create_game(seed=1)
+                state = service.create_game(seed=2)
                 state = service.submit_human_action(
                     state["id"],
                     "propose_team",

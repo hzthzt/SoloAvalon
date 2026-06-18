@@ -8,16 +8,19 @@ from backend.app.llm.profiles import LlmProfileInput
 
 @dataclass(frozen=True)
 class CreateGameRequest:
+    human_name: str | None = None
     ai_names: list[str] | None = None
     default_llm_profile_id: str | None = None
     ai_profile_overrides: dict[str, str | None] | None = None
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "CreateGameRequest":
+        human_name = _optional_string(payload.get("human_name"))
         default_profile = _optional_string(payload.get("default_llm_profile_id"))
         ai_names = payload.get("ai_names")
         overrides = payload.get("ai_profile_overrides")
         return cls(
+            human_name=human_name,
             ai_names=[str(name) for name in ai_names] if isinstance(ai_names, list) else None,
             default_llm_profile_id=default_profile,
             ai_profile_overrides=_string_map(overrides) if isinstance(overrides, dict) else None,

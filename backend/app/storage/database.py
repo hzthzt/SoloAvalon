@@ -22,6 +22,7 @@ def initialize_database(connection: sqlite3.Connection) -> None:
     try:
         _migrate_legacy_llm_profile_references(connection)
         connection.executescript(SCHEMA_SQL)
+        _ensure_column(connection, "players", "original_name", "original_name text")
         connection.execute("drop table if exists llm_profiles")
         connection.commit()
     finally:
@@ -176,3 +177,20 @@ def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
         (table_name,),
     ).fetchone()
     return row is not None
+
+
+def _ensure_column(
+    connection: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    column_definition: str,
+) -> None:
+    if not _table_exists(connection, table_name):
+        return
+    columns = {
+        row["name"]
+        for row in connection.execute(f"pragma table_info({table_name})").fetchall()
+    }
+    if column_name in columns:
+        return
+    connection.execute(f"alter table {table_name} add column {column_definition}")

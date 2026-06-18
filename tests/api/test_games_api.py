@@ -24,9 +24,10 @@ class GamesApiTests(unittest.TestCase):
         service = RecordingService()
         api = GamesApi(service)
 
-        api.create_game({"seed": 9, "ai_names": ["A"]})
+        api.create_game({"seed": 9, "human_name": "张三", "ai_names": ["A"]})
 
         self.assertEqual(service.create_kwargs, {
+            "human_name": "张三",
             "ai_names": ["A"],
             "default_llm_profile_id": None,
             "ai_profile_overrides": None,
@@ -40,12 +41,12 @@ class GamesApiTests(unittest.TestCase):
             loaded = api.get_game(created["id"])
 
             self.assertEqual(loaded["id"], created["id"])
-            self.assertEqual(loaded["human_player_id"], "player_1")
+            self.assertIn(loaded["human_player_id"], {player["id"] for player in loaded["players"]})
 
     def test_games_api_submits_action_and_exports_logs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             api = _api(tmpdir)
-            created = api.create_game({})
+            created = api._service.create_game(seed=2)
 
             updated = api.submit_action(
                 created["id"],
@@ -59,7 +60,7 @@ class GamesApiTests(unittest.TestCase):
     def test_games_api_allows_ai_to_drive_current_human_action(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             api = _api(tmpdir)
-            created = api.create_game({})
+            created = api._service.create_game(seed=2)
 
             updated = api.submit_human_ai_action(created["id"])
 
@@ -69,7 +70,7 @@ class GamesApiTests(unittest.TestCase):
     def test_list_events_hides_private_payload_by_default(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             api = _api(tmpdir)
-            created = api.create_game({})
+            created = api._service.create_game(seed=2)
 
             public_events = api.list_events(created["id"])
 
@@ -78,7 +79,7 @@ class GamesApiTests(unittest.TestCase):
     def test_list_events_can_include_private_payload_explicitly(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             api = _api(tmpdir)
-            created = api.create_game({})
+            created = api._service.create_game(seed=2)
 
             private_events = api.list_events(created["id"], include_private=True)
 
@@ -89,10 +90,10 @@ class GamesApiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             connection = connect_sqlite(":memory:")
             initialize_database(connection)
-            service = GameService(connection)
+            service = GameService(connection, ai_player=AiPlayer(provider=_DeterministicProvider()))
             api = GamesApi(service)
             event_store = EventStore(connection)
-            state = api.create_game({})
+            state = service.create_game(seed=2)
             event_store.append_event(
                 state["id"],
                 "vote_cast",
@@ -149,10 +150,22 @@ class _DeterministicProvider:
                 },
                 ensure_ascii=False,
             )
-        if "当前阶段：发言" in text:
-            return "我先围绕当前车队观察大家的表态。"
-        if "当前阶段：投票" in text:
-            return "赞成，因为先推进这一轮更容易获得信息。"
+        if "现在轮到你发言" in text:
+            return json.dumps(
+                {
+                    "public_message": "我先围绕当前车队观察大家的表态。",
+                    "private_reason_summary": "测试模型输出发言。",
+                },
+                ensure_ascii=False,
+            )
+        if "现在轮到你投票" in text:
+            return json.dumps(
+                {
+                    "vote": "approve",
+                    "private_reason_summary": "测试模型投赞成票。",
+                },
+                ensure_ascii=False,
+            )
         if '"mission_action"' in text:
             return json.dumps(
                 {

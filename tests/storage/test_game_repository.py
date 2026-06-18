@@ -30,7 +30,8 @@ class GameRepositoryTests(unittest.TestCase):
                 self.assertEqual(len(players), 5)
                 self.assertEqual(players[0].game_id, "game_1")
                 self.assertEqual(players[0].seat_index, 0)
-                self.assertEqual(players[0].name, "You")
+                self.assertEqual(players[0].name, "玩家1")
+                self.assertIsNotNone(players[0].original_name)
             finally:
                 connection.close()
 

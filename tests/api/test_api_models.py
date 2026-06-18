@@ -11,12 +11,14 @@ class ApiModelsTests(unittest.TestCase):
     def test_create_game_request_normalizes_optional_fields(self):
         request = CreateGameRequest.from_payload(
             {
+                "human_name": " 张三 ",
                 "ai_names": ["A", "B"],
                 "default_llm_profile_id": "",
                 "ai_profile_overrides": {"player_2": "profile_1"},
             }
         )
 
+        self.assertEqual(request.human_name, "张三")
         self.assertEqual(request.ai_names, ["A", "B"])
         self.assertIsNone(request.default_llm_profile_id)
         self.assertEqual(request.ai_profile_overrides, {"player_2": "profile_1"})

@@ -58,13 +58,18 @@ class GameService:
         self,
         *,
         seed: int | None = None,
+        human_name: str | None = None,
         ai_names: list[str] | None = None,
         default_llm_profile_id: str | None = None,
         ai_profile_overrides: dict[str, str | None] | None = None,
     ) -> dict[str, Any]:
         game_id = _timestamp_game_id()
-        state = create_five_player_game(seed=seed)
-        state = _apply_ai_configuration(state, ai_names or [], ai_profile_overrides or {})
+        state = create_five_player_game(
+            seed=seed,
+            human_name=human_name or "真人玩家",
+            ai_names=ai_names or [],
+        )
+        state = _apply_ai_configuration(state, ai_profile_overrides or {})
         self._games.save_new_game(
             state,
             game_id=game_id,
@@ -491,6 +496,7 @@ class GameService:
                 is_human=player.is_human,
                 role=Role(player.role),
                 faction=Faction(player.faction),
+                original_name=player.original_name,
                 llm_profile_id=player.llm_profile_id,
             )
             for player in self._games.list_players(game_id)
@@ -545,6 +551,7 @@ class GameService:
                     "id": player.id,
                     "seat_index": player.seat_index,
                     "name": player.name,
+                    "original_name": player.original_name,
                     "is_human": player.is_human,
                     "visible_role": visible_roles[player.id],
                 }
@@ -789,21 +796,20 @@ def _apply_replay_event(state: GameState, event: EventRecord) -> GameState:
 
 def _apply_ai_configuration(
     state: GameState,
-    ai_names: list[str],
     ai_profile_overrides: dict[str, str | None],
 ) -> GameState:
+    override_values = list(ai_profile_overrides.values())
     ai_index = 0
     players: list[Player] = []
     for player in state.players:
         if player.is_human:
             players.append(player)
             continue
-        name = ai_names[ai_index] if ai_index < len(ai_names) and ai_names[ai_index] else player.name
+        profile_id = override_values[ai_index] if ai_index < len(override_values) else None
         players.append(
             replace(
                 player,
-                name=name,
-                llm_profile_id=ai_profile_overrides.get(player.id),
+                llm_profile_id=profile_id,
             )
         )
         ai_index += 1

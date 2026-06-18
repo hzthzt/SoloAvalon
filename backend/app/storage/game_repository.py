@@ -28,6 +28,7 @@ class StoredPlayer:
     game_id: str
     seat_index: int
     name: str
+    original_name: str | None
     is_human: bool
     role: str
     faction: str
@@ -75,9 +76,9 @@ class GameRepository:
         self._connection.executemany(
             """
             insert into players (
-                id, game_id, seat_index, name, is_human, role, faction, llm_profile_id
+                id, game_id, seat_index, name, original_name, is_human, role, faction, llm_profile_id
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -85,6 +86,7 @@ class GameRepository:
                     game_id,
                     player.seat_index,
                     player.name,
+                    player.original_name,
                     1 if player.is_human else 0,
                     player.role.value,
                     player.faction.value,
@@ -121,6 +123,7 @@ class GameRepository:
                 game_id=row["game_id"],
                 seat_index=row["seat_index"],
                 name=row["name"],
+                original_name=row["original_name"],
                 is_human=bool(row["is_human"]),
                 role=row["role"],
                 faction=row["faction"],

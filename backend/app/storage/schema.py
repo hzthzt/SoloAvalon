@@ -17,6 +17,7 @@ create table if not exists players (
     game_id text not null,
     seat_index integer not null,
     name text not null,
+    original_name text,
     is_human integer not null,
     role text not null,
     faction text not null,

@@ -36,6 +36,22 @@ class ContextBuilderTests(unittest.TestCase):
         self.assertNotIn("assassin", context.dynamic_private_suffix.lower())
         self.assertNotIn("minion", context.dynamic_private_suffix.lower())
 
+    def test_context_uses_anonymous_names_without_original_names(self):
+        state = create_five_player_game(
+            seed=20260619,
+            human_name="张三",
+            ai_names=["阿尔法", "贝塔", "伽马", "德尔塔"],
+        )
+        viewer = next(player for player in state.players if not player.is_human)
+
+        context = ContextBuilder().build(state, viewer.id, Phase.SPEECH)
+
+        self.assertIn("玩家1", context.dynamic_private_suffix)
+        self.assertNotIn("original_name", context.dynamic_private_suffix)
+        self.assertNotIn("张三", context.dynamic_private_suffix)
+        for original_name in ("阿尔法", "贝塔", "伽马", "德尔塔"):
+            self.assertNotIn(original_name, context.dynamic_private_suffix)
+
     def test_stable_prefix_hash_is_independent_of_dynamic_game_state(self):
         builder = ContextBuilder()
         first = create_five_player_game(seed=1)

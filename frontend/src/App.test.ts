@@ -36,3 +36,8 @@ test("model edit form displays plain api key from saved profile", () => {
   assert.equal(source.includes('type="password"'), false);
   assert.equal(source.includes("profile.api_key"), true);
 });
+
+test("player cards show original names while start request sends human name", () => {
+  assert.equal(source.includes("human_name: humanName"), true);
+  assert.equal(source.includes("player.original_name"), true);
+});

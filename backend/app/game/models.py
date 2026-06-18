@@ -51,6 +51,7 @@ class Player:
     is_human: bool
     role: Role
     faction: Faction
+    original_name: str | None = None
     llm_profile_id: str | None = None
 
 

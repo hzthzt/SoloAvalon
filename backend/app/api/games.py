@@ -24,6 +24,7 @@ class GamesApi:
     def create_game(self, payload: dict[str, Any]) -> dict[str, Any]:
         request = CreateGameRequest.from_payload(payload)
         return self._service.create_game(
+            human_name=request.human_name,
             ai_names=request.ai_names,
             default_llm_profile_id=request.default_llm_profile_id,
             ai_profile_overrides=request.ai_profile_overrides,

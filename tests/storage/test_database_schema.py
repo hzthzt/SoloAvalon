@@ -30,6 +30,11 @@ class DatabaseSchemaTests(unittest.TestCase):
                 self.assertIn("ai_decisions", table_names)
                 self.assertIn("ai_memory_snapshots", table_names)
                 self.assertEqual(foreign_keys_enabled, 1)
+                player_columns = {
+                    row["name"]
+                    for row in connection.execute("pragma table_info(players)").fetchall()
+                }
+                self.assertIn("original_name", player_columns)
             finally:
                 connection.close()
 
@@ -179,6 +184,9 @@ class DatabaseSchemaTests(unittest.TestCase):
             player_profile_id = connection.execute(
                 "select llm_profile_id from players where game_id = 'game_1' and id = 'player_1'"
             ).fetchone()[0]
+            player_original_name = connection.execute(
+                "select original_name from players where game_id = 'game_1' and id = 'player_1'"
+            ).fetchone()[0]
             decision_profile_id = connection.execute(
                 "select llm_profile_id from ai_decisions where game_id = 'game_1'"
             ).fetchone()[0]
@@ -186,6 +194,7 @@ class DatabaseSchemaTests(unittest.TestCase):
             self.assertNotIn("llm_profiles", table_names)
             self.assertEqual(game_profile_id, "profile_1")
             self.assertEqual(player_profile_id, "profile_1")
+            self.assertIsNone(player_original_name)
             self.assertEqual(decision_profile_id, "profile_1")
             for table_name in ("games", "players", "ai_decisions"):
                 referenced_tables = [

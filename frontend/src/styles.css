@@ -312,6 +312,16 @@ label {
   width: 26px;
 }
 
+.seat-card .original-name {
+  color: #7a8794;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.seat-card .visible-role {
+  color: #3c4654;
+}
+
 .seat-card span,
 .profile-item span {
   color: #7a8794;

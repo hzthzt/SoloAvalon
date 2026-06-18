@@ -406,7 +406,16 @@ def _extra_information_text(
 def _player_ids_text(players: object) -> str:
     if not isinstance(players, list):
         return "无"
-    parts = [str(player.get("id", "")) for player in players if isinstance(player, dict)]
+    parts = []
+    for player in players:
+        if not isinstance(player, dict):
+            continue
+        player_id = str(player.get("id", ""))
+        name = str(player.get("name", ""))
+        if name and player_id and name != player_id:
+            parts.append(f"{name}({player_id})")
+        elif player_id:
+            parts.append(player_id)
     return _join_or_none(parts)
 
 

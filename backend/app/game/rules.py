@@ -107,28 +107,43 @@ def faction_for_role(role: Role) -> Faction:
 
 def create_five_player_game(
     seed: int | None = None,
-    human_seat_index: int = 0,
+    human_seat_index: int | None = None,
+    human_name: str = "真人玩家",
+    ai_names: list[str] | None = None,
 ) -> GameState:
+    rng = random.Random(seed)
+    if human_seat_index is None:
+        human_seat_index = rng.randrange(5)
     if human_seat_index < 0 or human_seat_index > 4:
         raise ValueError("human_seat_index must be between 0 and 4")
 
     roles = list(STANDARD_FIVE_PLAYER_ROLES)
-    random.Random(seed).shuffle(roles)
+    rng.shuffle(roles)
+    configured_ai_names = list(ai_names or [])
     players = []
     ai_number = 1
     for seat_index, role in enumerate(roles):
         is_human = seat_index == human_seat_index
-        name = "You" if is_human else f"AI {ai_number}"
-        if not is_human:
+        if is_human:
+            original_name = human_name.strip() or "真人玩家"
+        else:
+            default_ai_name = f"AI {ai_number}"
+            original_name = (
+                configured_ai_names[ai_number - 1].strip()
+                if ai_number - 1 < len(configured_ai_names)
+                and configured_ai_names[ai_number - 1].strip()
+                else default_ai_name
+            )
             ai_number += 1
         players.append(
             Player(
                 id=f"player_{seat_index + 1}",
                 seat_index=seat_index,
-                name=name,
+                name=f"玩家{seat_index + 1}",
                 is_human=is_human,
                 role=role,
                 faction=faction_for_role(role),
+                original_name=original_name,
             )
         )
 

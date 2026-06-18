@@ -2,6 +2,7 @@ export type PlayerView = {
   id: string;
   seat_index: number;
   name: string;
+  original_name: string | null;
   is_human: boolean;
   visible_role: string | null;
 };
@@ -78,6 +79,7 @@ export type LlmProfileInput = {
 const jsonHeaders = { "Content-Type": "application/json" };
 
 export async function createGame(payload: {
+  human_name?: string;
   ai_names?: string[];
   default_llm_profile_id?: string;
   ai_profile_overrides?: Record<string, string | null>;

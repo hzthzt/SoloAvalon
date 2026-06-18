@@ -60,7 +60,8 @@ class RulesSetupTests(unittest.TestCase):
         )
         self.assertEqual(state.players[0].id, "player_1")
         self.assertTrue(state.players[0].is_human)
-        self.assertEqual(state.players[0].name, "You")
+        self.assertEqual(state.players[0].name, "玩家1")
+        self.assertEqual(state.players[0].original_name, "真人玩家")
         self.assertFalse(state.players[1].is_human)
         self.assertEqual(state.phase, Phase.TEAM_PROPOSAL)
         self.assertEqual(state.current_round, 1)
@@ -68,6 +69,25 @@ class RulesSetupTests(unittest.TestCase):
         self.assertEqual(
             [(mission.team_size, mission.fail_cards_required) for mission in state.missions],
             [(2, 1), (3, 1), (2, 1), (3, 1), (3, 1)],
+        )
+
+    def test_create_five_player_game_randomizes_human_seat_and_keeps_original_names(self):
+        state = create_five_player_game(
+            seed=20260619,
+            human_name="张三",
+            ai_names=["阿尔法", "贝塔", "伽马", "德尔塔"],
+        )
+
+        self.assertEqual(
+            [player.name for player in state.players],
+            ["玩家1", "玩家2", "玩家3", "玩家4", "玩家5"],
+        )
+        human = next(player for player in state.players if player.is_human)
+        self.assertNotEqual(human.id, "player_1")
+        self.assertEqual(human.original_name, "张三")
+        self.assertCountEqual(
+            [player.original_name for player in state.players if not player.is_human],
+            ["阿尔法", "贝塔", "伽马", "德尔塔"],
         )
 
     def test_factions_derive_from_roles(self):
