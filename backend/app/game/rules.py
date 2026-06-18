@@ -22,10 +22,10 @@ class InvalidActionError(ValueError):
 
 STANDARD_FIVE_PLAYER_ROLES: tuple[Role, ...] = (
     Role.MERLIN,
+    Role.PERCIVAL,
+    Role.LOYAL_SERVANT,
     Role.ASSASSIN,
-    Role.MINION,
-    Role.LOYAL_SERVANT,
-    Role.LOYAL_SERVANT,
+    Role.MORGANA,
 )
 
 STANDARD_MISSION_CONFIGS: dict[int, tuple[MissionConfig, ...]] = {
@@ -86,9 +86,21 @@ FIVE_PLAYER_MISSIONS: tuple[MissionConfig, ...] = STANDARD_MISSION_CONFIGS[5]
 
 
 def faction_for_role(role: Role) -> Faction:
-    if role in {Role.MERLIN, Role.LOYAL_SERVANT}:
+    if role in {
+        Role.MERLIN,
+        Role.PERCIVAL,
+        Role.LOYAL_SERVANT,
+        Role.TRISTAN,
+        Role.ISOLDE,
+    }:
         return Faction.GOOD
-    if role in {Role.ASSASSIN, Role.MINION}:
+    if role in {
+        Role.ASSASSIN,
+        Role.MORGANA,
+        Role.MORDRED,
+        Role.OBERON,
+        Role.MINION,
+    }:
         return Faction.EVIL
     raise ValueError(f"{role.value} is not a playable role")
 
@@ -128,23 +140,42 @@ def private_view_for_player(state: GameState, viewer_id: str) -> PrivateView:
     visible_roles: dict[str, Role | None] = {player.id: None for player in state.players}
     visible_roles[viewer.id] = viewer.role
     known_evil_player_ids: list[str] = []
+    merlin_candidate_player_ids: list[str] = []
+    known_good_player_ids: list[str] = []
 
     if viewer.role == Role.MERLIN:
         for player in state.players:
-            if player.faction == Faction.EVIL:
+            if player.faction == Faction.EVIL and player.role != Role.MORDRED:
                 visible_roles[player.id] = Role.UNKNOWN_EVIL
                 known_evil_player_ids.append(player.id)
-    elif viewer.faction == Faction.EVIL:
+    elif viewer.role == Role.PERCIVAL:
         for player in state.players:
-            if player.faction == Faction.EVIL and player.id != viewer.id:
+            if player.role in {Role.MERLIN, Role.MORGANA}:
+                visible_roles[player.id] = Role.UNKNOWN_MERLIN
+                merlin_candidate_player_ids.append(player.id)
+    elif viewer.faction == Faction.EVIL and viewer.role != Role.OBERON:
+        for player in state.players:
+            if (
+                player.faction == Faction.EVIL
+                and player.id != viewer.id
+                and player.role != Role.OBERON
+            ):
                 visible_roles[player.id] = Role.UNKNOWN_EVIL
                 known_evil_player_ids.append(player.id)
+    elif viewer.role in {Role.TRISTAN, Role.ISOLDE}:
+        partner_role = Role.ISOLDE if viewer.role == Role.TRISTAN else Role.TRISTAN
+        for player in state.players:
+            if player.role == partner_role:
+                visible_roles[player.id] = partner_role
+                known_good_player_ids.append(player.id)
 
     return PrivateView(
         viewer_player_id=viewer.id,
         players=state.players,
         visible_roles=visible_roles,
         known_evil_player_ids=known_evil_player_ids,
+        merlin_candidate_player_ids=merlin_candidate_player_ids,
+        known_good_player_ids=known_good_player_ids,
     )
 
 

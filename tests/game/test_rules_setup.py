@@ -53,8 +53,8 @@ class RulesSetupTests(unittest.TestCase):
             [
                 Role.MERLIN,
                 Role.ASSASSIN,
-                Role.MINION,
-                Role.LOYAL_SERVANT,
+                Role.PERCIVAL,
+                Role.MORGANA,
                 Role.LOYAL_SERVANT,
             ],
         )
@@ -75,37 +75,72 @@ class RulesSetupTests(unittest.TestCase):
 
         self.assertEqual(player_with_role(state, Role.MERLIN).faction, Faction.GOOD)
         self.assertEqual(player_with_role(state, Role.LOYAL_SERVANT).faction, Faction.GOOD)
+        self.assertEqual(player_with_role(state, Role.PERCIVAL).faction, Faction.GOOD)
         self.assertEqual(player_with_role(state, Role.ASSASSIN).faction, Faction.EVIL)
-        self.assertEqual(player_with_role(state, Role.MINION).faction, Faction.EVIL)
+        self.assertEqual(player_with_role(state, Role.MORGANA).faction, Faction.EVIL)
 
     def test_merlin_private_view_knows_evil_players(self):
         state = create_five_player_game(seed=11)
         merlin = player_with_role(state, Role.MERLIN)
         assassin = player_with_role(state, Role.ASSASSIN)
-        minion = player_with_role(state, Role.MINION)
+        morgana = player_with_role(state, Role.MORGANA)
 
         view = private_view_for_player(state, merlin.id)
 
         self.assertEqual(view.viewer_player_id, merlin.id)
-        self.assertCountEqual(view.known_evil_player_ids, [assassin.id, minion.id])
+        self.assertCountEqual(view.known_evil_player_ids, [assassin.id, morgana.id])
         self.assertEqual(view.visible_roles[merlin.id], Role.MERLIN)
         self.assertEqual(view.visible_roles[assassin.id], Role.UNKNOWN_EVIL)
-        self.assertEqual(view.visible_roles[minion.id], Role.UNKNOWN_EVIL)
+        self.assertEqual(view.visible_roles[morgana.id], Role.UNKNOWN_EVIL)
 
     def test_evil_players_know_each_other_but_not_exact_roles(self):
         state = create_five_player_game(seed=13)
         assassin = player_with_role(state, Role.ASSASSIN)
-        minion = player_with_role(state, Role.MINION)
+        morgana = player_with_role(state, Role.MORGANA)
 
         assassin_view = private_view_for_player(state, assassin.id)
-        minion_view = private_view_for_player(state, minion.id)
+        morgana_view = private_view_for_player(state, morgana.id)
 
         self.assertEqual(assassin_view.visible_roles[assassin.id], Role.ASSASSIN)
-        self.assertEqual(minion_view.visible_roles[minion.id], Role.MINION)
-        self.assertEqual(assassin_view.known_evil_player_ids, [minion.id])
-        self.assertEqual(minion_view.known_evil_player_ids, [assassin.id])
-        self.assertEqual(assassin_view.visible_roles[minion.id], Role.UNKNOWN_EVIL)
-        self.assertEqual(minion_view.visible_roles[assassin.id], Role.UNKNOWN_EVIL)
+        self.assertEqual(morgana_view.visible_roles[morgana.id], Role.MORGANA)
+        self.assertEqual(assassin_view.known_evil_player_ids, [morgana.id])
+        self.assertEqual(morgana_view.known_evil_player_ids, [assassin.id])
+        self.assertEqual(assassin_view.visible_roles[morgana.id], Role.UNKNOWN_EVIL)
+        self.assertEqual(morgana_view.visible_roles[assassin.id], Role.UNKNOWN_EVIL)
+
+    def test_extended_identity_visibility_rules(self):
+        from backend.app.game.models import GameState, MissionConfig, Player
+
+        state = GameState(
+            players=(
+                Player("player_1", 0, "Merlin", False, Role.MERLIN, Faction.GOOD),
+                Player("player_2", 1, "Percival", False, Role.PERCIVAL, Faction.GOOD),
+                Player("player_3", 2, "Tristan", False, Role.TRISTAN, Faction.GOOD),
+                Player("player_4", 3, "Isolde", False, Role.ISOLDE, Faction.GOOD),
+                Player("player_5", 4, "Assassin", False, Role.ASSASSIN, Faction.EVIL),
+                Player("player_6", 5, "Morgana", False, Role.MORGANA, Faction.EVIL),
+                Player("player_7", 6, "Mordred", False, Role.MORDRED, Faction.EVIL),
+                Player("player_8", 7, "Oberon", False, Role.OBERON, Faction.EVIL),
+            ),
+            missions=(MissionConfig(round_number=1, team_size=3, fail_cards_required=1),),
+        )
+
+        merlin_view = private_view_for_player(state, "player_1")
+        percival_view = private_view_for_player(state, "player_2")
+        assassin_view = private_view_for_player(state, "player_5")
+        oberon_view = private_view_for_player(state, "player_8")
+        tristan_view = private_view_for_player(state, "player_3")
+
+        self.assertCountEqual(merlin_view.known_evil_player_ids, ["player_5", "player_6", "player_8"])
+        self.assertIsNone(merlin_view.visible_roles["player_7"])
+        self.assertCountEqual(percival_view.merlin_candidate_player_ids, ["player_1", "player_6"])
+        self.assertEqual(percival_view.visible_roles["player_1"], Role.UNKNOWN_MERLIN)
+        self.assertEqual(percival_view.visible_roles["player_6"], Role.UNKNOWN_MERLIN)
+        self.assertCountEqual(assassin_view.known_evil_player_ids, ["player_6", "player_7"])
+        self.assertNotIn("player_8", assassin_view.known_evil_player_ids)
+        self.assertEqual(oberon_view.known_evil_player_ids, [])
+        self.assertEqual(tristan_view.known_good_player_ids, ["player_4"])
+        self.assertEqual(tristan_view.visible_roles["player_4"], Role.ISOLDE)
 
     def test_loyal_servant_private_view_has_no_hidden_identity_information(self):
         state = create_five_player_game(seed=19)

@@ -30,6 +30,66 @@ def test_profile() -> LlmProfile:
 
 
 class PromptingAndProviderTests(unittest.TestCase):
+    def test_player_view_includes_percival_strategy_and_merlin_candidates(self):
+        state = GameState(
+            players=(
+                Player("player_1", 0, "You", True, Role.MERLIN, Faction.GOOD),
+                Player("player_2", 1, "AI 1", False, Role.PERCIVAL, Faction.GOOD),
+                Player("player_3", 2, "AI 2", False, Role.LOYAL_SERVANT, Faction.GOOD),
+                Player("player_4", 3, "AI 3", False, Role.ASSASSIN, Faction.EVIL),
+                Player("player_5", 4, "AI 4", False, Role.MORGANA, Faction.EVIL),
+            ),
+            missions=(MissionConfig(round_number=1, team_size=2, fail_cards_required=1),),
+        )
+
+        context = ContextBuilder().build(state, "player_2", Phase.SPEECH)
+        prompt_text = "\n".join(
+            message["content"] for message in PromptBuilder().build_messages(context, Phase.SPEECH)
+        )
+
+        self.assertIn("身份：派西维尔。", prompt_text)
+        self.assertIn("身份策略：", prompt_text)
+        self.assertIn("梅林候选", prompt_text)
+        self.assertIn("player_1、player_5", prompt_text)
+
+    def test_stable_prefix_uses_game_facts_without_prompt_metadata(self):
+        state = GameState(
+            players=(
+                Player("player_1", 0, "You", True, Role.MERLIN, Faction.GOOD),
+                Player("player_2", 1, "AI 1", False, Role.PERCIVAL, Faction.GOOD),
+                Player("player_3", 2, "AI 2", False, Role.LOYAL_SERVANT, Faction.GOOD),
+                Player("player_4", 3, "AI 3", False, Role.LOYAL_SERVANT, Faction.GOOD),
+                Player("player_5", 4, "AI 4", False, Role.ASSASSIN, Faction.EVIL),
+                Player("player_6", 5, "AI 5", False, Role.MORGANA, Faction.EVIL),
+                Player("player_7", 6, "AI 6", False, Role.MORDRED, Faction.EVIL),
+            ),
+            missions=(
+                MissionConfig(round_number=1, team_size=2, fail_cards_required=1),
+                MissionConfig(round_number=2, team_size=3, fail_cards_required=1),
+                MissionConfig(round_number=3, team_size=3, fail_cards_required=1),
+                MissionConfig(round_number=4, team_size=4, fail_cards_required=2),
+                MissionConfig(round_number=5, team_size=4, fail_cards_required=1),
+            ),
+        )
+
+        context = ContextBuilder().build(state, "player_3", Phase.SPEECH)
+        prompt_text = "\n".join(
+            message["content"] for message in PromptBuilder().build_messages(context, Phase.SPEECH)
+        )
+
+        self.assertIn("本局身份：", context.stable_prefix)
+        self.assertIn("忠臣 2 名", context.stable_prefix)
+        self.assertIn("莫德雷德 1 名", context.stable_prefix)
+        self.assertIn("启用扩展机制：", context.stable_prefix)
+        self.assertIn("湖中仙女", context.stable_prefix)
+        self.assertNotIn("Prompt 模板版本", prompt_text)
+        self.assertNotIn("推荐身份组合", prompt_text)
+        self.assertNotIn("无推荐身份组合", prompt_text)
+        self.assertNotIn("默认不加入推荐身份组合", prompt_text)
+        self.assertNotIn("可选扩展身份", prompt_text)
+        self.assertNotIn("崔斯坦", context.stable_prefix)
+        self.assertNotIn("伊索尔德", context.stable_prefix)
+
     def test_prompt_builder_uses_stable_prefix_before_dynamic_suffix(self):
         state = create_five_player_game(seed=20)
         context = ContextBuilder().build(state, state.players[1].id, Phase.SPEECH)
@@ -51,9 +111,11 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertIn("阵营人数：好人 3 人，恶方 2 人", context.stable_prefix)
         self.assertIn("第 1 轮：车队 2 人，任务失败需要 1 张失败票", context.stable_prefix)
         self.assertIn("梅林", context.stable_prefix)
+        self.assertIn("派西维尔", context.stable_prefix)
         self.assertIn("忠臣", context.stable_prefix)
         self.assertIn("刺客", context.stable_prefix)
-        self.assertIn("爪牙", context.stable_prefix)
+        self.assertIn("莫甘娜", context.stable_prefix)
+        self.assertNotIn("启用扩展机制", context.stable_prefix)
         self.assertNotIn("SoloAvalon", context.stable_prefix)
         self.assertNotIn("隐藏真相", context.stable_prefix)
         self.assertNotIn("推测未提供", context.stable_prefix)

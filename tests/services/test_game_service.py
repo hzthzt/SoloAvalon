@@ -143,7 +143,6 @@ class GameServiceTests(unittest.TestCase):
             roles = [message["role"] for message in prompt_messages]
             self.assertEqual(roles[0], "system")
             self.assertIn("user", roles)
-            self.assertIn("Prompt", prompt_messages[0]["content"])
             self.assertTrue(
                 any("【你的视角】" in message["content"] for message in prompt_messages)
             )
@@ -214,7 +213,7 @@ class GameServiceTests(unittest.TestCase):
                     return super().chat_completion(profile, messages)
 
             service = _service(tmpdir, ai_player=AiPlayer(provider=NoMissionPromptProvider()))
-            state = service.create_game(seed=4)
+            state = service.create_game(seed=0)
             internal_state = service._state(state["id"])
             good_ai = next(
                 player

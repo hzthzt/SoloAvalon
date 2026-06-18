@@ -22,14 +22,7 @@ class PromptBuilder:
         return [
             {
                 "role": "system",
-                "content": "\n\n".join(
-                    [
-                        context.stable_prefix,
-                        self._prompt_config.labels["prompt_version"].format(
-                            version=self._prompt_config.version
-                        ),
-                    ]
-                ),
+                "content": context.stable_prefix,
             },
             {
                 "role": "user",
@@ -64,6 +57,10 @@ def _player_view_message(context: AiContext, prompt_config: PromptTemplateConfig
             prompt_config.labels["role_gameplay"].format(
                 gameplay=_role_gameplay_text(role, prompt_config)
             ),
+            prompt_config.labels["role_strategy"].format(
+                strategy=_role_strategy_text(role, prompt_config)
+            ),
+            *_role_detail_tip_lines(role, prompt_config),
             prompt_config.labels["extra_information"].format(
                 extra_information=_extra_information_text(context, prompt_config)
             ),
@@ -358,15 +355,46 @@ def _role_gameplay_text(role: object, prompt_config: PromptTemplateConfig) -> st
     )
 
 
+def _role_strategy_text(role: object, prompt_config: PromptTemplateConfig) -> str:
+    return prompt_config.role_strategy_tips.get(
+        str(role),
+        prompt_config.role_strategy_tips.get("default", "结合公开记录和身份目标行动。"),
+    )
+
+
+def _role_detail_tip_lines(role: object, prompt_config: PromptTemplateConfig) -> list[str]:
+    detail_config = prompt_config.role_tip_detail
+    if not detail_config.get("enabled"):
+        return []
+    role_tips = detail_config.get("role_tips", {})
+    if not isinstance(role_tips, dict):
+        return []
+    tips = role_tips.get(str(role), [])
+    if not isinstance(tips, list) or not tips:
+        return []
+    label = str(detail_config.get("label", "详细身份提示"))
+    return [f"{label}：", *(f"- {tip}" for tip in tips if str(tip))]
+
+
 def _extra_information_text(
     context: AiContext,
     prompt_config: PromptTemplateConfig,
 ) -> str:
     role = str(context.private_view["viewer_role"])
     known_evil_ids = context.private_view.get("known_evil_player_ids", [])
+    merlin_candidate_ids = context.private_view.get("merlin_candidate_player_ids", [])
+    known_good_ids = context.private_view.get("known_good_player_ids", [])
     if role == "merlin" and known_evil_ids:
         return prompt_config.extra_information["merlin_known_evil"].format(
             players=_join_or_none(known_evil_ids)
+        )
+    if role == "percival" and merlin_candidate_ids:
+        return prompt_config.extra_information["percival_merlin_candidates"].format(
+            players=_join_or_none(merlin_candidate_ids)
+        )
+    if known_good_ids:
+        return prompt_config.extra_information["known_good"].format(
+            players=_join_or_none(known_good_ids)
         )
     if context.private_view.get("viewer_faction") == "evil" and known_evil_ids:
         return prompt_config.extra_information["evil_teammates"].format(

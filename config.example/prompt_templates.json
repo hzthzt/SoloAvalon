@@ -1,5 +1,5 @@
 {
-  "version": "prompt.v7",
+  "version": "prompt.v8",
   "section_titles": {
     "system": "【系统】",
     "game_config": "【本局配置】",
@@ -21,10 +21,17 @@
     "mission_config_line": "- 第 {round_number} 轮：车队 {team_size} 人，任务失败需要 {fail_cards_required} 张失败票。",
     "role_config_header": "本局身份：",
     "role_config_line": "- {role_label} {count} 名：{description}",
+    "recommended_role_setup_header": "推荐身份组合：",
+    "recommended_role_setup_line": "- {faction_label}：{roles}。",
+    "empty_recommended_role_setup": "- 无推荐身份组合。",
+    "optional_mechanics_header": "启用扩展机制：",
+    "optional_mechanics_line": "- {mechanic_label}：{description}",
+    "empty_optional_mechanics": "- 无。",
     "player_id": "你是 {player_id}。",
     "role": "身份：{role_label}。",
     "faction": "阵营：{faction_label}。",
     "role_gameplay": "身份玩法：{gameplay}",
+    "role_strategy": "身份策略：{strategy}",
     "extra_information": "你的额外信息：{extra_information}",
     "public_players": "公开玩家：{players}。",
     "empty_public_record": "- 暂无公开记录。",
@@ -36,10 +43,17 @@
   },
   "role_labels": {
     "merlin": "梅林",
+    "percival": "派西维尔",
     "loyal_servant": "忠臣",
     "assassin": "刺客",
+    "morgana": "莫甘娜",
+    "mordred": "莫德雷德",
+    "oberon": "奥伯伦",
     "minion": "爪牙",
-    "unknown_evil": "未知恶方"
+    "tristan": "崔斯坦",
+    "isolde": "伊索尔德",
+    "unknown_evil": "未知恶方",
+    "unknown_merlin": "梅林候选"
   },
   "faction_labels": {
     "good": "好人",
@@ -55,21 +69,150 @@
   },
   "role_descriptions": {
     "merlin": "好人阵营，知道哪些玩家属于恶方，公开发言要避免暴露自己。",
+    "percival": "好人阵营，开局看到梅林候选；若有莫甘娜，会同时看到梅林和莫甘娜但不知道谁是真的。",
     "loyal_servant": "好人阵营，没有额外身份信息，需要通过公开信息推理。",
     "assassin": "恶方阵营，知道恶方同伴，若好人完成 3 次任务，可刺杀梅林翻盘。",
-    "minion": "恶方阵营，知道恶方同伴，配合恶方影响组队、投票和任务。"
+    "morgana": "恶方阵营，在派西维尔视角中伪装成梅林，用来混淆派西维尔。",
+    "mordred": "恶方阵营，不会被梅林看到，适合承担更深的隐藏位。",
+    "oberon": "恶方阵营，不知道其他恶方，其他恶方也不知道奥伯伦是谁。",
+    "minion": "恶方阵营，知道恶方同伴，配合恶方影响组队、投票和任务。",
+    "tristan": "好人阵营，和伊索尔德互相知道对方是好人。",
+    "isolde": "好人阵营，和崔斯坦互相知道对方是好人。"
   },
   "role_gameplay": {
     "merlin": "你知道哪些玩家属于恶方，但公开发言要避免暴露自己。",
+    "percival": "你知道梅林候选，需要在公开讨论中分辨谁是真梅林、谁可能是莫甘娜。",
     "loyal_servant": "你没有额外信息，需要通过组队、发言、投票和任务结果判断谁可信。",
     "assassin": "你需要隐藏恶方身份，影响组队和投票，并在好人完成 3 次任务后刺杀梅林。",
+    "morgana": "你需要尽量像梅林一样发言，干扰派西维尔和好人阵营的判断。",
+    "mordred": "你不会被梅林看到，可以更主动地争取可信位置，但仍要避免被票型和任务结果暴露。",
+    "oberon": "你不知道恶方同伴，需要从公开发言和票型中识别队友，同时避免误伤恶方节奏。",
     "minion": "你需要隐藏恶方身份，配合同伴影响组队、投票和任务结果。",
+    "tristan": "你知道伊索尔德是好人，可以用互信信息帮助组队，但不要让恶方轻易识别你们的关系。",
+    "isolde": "你知道崔斯坦是好人，可以用互信信息帮助组队，但不要让恶方轻易识别你们的关系。",
     "default": "按当前身份目标行动。"
+  },
+  "role_strategy_tips": {
+    "merlin": "用较温和的理由推动正确方向，避免表现得像掌握确定答案；可以借公开票型和发言包装你的判断。",
+    "percival": "保护真梅林是优先级之一；不要过早公开锁定候选关系，先观察两个候选谁在帮助好人、谁在误导局势。",
+    "loyal_servant": "把注意力放在车队结构、投票一致性和任务结果上；你可以逼问理由，但不要假装自己有隐藏信息。",
+    "assassin": "前期重点是活到刺杀阶段并识别梅林；留意谁总能提前压中恶方、又刻意隐藏自己的确定性。",
+    "morgana": "你的价值在于占用派西维尔视野；发言要像有信息但不能过火，让派西维尔愿意把你当作梅林候选。",
+    "mordred": "你不在梅林视野里，可以承接一些好人信任；发言要稳，别因为过度带队引来集火。",
+    "oberon": "你没有恶方互认信息，优先伪装成普通好人；任务和票型要谨慎，避免破坏潜在队友的布局。",
+    "minion": "配合同伴制造可信车队和混乱票型；不要所有恶方都站在同一边，避免被任务结果串联。",
+    "tristan": "利用和伊索尔德的互信验证队伍，但不要把关系暴露成恶方刺杀线索。",
+    "isolde": "利用和崔斯坦的互信验证队伍，但不要把关系暴露成恶方刺杀线索。",
+    "default": "结合公开记录和身份目标行动。"
+  },
+  "role_tip_detail": {
+    "enabled": false,
+    "label": "详细身份提示",
+    "role_tips": {
+      "loyal_servant": [
+        "你没有开局信息，发言重点放在可验证事实：谁上车、谁支持、谁反对、任务出了几张失败票。",
+        "不要把猜测说成确定结论；用问题逼出他人的站边、组队逻辑和前后矛盾。",
+        "优先保护能稳定产出信息的玩家，不要只因为某人发言强势就默认可信。"
+      ],
+      "merlin": [
+        "你的优势是方向正确，风险是被刺客识别；公开发言要把已知恶方包装成票型、发言和组队逻辑。",
+        "不要连续精准打中所有恶方，可以让普通好人或派西维尔先提出部分怀疑，再顺势推进。",
+        "在关键轮次要敢于影响车队，但理由要像正常好人推理，而不是像直接知道身份。"
+      ],
+      "percival": [
+        "你看到的是梅林候选，不是真梅林；先比较两个候选谁在帮助好人建立正确队伍，谁在制造误导。",
+        "不要过早公开候选关系，否则会帮助刺客缩小梅林范围。",
+        "你可以替真梅林分担注意力，但不要把自己伪装得过于像梅林导致好人失去判断。"
+      ],
+      "assassin": [
+        "前中期不要只追求任务失败，也要观察谁总能避开坏车、提前压中恶方或用温和理由纠偏。",
+        "区分梅林和派西维尔：派西维尔常围绕候选关系犹豫，梅林更可能在关键车队上给出稳定方向。",
+        "刺杀前复盘谁的判断超出公开信息，谁又刻意降低存在感。"
+      ],
+      "morgana": [
+        "模仿梅林时要给出有方向的判断，但保持可否认空间，避免像直接报验人。",
+        "你的目标是占用派西维尔视野，让派西维尔无法稳定保护真梅林。",
+        "当真梅林推进正确方向时，可以用看似合理的怀疑转移焦点，拖慢好人形成共识。"
+      ],
+      "mordred": [
+        "你不在梅林视野里，适合争取可信位置，但过度带队仍会被票型和任务结果反噬。",
+        "可以主动参与好人逻辑建设，把怀疑引向其他恶方或普通好人之间的分歧。",
+        "关键任务轮要注意恶方整体节奏，不要因为自己安全就让队友暴露。"
+      ],
+      "oberon": [
+        "你没有恶方互认信息，前期按普通好人的公开逻辑发言，避免乱打潜在队友。",
+        "通过投票、组队和任务结果寻找可能的恶方同伴，但不要公开暴露你在找队友。",
+        "任务中是否出失败票要结合车队可信度和当前失败任务数量，避免无谓暴露。"
+      ],
+      "minion": [
+        "配合同伴制造分散站边，不要所有恶方都在同一车队或同一投票方向上绑定。",
+        "发言要给出能被公开信息支撑的理由，用好人之间的误会扩大分歧。",
+        "任务失败后及时准备解释票型和车队责任，避免被连续任务结果串联。"
+      ],
+      "tristan": [
+        "你和伊索尔德互相可信，可以用这层信息辅助判断车队，但不要直接暴露互认关系。",
+        "当对方被错误集火时，可以用公开逻辑帮忙拆解，不要只用强保口吻。",
+        "如果你们同时被看好，注意降低关系痕迹，避免成为恶方额外目标。"
+      ],
+      "isolde": [
+        "你和崔斯坦互相可信，可以用这层信息辅助判断车队，但不要直接暴露互认关系。",
+        "当对方被错误集火时，可以用公开逻辑帮忙拆解，不要只用强保口吻。",
+        "如果你们同时被看好，注意降低关系痕迹，避免成为恶方额外目标。"
+      ]
+    }
   },
   "extra_information": {
     "merlin_known_evil": "{players} 属于恶方。",
     "evil_teammates": "{players} 是恶方同伴。",
+    "percival_merlin_candidates": "{players} 是梅林候选，其中可能包含莫甘娜。",
+    "known_good": "{players} 是你确认的好人。",
     "none": "无。"
+  },
+  "recommended_role_setups": {
+    "5": {
+      "good": ["merlin", "percival", "loyal_servant"],
+      "evil": ["assassin", "morgana"]
+    },
+    "6": {
+      "good": ["merlin", "percival", "loyal_servant", "loyal_servant"],
+      "evil": ["assassin", "morgana"]
+    },
+    "7": {
+      "good": ["merlin", "percival", "loyal_servant", "loyal_servant"],
+      "evil": ["assassin", "morgana", "mordred"]
+    },
+    "8": {
+      "good": ["merlin", "percival", "loyal_servant", "loyal_servant", "loyal_servant"],
+      "evil": ["assassin", "morgana", "mordred"]
+    },
+    "9": {
+      "good": ["merlin", "percival", "loyal_servant", "loyal_servant", "loyal_servant", "loyal_servant"],
+      "evil": ["assassin", "morgana", "mordred"]
+    },
+    "10": {
+      "good": ["merlin", "percival", "loyal_servant", "loyal_servant", "loyal_servant", "loyal_servant"],
+      "evil": ["assassin", "morgana", "mordred", "oberon"]
+    }
+  },
+  "optional_mechanics": {
+    "lady_of_lake": {
+      "label": "湖中仙女",
+      "description": "第 2、3、4 次任务结算后，持有者私下查看一名未被湖女查看过的玩家阵营，然后湖女转交给被查看者。",
+      "enabled": false,
+      "default_enabled_for_player_counts": [7, 8, 10]
+    },
+    "tristan": {
+      "label": "崔斯坦",
+      "description": "和伊索尔德互相确认对方是好人。",
+      "enabled": false,
+      "default_enabled_for_player_counts": []
+    },
+    "isolde": {
+      "label": "伊索尔德",
+      "description": "和崔斯坦互相确认对方是好人。",
+      "enabled": false,
+      "default_enabled_for_player_counts": []
+    }
   },
   "event_templates": {
     "team_proposed": "第 {round_number} 轮，{leader} 提交车队：{team}。",

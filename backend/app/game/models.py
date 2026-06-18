@@ -6,10 +6,17 @@ from enum import Enum
 
 class Role(str, Enum):
     MERLIN = "merlin"
+    PERCIVAL = "percival"
     ASSASSIN = "assassin"
+    MORGANA = "morgana"
+    MORDRED = "mordred"
+    OBERON = "oberon"
     MINION = "minion"
     LOYAL_SERVANT = "loyal_servant"
+    TRISTAN = "tristan"
+    ISOLDE = "isolde"
     UNKNOWN_EVIL = "unknown_evil"
+    UNKNOWN_MERLIN = "unknown_merlin"
 
 
 class Faction(str, Enum):
@@ -79,4 +86,6 @@ class PrivateView:
     players: tuple[Player, ...]
     visible_roles: dict[str, Role | None]
     known_evil_player_ids: list[str]
+    merlin_candidate_player_ids: list[str] = field(default_factory=list)
+    known_good_player_ids: list[str] = field(default_factory=list)
 

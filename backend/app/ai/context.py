@@ -13,7 +13,18 @@ from backend.app.prompting.config import PromptTemplateConfig, load_prompt_templ
 
 CONTEXT_BUILDER_VERSION = "context-builder.v1"
 
-ROLE_DISPLAY_ORDER = (Role.MERLIN, Role.LOYAL_SERVANT, Role.ASSASSIN, Role.MINION)
+ROLE_DISPLAY_ORDER = (
+    Role.MERLIN,
+    Role.PERCIVAL,
+    Role.LOYAL_SERVANT,
+    Role.TRISTAN,
+    Role.ISOLDE,
+    Role.ASSASSIN,
+    Role.MORGANA,
+    Role.MORDRED,
+    Role.OBERON,
+    Role.MINION,
+)
 
 
 @dataclass(frozen=True)
@@ -65,6 +76,10 @@ class ContextBuilder:
                 for player_id, role in view.visible_roles.items()
             },
         }
+        if view.merlin_candidate_player_ids:
+            private_view["merlin_candidate_player_ids"] = view.merlin_candidate_player_ids
+        if view.known_good_player_ids:
+            private_view["known_good_player_ids"] = view.known_good_player_ids
         public_state = {
             "players": [
                 {
@@ -142,6 +157,8 @@ def _stable_prefix_for_state(state: GameState, prompt_config: PromptTemplateConf
             "",
             prompt_config.labels["role_config_header"],
             *_role_description_lines(role_counts, prompt_config),
+            "",
+            *_optional_mechanic_section_lines(state, prompt_config),
         ]
     )
 
@@ -202,8 +219,48 @@ def _roles_in_display_order(role_counts: Counter[Role]) -> list[tuple[Role, int]
     return ordered
 
 
+def _optional_mechanic_section_lines(
+    state: GameState,
+    prompt_config: PromptTemplateConfig,
+) -> list[str]:
+    enabled_mechanics = [
+        mechanic
+        for mechanic in prompt_config.optional_mechanics.values()
+        if _optional_mechanic_enabled(mechanic, len(state.players))
+    ]
+    if not enabled_mechanics:
+        return []
+    lines = [
+        prompt_config.labels["optional_mechanics_header"],
+    ]
+    lines.extend(
+        prompt_config.labels["optional_mechanics_line"].format(
+            mechanic_label=mechanic["label"],
+            description=mechanic["description"],
+        )
+        for mechanic in enabled_mechanics
+    )
+    return lines
+
+
+def _optional_mechanic_enabled(mechanic: dict[str, Any], player_count: int) -> bool:
+    return bool(mechanic.get("enabled")) or player_count in mechanic.get(
+        "default_enabled_for_player_counts",
+        [],
+    )
+
+
 def _role_label(role: Role, prompt_config: PromptTemplateConfig) -> str:
     return prompt_config.role_labels.get(role.value, role.value)
+
+
+def _faction_label(faction: str, prompt_config: PromptTemplateConfig) -> str:
+    return prompt_config.faction_labels.get(faction, faction)
+
+
+def _role_ids_text(role_ids: list[str], prompt_config: PromptTemplateConfig) -> str:
+    labels = [prompt_config.role_labels.get(role_id, role_id) for role_id in role_ids]
+    return "、".join(labels) if labels else "无"
 
 
 def _legal_actions(state: GameState, player_id: str, phase: Phase) -> dict[str, Any]:
