@@ -8,7 +8,7 @@ from backend.app.storage.llm_profile_repository import LlmProfileRepository
 
 
 class LlmProfilesApiTests(unittest.TestCase):
-    def test_profile_api_crud_returns_plain_secret_for_local_config_ui(self):
+    def test_profile_api_crud_does_not_return_plain_secret(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             api = _api(tmpdir)
 
@@ -25,9 +25,10 @@ class LlmProfilesApiTests(unittest.TestCase):
             )
             listed = api.list_profiles()
 
-            self.assertEqual(created["api_key"], "test-key-1234567890abcdef")
+            self.assertNotIn("api_key", created)
             self.assertEqual(created["api_key_masked"], "test...cdef")
-            self.assertEqual(listed[0]["api_key"], "test-key-1234567890abcdef")
+            self.assertNotIn("api_key", listed[0])
+            self.assertEqual(listed[0]["api_key_masked"], "test...cdef")
             self.assertEqual([profile["id"] for profile in listed], ["profile_1"])
 
     def test_profile_api_test_is_structural_without_live_call(self):

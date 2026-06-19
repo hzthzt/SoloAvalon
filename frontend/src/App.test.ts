@@ -44,10 +44,11 @@ test("ai decision gateway errors offer manual retry", () => {
   assert.equal(source.includes("手动重试"), true);
 });
 
-test("model edit form displays plain api key from saved profile", () => {
-  assert.equal(source.includes("api_key: profile.api_key"), true);
+test("model edit form does not display plain api key from saved profile", () => {
+  assert.equal(source.includes("api_key: profile.api_key"), false);
   assert.equal(source.includes('type="password"'), false);
-  assert.equal(source.includes("profile.api_key"), true);
+  assert.equal(source.includes("profile.api_key_masked"), true);
+  assert.equal(source.includes("留空则保留原密钥"), true);
 });
 
 test("player cards show original names while start request sends human name", () => {

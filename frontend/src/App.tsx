@@ -300,7 +300,7 @@ export function App() {
       id: profile.id,
       name: profile.name,
       base_url: profile.base_url,
-      api_key: profile.api_key,
+      api_key: "",
       model: profile.model,
       temperature: profile.temperature,
       timeout: profile.timeout,
@@ -776,7 +776,7 @@ export function App() {
                     </div>
                     <div>
                       <dt>API Key</dt>
-                      <dd>{profile.api_key}</dd>
+                      <dd>{profile.api_key_masked}</dd>
                     </div>
                   </dl>
                   {profileTestResults[profile.id] && (
@@ -1149,6 +1149,7 @@ function ProfileForm({
         <input
           type="text"
           value={form.api_key}
+          placeholder={isEditing ? "留空则保留原密钥" : ""}
           onChange={(event) => update({ api_key: event.target.value })}
         />
       </label>
