@@ -53,7 +53,7 @@ STANDARD_ROLE_SETUPS: dict[int, tuple[Role, ...]] = {
         Role.LOYAL_SERVANT,
         Role.ASSASSIN,
         Role.MORGANA,
-        Role.MORDRED,
+        Role.OBERON,
     ),
     8: (
         Role.MERLIN,
@@ -63,7 +63,7 @@ STANDARD_ROLE_SETUPS: dict[int, tuple[Role, ...]] = {
         Role.LOYAL_SERVANT,
         Role.ASSASSIN,
         Role.MORGANA,
-        Role.MORDRED,
+        Role.MINION,
     ),
     9: (
         Role.MERLIN,

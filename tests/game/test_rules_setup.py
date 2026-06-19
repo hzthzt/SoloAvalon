@@ -96,7 +96,7 @@ class RulesSetupTests(unittest.TestCase):
                 Role.LOYAL_SERVANT,
                 Role.ASSASSIN,
                 Role.MORGANA,
-                Role.MORDRED,
+                Role.OBERON,
             ],
             8: [
                 Role.MERLIN,
@@ -106,7 +106,7 @@ class RulesSetupTests(unittest.TestCase):
                 Role.LOYAL_SERVANT,
                 Role.ASSASSIN,
                 Role.MORGANA,
-                Role.MORDRED,
+                Role.MINION,
             ],
             9: [
                 Role.MERLIN,

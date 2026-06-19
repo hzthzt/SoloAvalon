@@ -75,8 +75,8 @@
 | --- | --- | --- |
 | 5 | Merlin, Percival, Loyal Servant | Assassin, Morgana |
 | 6 | Merlin, Percival, Loyal Servant, Loyal Servant | Assassin, Morgana |
-| 7 | Merlin, Percival, Loyal Servant, Loyal Servant | Assassin, Morgana, Mordred |
-| 8 | Merlin, Percival, Loyal Servant, Loyal Servant, Loyal Servant | Assassin, Morgana, Mordred |
+| 7 | Merlin, Percival, Loyal Servant, Loyal Servant | Assassin, Morgana, Oberon |
+| 8 | Merlin, Percival, Loyal Servant, Loyal Servant, Loyal Servant | Assassin, Morgana, Minion |
 | 9 | Merlin, Percival, Loyal Servant, Loyal Servant, Loyal Servant, Loyal Servant | Assassin, Morgana, Mordred |
 | 10 | Merlin, Percival, Loyal Servant, Loyal Servant, Loyal Servant, Loyal Servant | Assassin, Morgana, Mordred, Oberon |
 
