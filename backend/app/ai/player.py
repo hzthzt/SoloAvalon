@@ -209,23 +209,14 @@ class AiPlayer:
     ) -> AiTurnResult[DecisionT]:
         context = self._context_builder.build(state, player_id, phase, public_events=public_events)
         messages = self._prompt_builder.build_messages(context, phase)
-        output_raw: str | None = None
-        output_parsed: dict[str, Any] | None = None
-        try:
-            output_raw = self._provider.chat_completion(profile, messages)
-            if parse_text_decision is None:
-                output_parsed = parse_json_object(output_raw)
-                decision = parse_decision(output_parsed)
-            else:
-                try:
-                    output_parsed = parse_json_object(output_raw)
-                except Exception:
-                    output_parsed = None
-                    decision = parse_text_decision(output_raw)
-                else:
-                    decision = parse_decision(output_parsed)
-            validation_status = "valid"
-        except Exception as exc:
+        last_output_raw: str | None = None
+        last_output_parsed: dict[str, Any] | None = None
+
+        def raise_decision_error(
+            exc: Exception,
+            output_raw: str | None,
+            output_parsed: dict[str, Any] | None,
+        ) -> None:
             error_message = str(exc) or type(exc).__name__
             raise AiDecisionError(
                 error_type=type(exc).__name__,
@@ -241,6 +232,33 @@ class AiPlayer:
                 context_truncated=context.context_truncated,
                 prompt_messages=messages,
             ) from exc
+
+        for retry_index in range(profile.timeout_retries + 1):
+            output_raw: str | None = None
+            output_parsed: dict[str, Any] | None = None
+            try:
+                output_raw = self._provider.chat_completion(profile, messages)
+            except Exception as exc:
+                raise_decision_error(exc, output_raw, output_parsed)
+
+            try:
+                decision, output_parsed = _parse_decision_output(
+                    output_raw,
+                    parse_decision,
+                    parse_text_decision,
+                )
+            except Exception as exc:
+                last_output_raw = output_raw
+                last_output_parsed = output_parsed
+                if retry_index < profile.timeout_retries:
+                    continue
+                raise_decision_error(exc, last_output_raw, last_output_parsed)
+            else:
+                validation_status = "valid"
+                break
+        else:
+            raise RuntimeError("unreachable ai decision retry state")
+
         return AiTurnResult(
             decision=decision,
             input_summary=context.context_summary,
@@ -256,3 +274,22 @@ class AiPlayer:
             context_truncated=context.context_truncated,
             prompt_messages=messages,
         )
+
+
+def _parse_decision_output(
+    output_raw: str,
+    parse_decision: Callable[[dict[str, Any]], DecisionT],
+    parse_text_decision: Callable[[str], DecisionT] | None,
+) -> tuple[DecisionT, dict[str, Any] | None]:
+    if parse_text_decision is None:
+        output_parsed = parse_json_object(output_raw)
+        return parse_decision(output_parsed), output_parsed
+
+    try:
+        output_parsed = parse_json_object(output_raw)
+    except Exception as json_exc:
+        try:
+            return parse_text_decision(output_raw), None
+        except Exception as text_exc:
+            raise text_exc from json_exc
+    return parse_decision(output_parsed), output_parsed

@@ -9,7 +9,11 @@ from backend.app.game.rules import create_five_player_game, create_game, propose
 from backend.app.llm.profiles import LlmProfile
 from backend.app.llm.provider import LlmProvider
 from backend.app.prompting.config import load_prompt_template_config
-from backend.app.prompting.schemas import lady_of_lake_decision_from_output, parse_json_object
+from backend.app.prompting.schemas import (
+    lady_of_lake_decision_from_output,
+    parse_json_object,
+    vote_decision_from_output,
+)
 from backend.app.prompting.templates import PromptBuilder
 
 
@@ -546,6 +550,12 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertEqual(result.decision.vote, Vote.REJECT)
         self.assertIn("缺少足够的公开依据", result.decision.public_reason)
 
+    def test_vote_json_accepts_missing_private_reason_summary(self):
+        decision = vote_decision_from_output({"vote": "approve"})
+
+        self.assertEqual(decision.vote, Vote.APPROVE)
+        self.assertEqual(decision.private_reason_summary, "模型未提供私有理由摘要。")
+
     def test_parse_json_object_accepts_code_fenced_json(self):
         parsed = parse_json_object('```json\n{"vote":"approve"}\n```')
 
@@ -662,6 +672,97 @@ class PromptingAndProviderTests(unittest.TestCase):
 
         self.assertIn("non-empty message content", str(captured.exception))
         self.assertEqual(len(attempts), 3)
+
+    def test_ai_player_retries_invalid_json_until_valid_decision(self):
+        attempts = []
+
+        class RetryProvider:
+            def chat_completion(self, profile, messages):
+                attempts.append(messages)
+                if len(attempts) == 1:
+                    return "{not json"
+                return json.dumps(
+                    {
+                        "team": ["player_1", "player_2"],
+                        "public_message": "先开一个常规两人车。",
+                    },
+                    ensure_ascii=False,
+                )
+
+        state = create_five_player_game(seed=21)
+        profile = LlmProfile(**(test_profile().__dict__ | {"timeout_retries": 1}))
+
+        result = AiPlayer(provider=RetryProvider()).propose_team(
+            state,
+            state.players[0].id,
+            profile,
+        )
+
+        self.assertEqual(result.validation_status, "valid")
+        self.assertEqual(result.decision.team, ("player_1", "player_2"))
+        self.assertEqual(len(attempts), 2)
+
+    def test_ai_player_retries_missing_business_field_until_valid_decision(self):
+        attempts = []
+
+        class RetryProvider:
+            def chat_completion(self, profile, messages):
+                attempts.append(messages)
+                if len(attempts) == 1:
+                    return json.dumps({})
+                return json.dumps({"vote": "approve"})
+
+        state = create_five_player_game(seed=21)
+        state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
+        profile = LlmProfile(**(test_profile().__dict__ | {"timeout_retries": 1}))
+
+        result = AiPlayer(provider=RetryProvider()).vote(state, state.players[3].id, profile)
+
+        self.assertEqual(result.validation_status, "valid")
+        self.assertEqual(result.decision.vote, Vote.APPROVE)
+        self.assertEqual(len(attempts), 2)
+
+    def test_ai_player_retries_invalid_enum_until_valid_decision(self):
+        attempts = []
+
+        class RetryProvider:
+            def chat_completion(self, profile, messages):
+                attempts.append(messages)
+                if len(attempts) == 1:
+                    return json.dumps({"vote": "maybe"})
+                return json.dumps({"vote": "reject"})
+
+        state = create_five_player_game(seed=21)
+        state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
+        profile = LlmProfile(**(test_profile().__dict__ | {"timeout_retries": 1}))
+
+        result = AiPlayer(provider=RetryProvider()).vote(state, state.players[3].id, profile)
+
+        self.assertEqual(result.validation_status, "valid")
+        self.assertEqual(result.decision.vote, Vote.REJECT)
+        self.assertEqual(len(attempts), 2)
+
+    def test_ai_player_retries_rule_illegal_output_until_valid_decision(self):
+        attempts = []
+
+        class RetryProvider:
+            def chat_completion(self, profile, messages):
+                attempts.append(messages)
+                if len(attempts) == 1:
+                    return json.dumps({"mission_action": "fail"})
+                return json.dumps({"mission_action": "success"})
+
+        state = create_five_player_game(seed=22)
+        good_player = next(player for player in state.players if player.role == Role.LOYAL_SERVANT)
+        teammate = next(player for player in state.players if player.id != good_player.id)
+        state = propose_team(state, state.players[0].id, (good_player.id, teammate.id))
+        profile = LlmProfile(**(test_profile().__dict__ | {"timeout_retries": 1}))
+
+        result = AiPlayer(provider=RetryProvider()).mission_action(state, good_player.id, profile)
+
+        self.assertEqual(result.validation_status, "valid")
+        self.assertEqual(result.decision.mission_action, MissionAction.SUCCESS)
+        self.assertEqual(len(attempts), 2)
 
     def test_ai_player_raises_when_model_returns_illegal_vote(self):
         class BadProvider:

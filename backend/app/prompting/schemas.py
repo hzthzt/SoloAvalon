@@ -36,7 +36,7 @@ def team_decision_from_output(output: dict[str, Any], state: GameState) -> TeamP
         raise ValueError("team contains unknown players")
     return TeamProposalDecision(
         team=tuple(team),
-        private_reason_summary=_string(output, "private_reason_summary"),
+        private_reason_summary=_private_reason_summary(output),
         public_message=_normalize_public_player_references(str(output.get("public_message", ""))),
     )
 
@@ -48,7 +48,7 @@ def speech_decision_from_output(output: dict[str, Any]) -> SpeechDecision:
     return SpeechDecision(
         public_message=_normalize_public_player_references(_string(output, "public_message")),
         stance=stance,
-        private_reason_summary=_string(output, "private_reason_summary"),
+        private_reason_summary=_private_reason_summary(output),
     )
 
 
@@ -71,7 +71,7 @@ def vote_decision_from_output(output: dict[str, Any]) -> VoteDecision:
         raise ValueError("invalid vote") from exc
     return VoteDecision(
         vote=vote,
-        private_reason_summary=_string(output, "private_reason_summary"),
+        private_reason_summary=_private_reason_summary(output),
         public_reason=str(output.get("public_reason", "")),
     )
 
@@ -100,7 +100,7 @@ def mission_decision_from_output(
         raise ValueError("good players cannot submit fail")
     return MissionActionDecision(
         mission_action=action,
-        private_reason_summary=_string(output, "private_reason_summary"),
+        private_reason_summary=_private_reason_summary(output),
     )
 
 
@@ -118,7 +118,7 @@ def assassination_decision_from_output(
         raise ValueError("candidate_ranking must be a list of player ids")
     return AssassinationDecision(
         target_player_id=target,
-        private_reason_summary=_string(output, "private_reason_summary"),
+        private_reason_summary=_private_reason_summary(output),
         candidate_ranking=tuple(player_id for player_id in ranking if player_id in valid_targets),
     )
 
@@ -135,7 +135,7 @@ def lady_of_lake_decision_from_output(
         raise ValueError("viewer is not the lady of the lake holder")
     return LadyOfLakeDecision(
         target_player_id=target,
-        private_reason_summary=_string(output, "private_reason_summary"),
+        private_reason_summary=_private_reason_summary(output),
     )
 
 
@@ -144,6 +144,13 @@ def _string(output: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{key} is required")
     return value
+
+
+def _private_reason_summary(output: dict[str, Any]) -> str:
+    value = output.get("private_reason_summary")
+    if isinstance(value, str) and value.strip():
+        return value
+    return "模型未提供私有理由摘要。"
 
 
 def _plain_text(raw: str) -> str:
