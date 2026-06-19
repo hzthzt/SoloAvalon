@@ -32,13 +32,19 @@ import {
   listProfiles,
   LlmProfile,
   LlmProfileInput,
+  PlayerView,
   submitAction,
   submitHumanAiAction,
   testProfile,
   updateProfile
 } from "./api";
-import { buildFlowReview, eventsForFlowReview, feedItemsForDisplay } from "./flowReview";
-import type { FlowReview, InformationFeedItem, ReviewRound } from "./flowReview";
+import {
+  buildFlowReview,
+  currentActivityText,
+  eventsForFlowReview,
+  feedItemsForDisplay
+} from "./flowReview";
+import type { FlowReview, InformationFeedItem, ReviewRound, SummaryCard } from "./flowReview";
 
 type Tab = "game" | "profiles" | "logs";
 
@@ -85,6 +91,7 @@ export function App() {
   const [manualRetryRepeat, setManualRetryRepeat] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [autoPlaying, setAutoPlaying] = useState(false);
+  const [startingGame, setStartingGame] = useState(false);
 
   const enabledOptions = [
     ...(ladyOfLakeEnabled ? ["lady_of_lake"] : []),
@@ -106,6 +113,15 @@ export function App() {
     const names = new Map(Object.entries(selectedLogPlayerNames));
     return buildFlowReview(eventLog, names);
   }, [eventLog, selectedLogPlayerNames]);
+  const activePlayerNames = useMemo(
+    () => new Map(game?.players.map((player) => [player.id, player.name]) ?? []),
+    [game?.players]
+  );
+  const activeGameReview = useMemo(
+    () => buildFlowReview(activeGameEvents, activePlayerNames),
+    [activeGameEvents, activePlayerNames]
+  );
+  const activeTeamAttemptNumber = game ? currentTeamAttemptNumber(game, activeGameReview) : 1;
 
   useEffect(() => {
     void refreshLists();
@@ -176,6 +192,9 @@ export function App() {
 
   async function startGame() {
     await run(async () => {
+      setStartingGame(true);
+      setGame(null);
+      setActiveGameEvents([]);
       let created = await createGame({
         player_count: playerCount,
         enabled_options: enabledOptions,
@@ -199,6 +218,9 @@ export function App() {
       setLadyOfLakeTarget("");
       setTab("game");
       await refreshLists();
+      setStartingGame(false);
+    }, () => {
+      setStartingGame(false);
     });
   }
 
@@ -531,7 +553,8 @@ export function App() {
               <GameDesk
                 game={game}
                 requiredTeamSize={requiredTeamSize}
-                events={activeGameEvents}
+                review={activeGameReview}
+                teamAttemptNumber={activeTeamAttemptNumber}
               />
               <section className="panel action-panel">
                 <div className="section-title">
@@ -723,9 +746,11 @@ export function App() {
                 )}
 
                 {!activeAction && <div className="empty-state">等待 AI 或对局已结算</div>}
+                <ActionRoundSummary summaries={activeGameReview.summaries} />
               </section>
             </>
           )}
+          {!game && startingGame && <StartingGameDesk playerCount={playerCount} />}
         </section>
       )}
 
@@ -870,18 +895,20 @@ function pauseForFlow() {
 function GameDesk({
   game,
   requiredTeamSize,
-  events
+  review,
+  teamAttemptNumber
 }: {
   game: GameState;
   requiredTeamSize: number;
-  events: GameEvent[];
+  review: FlowReview;
+  teamAttemptNumber: number;
 }) {
   const leaderName = playerName(game, game.leader_player_id);
   return (
     <section className="desk">
       <div className="desk-header">
         <div>
-          <h2>第 {game.current_round} 轮任务</h2>
+          <h2>第 {game.current_round} 轮任务 · 第 {teamAttemptNumber} 次组队</h2>
           <p>
             队长 {leaderName} · 需要 {requiredTeamSize} 人
           </p>
@@ -914,60 +941,130 @@ function GameDesk({
             <div className="seat-index">{player.seat_index + 1}</div>
             <h3>{player.name}</h3>
             {player.original_name && <p className="original-name">{player.original_name}</p>}
-            <p className="visible-role">{player.visible_role ? roleLabel(player.visible_role) : "未知身份"}</p>
+            <p className="visible-role">{playerRoleText(player)}</p>
             <span>{player.is_human ? "真人" : "AI"}</span>
           </article>
         ))}
       </div>
-      <GameFlow game={game} events={events} />
+      <GameFlow game={game} review={review} />
     </section>
   );
 }
 
-function GameFlow({ game, events }: { game: GameState; events: GameEvent[] }) {
+function GameFlow({
+  game,
+  review
+}: {
+  game: GameState;
+  review: FlowReview;
+}) {
   const playerNames = useMemo(
     () => new Map(game.players.map((player) => [player.id, player.name])),
     [game.players]
   );
-  const review = useMemo(() => buildFlowReview(events, playerNames), [events, playerNames]);
+  const activityText = useMemo(
+    () => currentActivityText(game, playerNames),
+    [game, playerNames]
+  );
   return (
     <section className="game-flow" aria-live="polite">
       <div className="flow-header">
         <History size={16} />
         <h3>信息流</h3>
       </div>
-      <InformationFlowPanel review={review} />
+      <div className="game-flow-layout">
+        <InformationFlowPanel review={review} activityText={activityText} />
+      </div>
     </section>
   );
 }
 
-function InformationFlowPanel({ review }: { review: FlowReview }) {
+function InformationFlowPanel({
+  review,
+  activityText
+}: {
+  review: FlowReview;
+  activityText: string;
+}) {
   const items = useMemo(() => feedItemsForDisplay(review), [review]);
+  const [visibleItemCount, setVisibleItemCount] = useState(0);
+  useEffect(() => {
+    setVisibleItemCount((current) => {
+      if (items.length <= current) {
+        return items.length;
+      }
+      return current;
+    });
+  }, [items.length]);
+  useEffect(() => {
+    if (visibleItemCount >= items.length) {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      setVisibleItemCount((current) => Math.min(current + 1, items.length));
+    }, 220);
+    return () => window.clearTimeout(timeout);
+  }, [items.length, visibleItemCount]);
+  const displayedItems = items.slice(0, visibleItemCount);
   return (
     <section className="information-flow-panel">
       <div className="information-feed-list">
-        {items.length === 0 && <div className="empty-state">暂无信息</div>}
-        {items.map((item) => (
+        {displayedItems.length === 0 && <div className="empty-state">暂无信息</div>}
+        {displayedItems.map((item) => (
           <InformationFeedItemView key={item.id} item={item} />
         ))}
       </div>
+      <div className="current-activity">{activityText}</div>
     </section>
   );
 }
 
 function InformationFeedItemView({ item }: { item: InformationFeedItem }) {
-  if (item.type === "round") {
-    return <RoundSummary round={item.round} />;
+  if (item.type === "chat") {
+    return (
+      <article className="chat-item">
+        <div className="chat-avatar">{item.chat.player.slice(0, 1)}</div>
+        <div className="chat-bubble">
+          <div className="chat-meta">
+            <strong>{item.chat.player}</strong>
+            <span>第 {item.chat.roundNumber} 轮</span>
+            <time>{formatDateTime(item.chat.createdAt)}</time>
+          </div>
+          <p>{item.chat.message}</p>
+        </div>
+      </article>
+    );
   }
   const row = item.broadcast;
   return (
-    <article className="broadcast-item">
-      <div className="flow-meta">
-        <span>#{row.eventIndex}</span>
-        <strong>第 {row.roundNumber} 轮</strong>
+    <article className="announcement-item">
+      <div className="announcement-bubble">
         <time>{formatDateTime(row.createdAt)}</time>
+        <p>{row.text}</p>
       </div>
-      <p>{row.text}</p>
+    </article>
+  );
+}
+
+function ActionRoundSummary({ summaries }: { summaries: SummaryCard[] }) {
+  return (
+    <section className="summary-panel action-summary-panel">
+      <div className="flow-subheader">本轮总结</div>
+      {summaries.length === 0 && <p className="muted">暂无总结</p>}
+      {summaries.map((summary) => (
+        <SummaryCardView key={summary.id} summary={summary} />
+      ))}
+    </section>
+  );
+}
+
+function SummaryCardView({ summary }: { summary: SummaryCard }) {
+  return (
+    <article className="summary-card">
+      <strong>{summary.title}</strong>
+      {summary.lines.map((line) => (
+        <p key={line}>{line}</p>
+      ))}
     </article>
   );
 }
@@ -999,15 +1096,6 @@ function RoundSummary({ round }: { round: ReviewRound }) {
               <p>{round.vote.approved ? "车队通过" : "车队未通过"}</p>
             </>
           )}
-        </div>
-        <div>
-          <h4>发言</h4>
-          {round.speeches.length === 0 && <p className="muted">尚无发言</p>}
-          {round.speeches.map((speech) => (
-            <p key={speech.eventIndex}>
-              {speech.player}：{speech.message}
-            </p>
-          ))}
         </div>
         <div>
           <h4>结算</h4>
@@ -1063,6 +1151,32 @@ function ReplayDetail({
           <RoundSummary key={round.roundNumber} round={round} />
         ))}
       </div>
+      {review.chatMessages.length > 0 && (
+        <div className="replay-broadcasts">
+          <div className="flow-subheader">发言记录</div>
+          {review.chatMessages.map((chat) => (
+            <article className="chat-item" key={chat.id}>
+              <div className="chat-avatar">{chat.player.slice(0, 1)}</div>
+              <div className="chat-bubble">
+                <div className="chat-meta">
+                  <strong>{chat.player}</strong>
+                  <span>第 {chat.roundNumber} 轮</span>
+                  <time>{formatDateTime(chat.createdAt)}</time>
+                </div>
+                <p>{chat.message}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+      {review.summaries.length > 0 && (
+        <div className="replay-broadcasts">
+          <div className="flow-subheader">总结记录</div>
+          {review.summaries.map((summary) => (
+            <SummaryCardView key={summary.id} summary={summary} />
+          ))}
+        </div>
+      )}
       {review.broadcasts.length > 0 && (
         <div className="replay-broadcasts">
           <div className="flow-subheader">广播记录</div>
@@ -1110,6 +1224,21 @@ function StatusStrip({ game }: { game: GameState }) {
       <span>{game.votes_cast_count}/{game.players.length} 投票</span>
       <span>{game.failed_team_votes} 轮拒绝</span>
     </div>
+  );
+}
+
+function StartingGameDesk({ playerCount }: { playerCount: number }) {
+  return (
+    <section className="desk starting-game-desk" aria-live="polite">
+      <div className="desk-header">
+        <div>
+          <h2>对局准备中</h2>
+          <p>{playerCount} 人 · 正在连接规则裁判</p>
+        </div>
+        <div className="winner-badge">创建中</div>
+      </div>
+      <div className="empty-state">游玩面板已就绪，等待首批对局信息</div>
+    </section>
   );
 }
 
@@ -1200,6 +1329,16 @@ function isRetryableAiDecisionError(error: unknown) {
 
 function playerName(game: GameState, playerId: string) {
   return game.players.find((player) => player.id === playerId)?.name ?? playerId;
+}
+
+function playerRoleText(player: PlayerView) {
+  const role = player.revealed_role ?? player.visible_role;
+  return role ? roleLabel(role) : "身份未公开";
+}
+
+function currentTeamAttemptNumber(game: GameState, review: FlowReview) {
+  const currentRound = review.rounds.find((round) => round.roundNumber === game.current_round);
+  return currentRound?.team?.attemptNumber ?? game.failed_team_votes + 1;
 }
 
 function questResultLabel(result: string) {

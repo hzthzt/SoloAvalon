@@ -1,19 +1,21 @@
-import type { GameEvent } from "./api.js";
+import type { GameEvent, GameState } from "./api.js";
 
 export type FlowReview = {
   rounds: ReviewRound[];
   broadcasts: BroadcastRow[];
+  chatMessages: ChatMessage[];
+  summaries: SummaryCard[];
   feedItems: InformationFeedItem[];
 };
 
-export type InformationFeedItem = RoundFeedItem | BroadcastFeedItem;
+export type InformationFeedItem = ChatFeedItem | BroadcastFeedItem;
 
-export type RoundFeedItem = {
-  type: "round";
+export type ChatFeedItem = {
+  type: "chat";
   id: string;
   eventIndex: number;
   roundNumber: number;
-  round: ReviewRound;
+  chat: ChatMessage;
 };
 
 export type BroadcastFeedItem = {
@@ -22,6 +24,29 @@ export type BroadcastFeedItem = {
   eventIndex: number;
   roundNumber: number;
   broadcast: BroadcastRow;
+};
+
+export type SummaryCard = TeamVoteSummary | QuestSummary;
+
+export type TeamVoteSummary = {
+  type: "team_vote_summary";
+  id: string;
+  eventIndex: number;
+  roundNumber: number;
+  teamAttemptNumber: number;
+  title: string;
+  lines: string[];
+  approved: boolean;
+};
+
+export type QuestSummary = {
+  type: "quest_summary";
+  id: string;
+  eventIndex: number;
+  roundNumber: number;
+  title: string;
+  lines: string[];
+  result: "success" | "fail";
 };
 
 export type ReviewRound = {
@@ -40,6 +65,7 @@ export type TeamProposalReview = {
   eventIndex: number;
   leader: string;
   members: string[];
+  attemptNumber: number;
 };
 
 export type SpeechReview = {
@@ -54,6 +80,7 @@ export type VoteReview = {
   approvals: string[];
   rejections: string[];
   failedTeamVotes: number;
+  attemptNumber: number;
 };
 
 export type QuestResultReview = {
@@ -62,6 +89,8 @@ export type QuestResultReview = {
   results: Array<"success" | "fail">;
   successCount: number;
   failCount: number;
+  successCards: number | null;
+  failCards: number | null;
   winner: string | null;
 };
 
@@ -84,6 +113,15 @@ export type BroadcastRow = {
   roundNumber: number;
   kind: string;
   text: string;
+  createdAt: string;
+};
+
+export type ChatMessage = {
+  id: string;
+  eventIndex: number;
+  roundNumber: number;
+  player: string;
+  message: string;
   createdAt: string;
 };
 
@@ -112,7 +150,11 @@ export function buildFlowReview(
 ): FlowReview {
   const rounds: ReviewRound[] = [];
   const broadcasts: BroadcastRow[] = [];
+  const chatMessages: ChatMessage[] = [];
+  const summaries: SummaryCard[] = [];
   let currentRoundNumber = 1;
+  let currentTeamAttemptNumber = 0;
+  let pendingTeamAttemptNumber = 0;
   let pendingVotes: PendingVote[] = [];
 
   for (const event of [...events].sort((first, second) => first.event_index - second.event_index)) {
@@ -137,8 +179,11 @@ export function buildFlowReview(
       const proposal = {
         eventIndex: event.event_index,
         leader: nameFor(playerNames, valueAsString(payload.leader_player_id)),
-        members: valueAsStringArray(payload.team).map((playerId) => nameFor(playerNames, playerId))
+        members: valueAsStringArray(payload.team).map((playerId) => nameFor(playerNames, playerId)),
+        attemptNumber: currentTeamAttemptNumber + 1
       };
+      currentTeamAttemptNumber = proposal.attemptNumber;
+      pendingTeamAttemptNumber = proposal.attemptNumber;
       round.team = proposal;
       round.proposals.push(proposal);
       pendingVotes = [];
@@ -147,7 +192,7 @@ export function buildFlowReview(
           event,
           currentRoundNumber,
           "team_proposed",
-          `${proposal.leader} 提交车队：${joinNames(proposal.members)}`
+          `第 ${currentRoundNumber} 轮任务，第 ${proposal.attemptNumber} 次组队：${proposal.leader} 提交车队：${joinNames(proposal.members)}`
         )
       );
       continue;
@@ -160,9 +205,14 @@ export function buildFlowReview(
         message: valueAsString(payload.message)
       };
       round.speeches.push(speech);
-      broadcasts.push(
-        broadcast(event, currentRoundNumber, "speech", `${speech.player} 发言：${speech.message}`)
-      );
+      chatMessages.push({
+        id: `${event.event_index}-chat`,
+        eventIndex: event.event_index,
+        roundNumber: currentRoundNumber,
+        player: speech.player,
+        message: speech.message,
+        createdAt: event.created_at
+      });
       continue;
     }
 
@@ -187,16 +237,19 @@ export function buildFlowReview(
         approved: valueAsBoolean(payload.approved),
         approvals,
         rejections,
-        failedTeamVotes: valueAsNumber(payload.failed_team_votes)
+        failedTeamVotes: valueAsNumber(payload.failed_team_votes),
+        attemptNumber: pendingTeamAttemptNumber || currentTeamAttemptNumber || 1
       };
       round.vote = voteReview;
       round.votes.push(voteReview);
+      const summary = teamVoteSummary(event, currentRoundNumber, voteReview, round.team);
+      summaries.push(summary);
       broadcasts.push(
         broadcast(
           event,
           currentRoundNumber,
           "vote_result",
-          `投票公开：${voteSlateText(approvals, rejections)}`
+          [summary.title, ...summary.lines].join("\n")
         )
       );
       pendingVotes = [];
@@ -224,20 +277,26 @@ export function buildFlowReview(
         results,
         successCount: results.filter((item) => item === "success").length,
         failCount: results.filter((item) => item === "fail").length,
+        successCards: valueAsOptionalNumber(payload.success_cards),
+        failCards: valueAsOptionalNumber(payload.fail_cards),
         winner: nullableString(payload.winner)
       };
       round.questResult = questResult;
+      const summary = questSummary(event, currentRoundNumber, questResult);
+      summaries.push(summary);
       broadcasts.push(
         broadcast(
           event,
           currentRoundNumber,
           "quest_result",
-          `任务${questResultLabel(result)}，当前任务战绩：${questResult.successCount} 成功 / ${questResult.failCount} 失败`
+          [summary.title, ...summary.lines].join("\n")
         )
       );
       pendingVotes = [];
       if (valueAsString(payload.phase) === "team_proposal") {
         currentRoundNumber += 1;
+        currentTeamAttemptNumber = 0;
+        pendingTeamAttemptNumber = 0;
         ensureRound(rounds, currentRoundNumber);
       }
       continue;
@@ -275,6 +334,8 @@ export function buildFlowReview(
       );
       if (inspectedRound >= currentRoundNumber) {
         currentRoundNumber = inspectedRound + 1;
+        currentTeamAttemptNumber = 0;
+        pendingTeamAttemptNumber = 0;
         ensureRound(rounds, currentRoundNumber);
       }
       continue;
@@ -285,7 +346,9 @@ export function buildFlowReview(
   return {
     rounds: visibleRounds,
     broadcasts,
-    feedItems: buildFeedItems(visibleRounds, broadcasts)
+    chatMessages,
+    summaries,
+    feedItems: buildFeedItems(chatMessages, broadcasts)
   };
 }
 
@@ -317,13 +380,16 @@ function hasRoundContent(round: ReviewRound): boolean {
   );
 }
 
-function buildFeedItems(rounds: ReviewRound[], broadcasts: BroadcastRow[]): InformationFeedItem[] {
-  const roundItems = rounds.map((round) => ({
-    type: "round" as const,
-    id: `round-${round.roundNumber}`,
-    eventIndex: latestRoundEventIndex(round),
-    roundNumber: round.roundNumber,
-    round
+function buildFeedItems(
+  chatMessages: ChatMessage[],
+  broadcasts: BroadcastRow[]
+): InformationFeedItem[] {
+  const chatItems = chatMessages.map((chat) => ({
+    type: "chat" as const,
+    id: `chat-${chat.id}`,
+    eventIndex: chat.eventIndex,
+    roundNumber: chat.roundNumber,
+    chat
   }));
   const broadcastItems = broadcasts.map((row) => ({
     type: "broadcast" as const,
@@ -332,7 +398,7 @@ function buildFeedItems(rounds: ReviewRound[], broadcasts: BroadcastRow[]): Info
     roundNumber: row.roundNumber,
     broadcast: row
   }));
-  return [...roundItems, ...broadcastItems].sort(
+  return [...chatItems, ...broadcastItems].sort(
     (first, second) => first.eventIndex - second.eventIndex
   );
 }
@@ -369,6 +435,89 @@ function broadcast(
   };
 }
 
+function teamVoteSummary(
+  event: GameEvent,
+  roundNumber: number,
+  vote: VoteReview,
+  team: TeamProposalReview | undefined
+): TeamVoteSummary {
+  return {
+    type: "team_vote_summary",
+    id: `${event.event_index}-team-vote-summary`,
+    eventIndex: event.event_index,
+    roundNumber,
+    teamAttemptNumber: vote.attemptNumber,
+    title: `第 ${roundNumber} 轮任务，第 ${vote.attemptNumber} 次组队`,
+    lines: [
+      `队长：${team?.leader ?? "未知"}`,
+      `车队：${joinNames(team?.members ?? [])}`,
+      `赞成：${joinNames(vote.approvals)}`,
+      `反对：${joinNames(vote.rejections)}`,
+      vote.approved ? "车队通过" : "车队未通过"
+    ],
+    approved: vote.approved
+  };
+}
+
+function questSummary(
+  event: GameEvent,
+  roundNumber: number,
+  questResult: QuestResultReview
+): QuestSummary {
+  return {
+    type: "quest_summary",
+    id: `${event.event_index}-quest-summary`,
+    eventIndex: event.event_index,
+    roundNumber,
+    title: `第 ${roundNumber} 轮任务，任务投票结束`,
+    lines: [
+      `任务${questResultLabel(questResult.result)}`,
+      `成功票：${questResult.successCards ?? "未知"}`,
+      `失败票：${questResult.failCards ?? "未知"}`
+    ],
+    result: questResult.result
+  };
+}
+
+export function currentActivityText(
+  game: Pick<
+    GameState,
+    | "phase"
+    | "current_round"
+    | "failed_team_votes"
+    | "speech_order"
+    | "speeches"
+    | "winner"
+  >,
+  playerNames: ReadonlyMap<string, string>
+): string {
+  if (game.winner || game.phase === "complete") {
+    return "对局已结束";
+  }
+  const roundPrefix = `第 ${game.current_round} 轮任务`;
+  const attemptNumber = game.failed_team_votes + 1;
+  if (game.phase === "team_proposal") {
+    return `${roundPrefix}，第 ${attemptNumber} 次组队中`;
+  }
+  if (game.phase === "speech") {
+    const nextSpeakerId = game.speech_order[Object.keys(game.speeches).length];
+    return nextSpeakerId ? `${nameFor(playerNames, nextSpeakerId)}发言中` : "发言中";
+  }
+  if (game.phase === "voting") {
+    return `${roundPrefix}，第 ${attemptNumber} 次组队投票中`;
+  }
+  if (game.phase === "quest") {
+    return `${roundPrefix}，任务投票中`;
+  }
+  if (game.phase === "assassination") {
+    return "刺杀中";
+  }
+  if (game.phase === "lady_of_lake") {
+    return "湖中仙女查看中";
+  }
+  return phaseFallbackLabel(game.phase);
+}
+
 function nameFor(playerNames: ReadonlyMap<string, string>, playerId: string): string {
   return playerNames.get(playerId) ?? playerId;
 }
@@ -400,6 +549,17 @@ function valueAsNumber(value: unknown): number {
   return typeof value === "number" ? value : Number(value) || 0;
 }
 
+function valueAsOptionalNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const numberValue = Number(value);
+    return Number.isFinite(numberValue) ? numberValue : null;
+  }
+  return null;
+}
+
 function isQuestResult(value: string): value is "success" | "fail" {
   return value === "success" || value === "fail";
 }
@@ -415,10 +575,6 @@ function joinNames(names: string[]): string {
   return names.length ? names.join("、") : "无";
 }
 
-function voteSlateText(approvals: string[], rejections: string[]): string {
-  return `${joinNames(approvals)} 赞成；${joinNames(rejections)} 反对`;
-}
-
 function questResultLabel(result: "success" | "fail"): string {
   return result === "success" ? "成功" : "失败";
 }
@@ -431,4 +587,17 @@ function winnerLabel(winner: string | null): string {
     return "恶方胜利";
   }
   return "胜负未定";
+}
+
+function phaseFallbackLabel(phase: string): string {
+  const labels: Record<string, string> = {
+    team_proposal: "组队中",
+    speech: "发言中",
+    voting: "组队投票中",
+    quest: "任务投票中",
+    assassination: "刺杀中",
+    lady_of_lake: "湖中仙女查看中",
+    complete: "对局已结束"
+  };
+  return labels[phase] ?? `${phase}进行中`;
 }

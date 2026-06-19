@@ -5,6 +5,7 @@ export type PlayerView = {
   original_name: string | null;
   is_human: boolean;
   visible_role: string | null;
+  revealed_role: string | null;
 };
 
 export type GameEvent = {

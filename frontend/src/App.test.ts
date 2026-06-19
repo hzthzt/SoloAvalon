@@ -56,6 +56,11 @@ test("player cards show original names while start request sends human name", ()
   assert.equal(source.includes("player.original_name"), true);
 });
 
+test("player cards keep legal visible roles before final reveal", () => {
+  assert.equal(source.includes("playerRoleText(player)"), true);
+  assert.equal(source.includes("player.revealed_role ?? player.visible_role"), true);
+});
+
 test("start game request sends player count and enabled options", () => {
   assert.equal(source.includes("player_count: playerCount"), true);
   assert.equal(source.includes("enabled_options: enabledOptions"), true);
@@ -74,4 +79,35 @@ test("lady of lake action is available in the frontend", () => {
   assert.equal(source.includes('activeAction === "use_lady_of_lake"'), true);
   assert.equal(source.includes("lady_of_lake_eligible_target_ids"), true);
   assert.equal(source.includes("lady_of_lake_known_factions"), true);
+});
+
+test("action panel owns the persistent round summaries", () => {
+  assert.equal(source.includes("ActionRoundSummary"), true);
+  assert.equal(source.includes("summaries.slice(-3)"), false);
+  assert.equal(source.indexOf("<ActionRoundSummary"), source.lastIndexOf("<ActionRoundSummary"));
+});
+
+test("broadcasts render as centered announcement bubbles", () => {
+  assert.equal(source.includes("announcement-item"), true);
+  assert.equal(source.includes("announcement-bubble"), true);
+  assert.equal(
+    source.indexOf("<time>{formatDateTime(row.createdAt)}</time>") <
+      source.indexOf("<p>{row.text}</p>"),
+    true
+  );
+});
+
+test("game desk title includes current team attempt", () => {
+  assert.equal(source.includes("teamAttemptNumber"), true);
+  assert.equal(source.includes("第 {game.current_round} 轮任务 · 第 {teamAttemptNumber} 次组队"), true);
+});
+
+test("start game shows a playing panel before state events arrive", () => {
+  assert.equal(source.includes("startingGame"), true);
+  assert.equal(source.includes("StartingGameDesk"), true);
+});
+
+test("information feed reveals queued items gradually", () => {
+  assert.equal(source.includes("visibleItemCount"), true);
+  assert.equal(source.includes("setTimeout"), true);
 });

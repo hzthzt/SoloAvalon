@@ -678,6 +678,7 @@ class GameService:
                     "original_name": player.original_name,
                     "is_human": player.is_human,
                     "visible_role": visible_roles[player.id],
+                    "revealed_role": player.role.value if state.winner else None,
                 }
                 for player in state.players
             ],

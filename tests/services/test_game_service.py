@@ -10,6 +10,7 @@ from backend.app.ai.player import AiDecisionError, AiPlayer, AiTurnResult
 from backend.app.ai.strategy import SpeechDecision
 from backend.app.game.models import Faction, GameOption, MissionAction, Phase, Role, Vote
 from backend.app.game.rules import (
+    assassinate,
     cast_vote,
     create_game as create_rules_game,
     finalize_quest,
@@ -37,7 +38,12 @@ class GameServiceTests(unittest.TestCase):
                 player["id"]: player["visible_role"]
                 for player in state["players"]
             }
+            revealed_roles = {
+                player["id"]: player["revealed_role"]
+                for player in state["players"]
+            }
             self.assertEqual(visible_roles["player_1"], state["human_role"])
+            self.assertEqual(set(revealed_roles.values()), {None})
             hidden_roles = [
                 role for player_id, role in visible_roles.items() if player_id != "player_1"
             ]
@@ -49,6 +55,32 @@ class GameServiceTests(unittest.TestCase):
             events = service.list_events(state["id"])
             self.assertEqual(events[0].event_type, "game_created")
             self.assertEqual(events[1].event_type, "roles_assigned")
+
+    def test_completed_game_state_reveals_all_roles(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = _service(tmpdir)
+            state = service.create_game(seed=2)
+            internal_state = service._state(state["id"])
+            for _round in range(3):
+                internal_state = _complete_successful_quest(internal_state)
+            assassin = next(player for player in internal_state.players if player.role == Role.ASSASSIN)
+            merlin = next(player for player in internal_state.players if player.role == Role.MERLIN)
+            internal_state = assassinate(internal_state, assassin.id, merlin.id)
+            service._set_state(state["id"], internal_state)
+
+            completed = service.get_game_state(state["id"])
+
+            self.assertEqual(completed["phase"], Phase.COMPLETE.value)
+            self.assertEqual(
+                {
+                    player["id"]: player["revealed_role"]
+                    for player in completed["players"]
+                },
+                {
+                    player.id: player.role.value
+                    for player in internal_state.players
+                },
+            )
 
     def test_create_game_uses_timestamp_id(self):
         with tempfile.TemporaryDirectory() as tmpdir:
