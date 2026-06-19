@@ -69,7 +69,7 @@
   },
   "role_descriptions": {
     "merlin": "好人阵营，知道哪些玩家属于恶方，公开发言要避免暴露自己。",
-    "percival": "好人阵营，开局看到梅林候选；若有莫甘娜，会同时看到梅林和莫甘娜但不知道谁是真的。",
+    "percival": "好人阵营，开局看到梅林候选；候选中包含梅林和莫甘娜，但不知道谁是真的。",
     "loyal_servant": "好人阵营，没有额外身份信息，需要通过公开信息推理。",
     "assassin": "恶方阵营，知道恶方同伴，若好人完成 3 次任务，可刺杀梅林翻盘。",
     "morgana": "恶方阵营，在派西维尔视角中伪装成梅林，用来混淆派西维尔。",
@@ -81,7 +81,7 @@
   },
   "role_gameplay": {
     "merlin": "你知道哪些玩家属于恶方，但公开发言要避免暴露自己。",
-    "percival": "你知道梅林候选，需要在公开讨论中分辨谁是真梅林、谁可能是莫甘娜。",
+    "percival": "你看到的梅林候选包含梅林和莫甘娜，需要在公开讨论中分辨谁是真梅林、谁是莫甘娜。",
     "loyal_servant": "你没有额外信息，需要通过组队、发言、投票和任务结果判断谁可信。",
     "assassin": "你需要隐藏恶方身份，影响组队和投票，并在好人完成 3 次任务后刺杀梅林。",
     "morgana": "你需要尽量像梅林一样发言，干扰派西维尔和好人阵营的判断。",
@@ -120,7 +120,7 @@
         "在关键轮次要敢于影响车队，但理由要像正常好人推理，而不是像直接知道身份。"
       ],
       "percival": [
-        "你看到的是梅林候选，不是真梅林；先比较两个候选谁在帮助好人建立正确队伍，谁在制造误导。",
+        "你看到的梅林候选包含梅林和莫甘娜，但不知道谁是谁；先比较两个候选谁在帮助好人建立正确队伍，谁在制造误导。",
         "不要过早公开候选关系，否则会帮助刺客缩小梅林范围。",
         "你可以替真梅林分担注意力，但不要把自己伪装得过于像梅林导致好人失去判断。"
       ],
@@ -164,7 +164,7 @@
   "extra_information": {
     "merlin_known_evil": "{players} 属于恶方。",
     "evil_teammates": "{players} 是恶方同伴。",
-    "percival_merlin_candidates": "{players} 是梅林候选，其中可能包含莫甘娜。",
+    "percival_merlin_candidates": "{players} 是梅林候选，其中包含梅林和莫甘娜。",
     "known_good": "{players} 是你确认的好人。",
     "none": "无。"
   },
@@ -179,11 +179,11 @@
     },
     "7": {
       "good": ["merlin", "percival", "loyal_servant", "loyal_servant"],
-      "evil": ["assassin", "morgana", "mordred"]
+      "evil": ["assassin", "morgana", "oberon"]
     },
     "8": {
       "good": ["merlin", "percival", "loyal_servant", "loyal_servant", "loyal_servant"],
-      "evil": ["assassin", "morgana", "mordred"]
+      "evil": ["assassin", "morgana", "minion"]
     },
     "9": {
       "good": ["merlin", "percival", "loyal_servant", "loyal_servant", "loyal_servant", "loyal_servant"],
@@ -199,7 +199,7 @@
       "label": "湖中仙女",
       "description": "第 2、3、4 次任务结算后，持有者私下查看一名未被湖女查看过的玩家阵营，然后湖女转交给被查看者。",
       "enabled": false,
-      "default_enabled_for_player_counts": [7, 8, 10]
+      "default_enabled_for_player_counts": [8, 9, 10]
     },
     "tristan": {
       "label": "崔斯坦",

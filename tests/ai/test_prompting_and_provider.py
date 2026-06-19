@@ -8,6 +8,7 @@ from backend.app.game.models import Faction, GameOption, GameState, MissionActio
 from backend.app.game.rules import create_five_player_game, create_game, propose_team
 from backend.app.llm.profiles import LlmProfile
 from backend.app.llm.provider import LlmProvider
+from backend.app.prompting.config import load_prompt_template_config
 from backend.app.prompting.schemas import lady_of_lake_decision_from_output, parse_json_object
 from backend.app.prompting.templates import PromptBuilder
 
@@ -30,6 +31,27 @@ def test_profile() -> LlmProfile:
 
 
 class PromptingAndProviderTests(unittest.TestCase):
+    def test_default_prompt_config_matches_current_role_setup_and_percival_certainty(self):
+        config = load_prompt_template_config()
+
+        self.assertEqual(
+            config.recommended_role_setups[7]["evil"],
+            ["assassin", "morgana", "oberon"],
+        )
+        self.assertEqual(
+            config.recommended_role_setups[8]["evil"],
+            ["assassin", "morgana", "minion"],
+        )
+        self.assertEqual(
+            config.optional_mechanics["lady_of_lake"]["default_enabled_for_player_counts"],
+            [8, 9, 10],
+        )
+        self.assertIn("包含梅林和莫甘娜", config.role_descriptions["percival"])
+        self.assertIn("包含梅林和莫甘娜", config.role_gameplay["percival"])
+        self.assertIn("包含梅林和莫甘娜", config.extra_information["percival_merlin_candidates"])
+        self.assertNotIn("若有莫甘娜", config.role_descriptions["percival"])
+        self.assertNotIn("可能包含莫甘娜", config.extra_information["percival_merlin_candidates"])
+
     def test_player_view_includes_percival_strategy_and_merlin_candidates(self):
         state = GameState(
             players=(
@@ -50,6 +72,9 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertIn("身份：派西维尔。", prompt_text)
         self.assertIn("身份策略：", prompt_text)
         self.assertIn("梅林候选", prompt_text)
+        self.assertIn("包含梅林和莫甘娜", prompt_text)
+        self.assertNotIn("若有莫甘娜", prompt_text)
+        self.assertNotIn("可能包含莫甘娜", prompt_text)
         self.assertIn("玩家1、玩家5", prompt_text)
 
     def test_stable_prefix_uses_game_facts_without_prompt_metadata(self):
