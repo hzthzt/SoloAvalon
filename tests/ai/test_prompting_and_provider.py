@@ -52,6 +52,40 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertNotIn("若有莫甘娜", config.role_descriptions["percival"])
         self.assertNotIn("可能包含莫甘娜", config.extra_information["percival_merlin_candidates"])
 
+    def test_default_prompt_config_encourages_real_table_behavior(self):
+        config = load_prompt_template_config()
+        system_text = "\n".join(config.system_lines)
+        propose_text = "\n".join(config.action_prompts["propose_team"]["lines"])
+        speak_text = "\n".join(config.action_prompts["speak"]["lines"])
+        vote_text = "\n".join(config.action_prompts["vote"]["lines"])
+
+        self.assertIn("积极争取上车", system_text)
+        self.assertIn("跳身份", system_text)
+        self.assertIn("反跳", system_text)
+        self.assertIn("诈身份", system_text)
+        self.assertIn("自称身份只能作为待验证信息", system_text)
+        self.assertIn("领队默认应考虑自己是否上车", propose_text)
+        self.assertIn("可以跳身份", speak_text)
+        self.assertIn("想上车", speak_text)
+        self.assertIn("上车意愿", vote_text)
+        self.assertIn("假跳", config.role_strategy_tips["loyal_servant"])
+        self.assertIn("辨别跳身份的真假", config.role_strategy_tips["percival"])
+        self.assertIn("跳梅林", config.role_strategy_tips["morgana"])
+        self.assertIn("假跳", config.role_strategy_tips["assassin"])
+
+    def test_built_prompt_includes_real_table_behavior_guidance(self):
+        state = create_five_player_game(seed=20)
+        context = ContextBuilder().build(state, state.players[0].id, Phase.TEAM_PROPOSAL)
+
+        prompt_text = "\n".join(
+            message["content"] for message in PromptBuilder().build_messages(context, Phase.TEAM_PROPOSAL)
+        )
+
+        self.assertIn("积极争取上车", prompt_text)
+        self.assertIn("跳身份", prompt_text)
+        self.assertIn("自称身份只能作为待验证信息", prompt_text)
+        self.assertIn("领队默认应考虑自己是否上车", prompt_text)
+
     def test_player_view_includes_percival_strategy_and_merlin_candidates(self):
         state = GameState(
             players=(
