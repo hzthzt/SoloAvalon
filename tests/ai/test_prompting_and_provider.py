@@ -533,6 +533,49 @@ class PromptingAndProviderTests(unittest.TestCase):
 
         self.assertEqual(len(attempts), 3)
 
+    def test_llm_provider_retries_empty_message_content_until_success(self):
+        attempts = []
+
+        def transport(url, headers, payload, timeout):
+            attempts.append(timeout)
+            if len(attempts) < 3:
+                return {"choices": [{"message": {"content": ""}}]}
+            return {
+                "choices": [
+                    {"message": {"content": json.dumps({"vote": "approve"})}}
+                ]
+            }
+
+        profile_kwargs = test_profile().__dict__ | {"timeout_retries": 5}
+        provider = LlmProvider(transport=transport)
+
+        content = provider.chat_completion(
+            LlmProfile(**profile_kwargs),
+            messages=[{"role": "user", "content": "vote"}],
+        )
+
+        self.assertEqual(json.loads(content), {"vote": "approve"})
+        self.assertEqual(len(attempts), 3)
+
+    def test_llm_provider_stops_after_configured_empty_content_retries(self):
+        attempts = []
+
+        def transport(url, headers, payload, timeout):
+            attempts.append(timeout)
+            return {"choices": [{"message": {"content": ""}}]}
+
+        profile_kwargs = test_profile().__dict__ | {"timeout_retries": 2}
+        provider = LlmProvider(transport=transport)
+
+        with self.assertRaises(ValueError) as captured:
+            provider.chat_completion(
+                LlmProfile(**profile_kwargs),
+                messages=[{"role": "user", "content": "vote"}],
+            )
+
+        self.assertIn("non-empty message content", str(captured.exception))
+        self.assertEqual(len(attempts), 3)
+
     def test_ai_player_raises_when_model_returns_illegal_vote(self):
         class BadProvider:
             def chat_completion(self, profile, messages):

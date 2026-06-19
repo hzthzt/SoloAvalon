@@ -28,34 +28,44 @@ class LlmProvider:
             "Authorization": f"Bearer {profile.api_key}",
             "Content-Type": "application/json",
         }
-        response = self._send_with_timeout_retries(
+        return self._send_with_retries(
             profile,
             _completion_url(profile.base_url),
             headers,
             payload,
         )
-        choices = response.get("choices")
-        if not choices:
-            raise ValueError("llm response did not include choices")
-        content = choices[0].get("message", {}).get("content")
-        if not isinstance(content, str):
-            raise ValueError("llm response did not include message content")
-        return content
 
-    def _send_with_timeout_retries(
+    def _send_with_retries(
         self,
         profile: LlmProfile,
         url: str,
         headers: dict[str, str],
         payload: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> str:
         for retry_index in range(profile.timeout_retries + 1):
             try:
-                return self._transport(url, headers, payload, profile.timeout)
-            except TimeoutError:
+                response = self._transport(url, headers, payload, profile.timeout)
+                return _completion_content(response)
+            except (TimeoutError, EmptyModelOutputError):
                 if retry_index >= profile.timeout_retries:
                     raise
-        raise RuntimeError("unreachable timeout retry state")
+        raise RuntimeError("unreachable llm retry state")
+
+
+class EmptyModelOutputError(ValueError):
+    pass
+
+
+def _completion_content(response: dict[str, Any]) -> str:
+    choices = response.get("choices")
+    if not choices:
+        raise ValueError("llm response did not include choices")
+    content = choices[0].get("message", {}).get("content")
+    if not isinstance(content, str):
+        raise ValueError("llm response did not include message content")
+    if not content.strip():
+        raise EmptyModelOutputError("llm response did not include non-empty message content")
+    return content
 
 
 def _completion_url(base_url: str) -> str:

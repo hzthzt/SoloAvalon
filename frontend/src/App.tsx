@@ -210,7 +210,7 @@ export function App() {
       setManualRetryRepeat(null);
       await refreshLists();
     }, (error) => {
-      if (isAiTimeoutError(error)) {
+      if (isRetryableAiDecisionError(error)) {
         setManualRetryRepeat(repeat);
       }
     });
@@ -1083,8 +1083,12 @@ function ProfileForm({
   );
 }
 
-function isAiTimeoutError(error: unknown) {
-  return error instanceof ApiError && error.status === 504 && error.message.startsWith("AI 决策失败");
+function isRetryableAiDecisionError(error: unknown) {
+  return (
+    error instanceof ApiError &&
+    (error.status === 502 || error.status === 504) &&
+    error.message.startsWith("AI 决策失败")
+  );
 }
 
 function playerName(game: GameState, playerId: string) {

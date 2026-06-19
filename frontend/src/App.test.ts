@@ -38,8 +38,9 @@ test("model profile form exposes timeout retry configuration", () => {
   assert.equal(apiSource.includes("timeout_retries: number"), true);
 });
 
-test("ai timeout notice offers manual retry", () => {
+test("ai decision gateway errors offer manual retry", () => {
   assert.equal(source.includes("manualRetryRepeat"), true);
+  assert.equal(source.includes("error.status === 502 || error.status === 504"), true);
   assert.equal(source.includes("手动重试"), true);
 });
 
