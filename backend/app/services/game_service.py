@@ -12,17 +12,29 @@ from backend.app.game.events import (
     build_private_view_payloads,
     build_roles_assigned_payloads,
 )
-from backend.app.game.models import Faction, GameState, MissionAction, Phase, Player, Role, Vote
+from backend.app.game.models import (
+    Faction,
+    GameOption,
+    GameState,
+    LadyOfLakeInspection,
+    MissionAction,
+    Phase,
+    Player,
+    Role,
+    Vote,
+)
 from backend.app.game.rules import (
-    FIVE_PLAYER_MISSIONS,
+    STANDARD_MISSION_CONFIGS,
     assassinate,
     cast_vote,
-    create_five_player_game,
+    create_game as create_rules_game,
+    eligible_lady_of_lake_target_ids,
     finalize_quest,
     finalize_vote,
     propose_team,
     record_speech,
     submit_quest_action,
+    use_lady_of_lake,
 )
 from backend.app.llm.profiles import LlmProfile
 from backend.app.storage.event_store import EventRecord, EventStore
@@ -58,16 +70,20 @@ class GameService:
         self,
         *,
         seed: int | None = None,
+        player_count: int = 5,
+        enabled_options: set[GameOption | str] | frozenset[GameOption | str] | None = None,
         human_name: str | None = None,
         ai_names: list[str] | None = None,
         default_llm_profile_id: str | None = None,
         ai_profile_overrides: dict[str, str | None] | None = None,
     ) -> dict[str, Any]:
         game_id = _timestamp_game_id()
-        state = create_five_player_game(
+        state = create_rules_game(
+            player_count=player_count,
             seed=seed,
             human_name=human_name or "真人玩家",
             ai_names=ai_names or [],
+            enabled_options=enabled_options,
         )
         state = _apply_ai_configuration(state, ai_profile_overrides or {})
         self._games.save_new_game(
@@ -147,6 +163,21 @@ class GameService:
                     "target_player_id": target,
                     "winner": state.winner.value if state.winner else None,
                 },
+            )
+        elif action_type == "use_lady_of_lake":
+            target = str(payload["target_player_id"])
+            state = use_lady_of_lake(state, human.id, target)
+            inspection = state.lady_of_lake_inspections[-1]
+            self._events.append_event(
+                game_id,
+                "lady_of_lake_used",
+                {
+                    "viewer_player_id": human.id,
+                    "target_player_id": target,
+                    "next_holder_player_id": target,
+                    "round_number": inspection.round_number,
+                },
+                {"target_faction": inspection.target_faction.value},
             )
         else:
             raise ValueError(f"unknown action type: {action_type}")
@@ -275,6 +306,34 @@ class GameService:
                     "target_player_id": result.decision.target_player_id,
                     "winner": state.winner.value if state.winner else None,
                 },
+            )
+        elif action_type == "use_lady_of_lake":
+            result = self._run_ai_turn(
+                game_id,
+                human.id,
+                Phase.LADY_OF_LAKE,
+                "lady_of_lake",
+                profile,
+                lambda: self._ai_player.use_lady_of_lake(
+                    state,
+                    human.id,
+                    profile,
+                    public_events=self._public_events_for_ai(game_id),
+                ),
+            )
+            state = use_lady_of_lake(state, human.id, result.decision.target_player_id)
+            self._log_ai_decision(game_id, human.id, Phase.LADY_OF_LAKE, "lady_of_lake", profile, result)
+            inspection = state.lady_of_lake_inspections[-1]
+            self._events.append_event(
+                game_id,
+                "lady_of_lake_used",
+                {
+                    "viewer_player_id": human.id,
+                    "target_player_id": result.decision.target_player_id,
+                    "next_holder_player_id": result.decision.target_player_id,
+                    "round_number": inspection.round_number,
+                },
+                {"target_faction": inspection.target_faction.value},
             )
         else:
             raise ValueError(f"unknown human action type: {action_type}")
@@ -473,6 +532,43 @@ class GameService:
                         "winner": state.winner.value if state.winner else None,
                     },
                 )
+            elif state.phase == Phase.LADY_OF_LAKE:
+                holder_id = state.lady_of_lake_holder_player_id
+                if holder_id is None:
+                    self._set_state(game_id, state)
+                    return state
+                holder = next(player for player in state.players if player.id == holder_id)
+                if holder.is_human:
+                    self._set_state(game_id, state)
+                    return state
+                profile = self._profile_for_ai(game_id, holder.id)
+                result = self._run_ai_turn(
+                    game_id,
+                    holder.id,
+                    Phase.LADY_OF_LAKE,
+                    "lady_of_lake",
+                    profile,
+                    lambda: self._ai_player.use_lady_of_lake(
+                        state,
+                        holder.id,
+                        profile,
+                        public_events=self._public_events_for_ai(game_id),
+                    ),
+                )
+                state = use_lady_of_lake(state, holder.id, result.decision.target_player_id)
+                self._log_ai_decision(game_id, holder.id, Phase.LADY_OF_LAKE, "lady_of_lake", profile, result)
+                inspection = state.lady_of_lake_inspections[-1]
+                self._events.append_event(
+                    game_id,
+                    "lady_of_lake_used",
+                    {
+                        "viewer_player_id": holder.id,
+                        "target_player_id": result.decision.target_player_id,
+                        "next_holder_player_id": result.decision.target_player_id,
+                        "round_number": inspection.round_number,
+                    },
+                    {"target_faction": inspection.target_faction.value},
+                )
             else:
                 self._set_state(game_id, state)
                 return state
@@ -504,7 +600,19 @@ class GameService:
         if not players:
             raise ValueError(f"game has no persisted players: {game_id}")
 
-        state = GameState(players=players, missions=FIVE_PLAYER_MISSIONS)
+        enabled_options = frozenset(GameOption(option) for option in summary.enabled_options)
+        lake_holder = None
+        lake_previous_holders: tuple[str, ...] = ()
+        if GameOption.LADY_OF_LAKE in enabled_options:
+            lake_holder = f"player_{summary.player_count}"
+            lake_previous_holders = (lake_holder,)
+        state = GameState(
+            players=players,
+            missions=STANDARD_MISSION_CONFIGS[summary.player_count],
+            enabled_options=enabled_options,
+            lady_of_lake_holder_player_id=lake_holder,
+            lady_of_lake_previous_holder_ids=lake_previous_holders,
+        )
         for event in self._events.list_events(game_id):
             state = _apply_replay_event(state, event)
         return state
@@ -539,13 +647,29 @@ class GameService:
         return {
             "id": game_id,
             "status": "complete" if state.winner else "active",
+            "player_count": len(state.players),
             "phase": state.phase.value,
             "current_round": state.current_round,
             "leader_player_id": state.players[state.leader_index].id,
+            "missions": [
+                {
+                    "round_number": mission.round_number,
+                    "team_size": mission.team_size,
+                    "fail_cards_required": mission.fail_cards_required,
+                }
+                for mission in state.missions
+            ],
+            "enabled_options": sorted(option.value for option in state.enabled_options),
             "human_player_id": human.id,
             "human_role": human.role.value,
             "human_faction": human.faction.value,
             "known_evil_player_ids": view_payload["known_evil_player_ids"],
+            "lady_of_lake_holder_player_id": state.lady_of_lake_holder_player_id,
+            "lady_of_lake_previous_holder_ids": list(state.lady_of_lake_previous_holder_ids),
+            "lady_of_lake_eligible_target_ids": list(
+                eligible_lady_of_lake_target_ids(state)
+            ),
+            "lady_of_lake_known_factions": view_payload["lady_of_lake_known_factions"],
             "players": [
                 {
                     "id": player.id,
@@ -593,6 +717,8 @@ class GameService:
             return "mission_action"
         if state.phase == Phase.ASSASSINATION and human.role.value == "assassin":
             return "assassinate"
+        if state.phase == Phase.LADY_OF_LAKE and state.lady_of_lake_holder_player_id == human.id:
+            return "use_lady_of_lake"
         return None
 
     def _append_event_pair(
@@ -788,6 +914,19 @@ def _apply_replay_event(state: GameState, event: EventRecord) -> GameState:
         )
     if event.event_type == "quest_result":
         return finalize_quest(state)
+    if event.event_type == "lady_of_lake_used":
+        target_faction = private_payload.get("target_faction")
+        if target_faction is None:
+            raise ValueError("cannot restore lady of lake without private target_faction")
+        replayed = use_lady_of_lake(
+            state,
+            str(public_payload["viewer_player_id"]),
+            str(public_payload["target_player_id"]),
+        )
+        inspection = replayed.lady_of_lake_inspections[-1]
+        if inspection.target_faction != Faction(target_faction):
+            raise ValueError("lady of lake private faction does not match restored player faction")
+        return replayed
     if event.event_type == "assassination":
         return assassinate(
             state,

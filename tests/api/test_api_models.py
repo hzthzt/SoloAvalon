@@ -5,6 +5,7 @@ from backend.app.api.models import (
     HumanActionRequest,
     LlmProfileRequest,
 )
+from backend.app.game.models import GameOption
 
 
 class ApiModelsTests(unittest.TestCase):
@@ -27,6 +28,28 @@ class ApiModelsTests(unittest.TestCase):
         request = CreateGameRequest.from_payload({"seed": "42"})
 
         self.assertFalse(hasattr(request, "seed"))
+
+    def test_create_game_request_normalizes_player_count_and_enabled_options(self):
+        request = CreateGameRequest.from_payload(
+            {
+                "player_count": "8",
+                "enabled_options": ["lady_of_lake", "role_tip_detail"],
+            }
+        )
+
+        self.assertEqual(request.player_count, 8)
+        self.assertEqual(
+            request.enabled_options,
+            frozenset({GameOption.LADY_OF_LAKE, GameOption.ROLE_TIP_DETAIL}),
+        )
+
+    def test_create_game_request_rejects_invalid_player_count_or_option(self):
+        with self.assertRaises(ValueError):
+            CreateGameRequest.from_payload({"player_count": 7, "enabled_options": ["lady_of_lake"]})
+        with self.assertRaises(ValueError):
+            CreateGameRequest.from_payload({"player_count": 8, "enabled_options": ["tristan_isolde"]})
+        with self.assertRaises(ValueError):
+            CreateGameRequest.from_payload({"player_count": 8, "enabled_options": ["unknown"]})
 
     def test_human_action_request_requires_action_type(self):
         with self.assertRaises(ValueError):

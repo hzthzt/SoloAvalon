@@ -1,9 +1,10 @@
 import unittest
 
-from backend.app.game.models import Faction, Phase, Role
+from backend.app.game.models import Faction, GameOption, Phase, Role
 from backend.app.game.rules import (
     STANDARD_FACTION_COUNTS,
     STANDARD_MISSION_CONFIGS,
+    create_game,
     create_five_player_game,
     private_view_for_player,
 )
@@ -70,6 +71,156 @@ class RulesSetupTests(unittest.TestCase):
             [(mission.team_size, mission.fail_cards_required) for mission in state.missions],
             [(2, 1), (3, 1), (2, 1), (3, 1), (3, 1)],
         )
+
+    def test_create_game_supports_standard_five_to_ten_player_setups(self):
+        expected_roles = {
+            5: [
+                Role.MERLIN,
+                Role.PERCIVAL,
+                Role.LOYAL_SERVANT,
+                Role.ASSASSIN,
+                Role.MORGANA,
+            ],
+            6: [
+                Role.MERLIN,
+                Role.PERCIVAL,
+                Role.LOYAL_SERVANT,
+                Role.LOYAL_SERVANT,
+                Role.ASSASSIN,
+                Role.MORGANA,
+            ],
+            7: [
+                Role.MERLIN,
+                Role.PERCIVAL,
+                Role.LOYAL_SERVANT,
+                Role.LOYAL_SERVANT,
+                Role.ASSASSIN,
+                Role.MORGANA,
+                Role.MORDRED,
+            ],
+            8: [
+                Role.MERLIN,
+                Role.PERCIVAL,
+                Role.LOYAL_SERVANT,
+                Role.LOYAL_SERVANT,
+                Role.LOYAL_SERVANT,
+                Role.ASSASSIN,
+                Role.MORGANA,
+                Role.MORDRED,
+            ],
+            9: [
+                Role.MERLIN,
+                Role.PERCIVAL,
+                Role.LOYAL_SERVANT,
+                Role.LOYAL_SERVANT,
+                Role.LOYAL_SERVANT,
+                Role.LOYAL_SERVANT,
+                Role.ASSASSIN,
+                Role.MORGANA,
+                Role.MORDRED,
+            ],
+            10: [
+                Role.MERLIN,
+                Role.PERCIVAL,
+                Role.LOYAL_SERVANT,
+                Role.LOYAL_SERVANT,
+                Role.LOYAL_SERVANT,
+                Role.LOYAL_SERVANT,
+                Role.ASSASSIN,
+                Role.MORGANA,
+                Role.MORDRED,
+                Role.OBERON,
+            ],
+        }
+        for player_count in range(5, 11):
+            with self.subTest(player_count=player_count):
+                state = create_game(
+                    player_count=player_count,
+                    seed=player_count,
+                    human_seat_index=0,
+                )
+
+                self.assertEqual(len(state.players), player_count)
+                self.assertEqual(state.players[0].id, "player_1")
+                self.assertTrue(state.players[0].is_human)
+                self.assertCountEqual(
+                    [player.role for player in state.players],
+                    expected_roles[player_count],
+                )
+                good_count, evil_count = STANDARD_FACTION_COUNTS[player_count]
+                self.assertEqual(
+                    sum(1 for player in state.players if player.faction == Faction.GOOD),
+                    good_count,
+                )
+                self.assertEqual(
+                    sum(1 for player in state.players if player.faction == Faction.EVIL),
+                    evil_count,
+                )
+                self.assertEqual(
+                    state.missions,
+                    STANDARD_MISSION_CONFIGS[player_count],
+                )
+
+    def test_create_game_rejects_invalid_player_count(self):
+        for player_count in [4, 11]:
+            with self.subTest(player_count=player_count):
+                with self.assertRaises(ValueError):
+                    create_game(player_count=player_count)
+
+    def test_lady_of_lake_option_is_only_available_for_eight_to_ten_players(self):
+        for player_count in range(5, 8):
+            with self.subTest(player_count=player_count):
+                with self.assertRaises(ValueError):
+                    create_game(
+                        player_count=player_count,
+                        enabled_options={GameOption.LADY_OF_LAKE},
+                    )
+        for player_count in range(8, 11):
+            with self.subTest(player_count=player_count):
+                state = create_game(
+                    player_count=player_count,
+                    seed=player_count,
+                    enabled_options={GameOption.LADY_OF_LAKE},
+                )
+
+                self.assertIn(GameOption.LADY_OF_LAKE, state.enabled_options)
+                self.assertEqual(
+                    state.lady_of_lake_holder_player_id,
+                    f"player_{player_count}",
+                )
+                self.assertEqual(
+                    state.lady_of_lake_previous_holder_ids,
+                    (f"player_{player_count}",),
+                )
+
+    def test_tristan_isolde_option_is_only_available_for_nine_to_ten_players(self):
+        for player_count in range(5, 9):
+            with self.subTest(player_count=player_count):
+                with self.assertRaises(ValueError):
+                    create_game(
+                        player_count=player_count,
+                        enabled_options={GameOption.TRISTAN_ISOLDE},
+                    )
+        for player_count in range(9, 11):
+            with self.subTest(player_count=player_count):
+                state = create_game(
+                    player_count=player_count,
+                    seed=player_count,
+                    enabled_options={GameOption.TRISTAN_ISOLDE},
+                )
+
+                self.assertIn(GameOption.TRISTAN_ISOLDE, state.enabled_options)
+                self.assertCountEqual(
+                    [player.role for player in state.players if player.faction == Faction.GOOD],
+                    [
+                        Role.MERLIN,
+                        Role.PERCIVAL,
+                        Role.TRISTAN,
+                        Role.ISOLDE,
+                        *[Role.LOYAL_SERVANT]
+                        * (STANDARD_FACTION_COUNTS[player_count][0] - 4),
+                    ],
+                )
 
     def test_create_five_player_game_randomizes_human_seat_and_keeps_original_names(self):
         state = create_five_player_game(

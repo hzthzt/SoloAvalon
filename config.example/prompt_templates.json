@@ -224,6 +224,7 @@
     "quest_submitted": "任务成员 {players} 已提交任务行动。",
     "quest_result_with_cards": "第 {round_number} 轮任务结果：{result_text}。成功票 {success_cards}，失败票 {fail_cards}。",
     "quest_result_without_cards": "第 {round_number} 轮任务结果：{result_text}。",
+    "lady_of_lake_used": "{viewer} 使用湖中仙女查看 {target}。",
     "assassination": "{assassin} 刺杀 {target}。",
     "assassination_with_winner": "{assassin} 刺杀 {target}，胜者 {winner}。",
     "unknown_event": "{event_type}：{payload}"
@@ -258,6 +259,12 @@
         "现在轮到你选择刺杀目标。"
       ],
       "json": "{\"target_player_id\":\"player_id\",\"candidate_ranking\":[\"player_id\"],\"private_reason_summary\":\"简要说明谁最像梅林\"}"
+    },
+    "use_lady_of_lake": {
+      "lines": [
+        "现在轮到你使用湖中仙女。"
+      ],
+      "json": "{\"target_player_id\":\"player_id\",\"private_reason_summary\":\"简要说明你想查验该玩家的原因\"}"
     },
     "none": {
       "lines": [

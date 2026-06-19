@@ -260,6 +260,25 @@ export function buildFlowReview(
         )
       );
     }
+
+    if (event.event_type === "lady_of_lake_used") {
+      const viewer = nameFor(playerNames, valueAsString(payload.viewer_player_id));
+      const target = nameFor(playerNames, valueAsString(payload.target_player_id));
+      const inspectedRound = valueAsNumber(payload.round_number);
+      broadcasts.push(
+        broadcast(
+          event,
+          inspectedRound || currentRoundNumber,
+          "lady_of_lake_used",
+          `${viewer} 使用湖中仙女查看 ${target}`
+        )
+      );
+      if (inspectedRound >= currentRoundNumber) {
+        currentRoundNumber = inspectedRound + 1;
+        ensureRound(rounds, currentRoundNumber);
+      }
+      continue;
+    }
   }
 
   const visibleRounds = rounds.filter((round) => hasRoundContent(round));

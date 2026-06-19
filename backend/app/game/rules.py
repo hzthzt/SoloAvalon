@@ -5,7 +5,9 @@ from dataclasses import replace
 
 from .models import (
     Faction,
+    GameOption,
     GameState,
+    LadyOfLakeInspection,
     MissionAction,
     MissionConfig,
     Phase,
@@ -27,6 +29,66 @@ STANDARD_FIVE_PLAYER_ROLES: tuple[Role, ...] = (
     Role.ASSASSIN,
     Role.MORGANA,
 )
+
+STANDARD_ROLE_SETUPS: dict[int, tuple[Role, ...]] = {
+    5: (
+        Role.MERLIN,
+        Role.PERCIVAL,
+        Role.LOYAL_SERVANT,
+        Role.ASSASSIN,
+        Role.MORGANA,
+    ),
+    6: (
+        Role.MERLIN,
+        Role.PERCIVAL,
+        Role.LOYAL_SERVANT,
+        Role.LOYAL_SERVANT,
+        Role.ASSASSIN,
+        Role.MORGANA,
+    ),
+    7: (
+        Role.MERLIN,
+        Role.PERCIVAL,
+        Role.LOYAL_SERVANT,
+        Role.LOYAL_SERVANT,
+        Role.ASSASSIN,
+        Role.MORGANA,
+        Role.MORDRED,
+    ),
+    8: (
+        Role.MERLIN,
+        Role.PERCIVAL,
+        Role.LOYAL_SERVANT,
+        Role.LOYAL_SERVANT,
+        Role.LOYAL_SERVANT,
+        Role.ASSASSIN,
+        Role.MORGANA,
+        Role.MORDRED,
+    ),
+    9: (
+        Role.MERLIN,
+        Role.PERCIVAL,
+        Role.LOYAL_SERVANT,
+        Role.LOYAL_SERVANT,
+        Role.LOYAL_SERVANT,
+        Role.LOYAL_SERVANT,
+        Role.ASSASSIN,
+        Role.MORGANA,
+        Role.MORDRED,
+    ),
+    10: (
+        Role.MERLIN,
+        Role.PERCIVAL,
+        Role.LOYAL_SERVANT,
+        Role.LOYAL_SERVANT,
+        Role.LOYAL_SERVANT,
+        Role.LOYAL_SERVANT,
+        Role.ASSASSIN,
+        Role.MORGANA,
+        Role.MORDRED,
+        Role.OBERON,
+    ),
+}
 
 STANDARD_MISSION_CONFIGS: dict[int, tuple[MissionConfig, ...]] = {
     5: (
@@ -111,13 +173,36 @@ def create_five_player_game(
     human_name: str = "真人玩家",
     ai_names: list[str] | None = None,
 ) -> GameState:
+    return create_game(
+        player_count=5,
+        seed=seed,
+        human_seat_index=human_seat_index,
+        human_name=human_name,
+        ai_names=ai_names,
+    )
+
+
+def create_game(
+    player_count: int = 5,
+    seed: int | None = None,
+    human_seat_index: int | None = None,
+    human_name: str = "真人玩家",
+    ai_names: list[str] | None = None,
+    enabled_options: set[GameOption | str] | frozenset[GameOption | str] | None = None,
+) -> GameState:
+    if player_count not in STANDARD_MISSION_CONFIGS:
+        raise ValueError("player_count must be between 5 and 10")
+
+    normalized_options = _normalize_enabled_options(enabled_options)
+    _validate_options_for_player_count(player_count, normalized_options)
+
     rng = random.Random(seed)
     if human_seat_index is None:
-        human_seat_index = rng.randrange(5)
-    if human_seat_index < 0 or human_seat_index > 4:
-        raise ValueError("human_seat_index must be between 0 and 4")
+        human_seat_index = rng.randrange(player_count)
+    if human_seat_index < 0 or human_seat_index >= player_count:
+        raise ValueError(f"human_seat_index must be between 0 and {player_count - 1}")
 
-    roles = list(STANDARD_FIVE_PLAYER_ROLES)
+    roles = list(_role_setup_for_game(player_count, normalized_options))
     rng.shuffle(roles)
     configured_ai_names = list(ai_names or [])
     players = []
@@ -147,7 +232,19 @@ def create_five_player_game(
             )
         )
 
-    return GameState(players=tuple(players), missions=FIVE_PLAYER_MISSIONS)
+    lake_holder = None
+    lake_previous_holders: tuple[str, ...] = ()
+    if GameOption.LADY_OF_LAKE in normalized_options:
+        lake_holder = f"player_{player_count}"
+        lake_previous_holders = (lake_holder,)
+
+    return GameState(
+        players=tuple(players),
+        missions=STANDARD_MISSION_CONFIGS[player_count],
+        enabled_options=normalized_options,
+        lady_of_lake_holder_player_id=lake_holder,
+        lady_of_lake_previous_holder_ids=lake_previous_holders,
+    )
 
 
 def private_view_for_player(state: GameState, viewer_id: str) -> PrivateView:
@@ -157,6 +254,11 @@ def private_view_for_player(state: GameState, viewer_id: str) -> PrivateView:
     known_evil_player_ids: list[str] = []
     merlin_candidate_player_ids: list[str] = []
     known_good_player_ids: list[str] = []
+    lady_of_lake_known_factions: dict[str, Faction] = {
+        inspection.target_player_id: inspection.target_faction
+        for inspection in state.lady_of_lake_inspections
+        if inspection.viewer_player_id == viewer.id
+    }
 
     if viewer.role == Role.MERLIN:
         for player in state.players:
@@ -191,6 +293,7 @@ def private_view_for_player(state: GameState, viewer_id: str) -> PrivateView:
         known_evil_player_ids=known_evil_player_ids,
         merlin_candidate_player_ids=merlin_candidate_player_ids,
         known_good_player_ids=known_good_player_ids,
+        lady_of_lake_known_factions=lady_of_lake_known_factions,
     )
 
 
@@ -359,9 +462,14 @@ def finalize_quest(state: GameState) -> GameState:
             forced_team=False,
         )
 
+    next_phase = (
+        Phase.LADY_OF_LAKE
+        if _should_enter_lady_of_lake_phase(state, quest_results)
+        else Phase.TEAM_PROPOSAL
+    )
     return replace(
         state,
-        phase=Phase.TEAM_PROPOSAL,
+        phase=next_phase,
         current_round=state.current_round + 1,
         leader_index=(state.leader_index + 1) % len(state.players),
         proposed_team=(),
@@ -372,6 +480,49 @@ def finalize_quest(state: GameState) -> GameState:
         quest_results=quest_results,
         failed_team_votes=0,
         forced_team=False,
+    )
+
+
+def eligible_lady_of_lake_target_ids(state: GameState) -> tuple[str, ...]:
+    holder_id = state.lady_of_lake_holder_player_id
+    if holder_id is None:
+        return ()
+    previous_holders = set(state.lady_of_lake_previous_holder_ids)
+    return tuple(
+        player.id
+        for player in state.players
+        if player.id != holder_id and player.id not in previous_holders
+    )
+
+
+def use_lady_of_lake(
+    state: GameState,
+    viewer_player_id: str,
+    target_player_id: str,
+) -> GameState:
+    if state.phase != Phase.LADY_OF_LAKE:
+        raise InvalidActionError("lady of the lake can only be used during lady phase")
+    if state.lady_of_lake_holder_player_id != viewer_player_id:
+        raise InvalidActionError("only the current lady of the lake holder can inspect")
+    target = _player_by_id(state, target_player_id)
+    if target_player_id == viewer_player_id:
+        raise InvalidActionError("lady of the lake holder cannot inspect themselves")
+    if target_player_id in state.lady_of_lake_previous_holder_ids:
+        raise InvalidActionError("lady of the lake cannot inspect a previous holder")
+
+    inspection = LadyOfLakeInspection(
+        viewer_player_id=viewer_player_id,
+        target_player_id=target.id,
+        target_faction=target.faction,
+        round_number=len(state.quest_results),
+    )
+    return replace(
+        state,
+        phase=Phase.TEAM_PROPOSAL,
+        lady_of_lake_holder_player_id=target.id,
+        lady_of_lake_previous_holder_ids=state.lady_of_lake_previous_holder_ids
+        + (target.id,),
+        lady_of_lake_inspections=state.lady_of_lake_inspections + (inspection,),
     )
 
 
@@ -403,6 +554,54 @@ def _player_by_id(state: GameState, player_id: str) -> Player:
         if player.id == player_id:
             return player
     raise ValueError(f"unknown player id: {player_id}")
+
+
+def _normalize_enabled_options(
+    enabled_options: set[GameOption | str] | frozenset[GameOption | str] | None,
+) -> frozenset[GameOption]:
+    if not enabled_options:
+        return frozenset()
+    return frozenset(
+        option if isinstance(option, GameOption) else GameOption(str(option))
+        for option in enabled_options
+    )
+
+
+def _validate_options_for_player_count(
+    player_count: int,
+    enabled_options: frozenset[GameOption],
+) -> None:
+    if GameOption.LADY_OF_LAKE in enabled_options and player_count < 8:
+        raise ValueError("lady_of_lake is only available for 8 to 10 players")
+    if GameOption.TRISTAN_ISOLDE in enabled_options and player_count < 9:
+        raise ValueError("tristan_isolde is only available for 9 to 10 players")
+
+
+def _role_setup_for_game(
+    player_count: int,
+    enabled_options: frozenset[GameOption],
+) -> tuple[Role, ...]:
+    roles = list(STANDARD_ROLE_SETUPS[player_count])
+    if GameOption.TRISTAN_ISOLDE in enabled_options:
+        loyal_indexes = [
+            index for index, role in enumerate(roles) if role == Role.LOYAL_SERVANT
+        ]
+        if len(loyal_indexes) < 2:
+            raise ValueError("tristan_isolde requires at least two loyal servants")
+        roles[loyal_indexes[0]] = Role.TRISTAN
+        roles[loyal_indexes[1]] = Role.ISOLDE
+    return tuple(roles)
+
+
+def _should_enter_lady_of_lake_phase(
+    state: GameState,
+    quest_results: tuple[bool, ...],
+) -> bool:
+    return (
+        GameOption.LADY_OF_LAKE in state.enabled_options
+        and len(quest_results) in {2, 3, 4}
+        and state.lady_of_lake_holder_player_id is not None
+    )
 
 
 def _validate_team(state: GameState, team_player_ids: tuple[str, ...]) -> None:

@@ -8,6 +8,7 @@ from backend.app.llm.profiles import LlmProfile
 from backend.app.llm.provider import LlmProvider
 from backend.app.prompting.schemas import (
     assassination_decision_from_output,
+    lady_of_lake_decision_from_output,
     mission_decision_from_output,
     parse_json_object,
     speech_decision_from_output,
@@ -21,6 +22,7 @@ from backend.app.prompting.templates import PromptBuilder
 from .context import ContextBuilder
 from .strategy import (
     AssassinationDecision,
+    LadyOfLakeDecision,
     MissionActionDecision,
     SpeechDecision,
     TeamProposalDecision,
@@ -174,6 +176,23 @@ class AiPlayer:
             profile,
             Phase.ASSASSINATION,
             lambda output: assassination_decision_from_output(output, state, assassin_player_id),
+            None,
+            public_events=public_events,
+        )
+
+    def use_lady_of_lake(
+        self,
+        state: GameState,
+        viewer_player_id: str,
+        profile: LlmProfile,
+        public_events: list[dict[str, Any]] | None = None,
+    ) -> AiTurnResult[LadyOfLakeDecision]:
+        return self._decide(
+            state,
+            viewer_player_id,
+            profile,
+            Phase.LADY_OF_LAKE,
+            lambda output: lady_of_lake_decision_from_output(output, state, viewer_player_id),
             None,
             public_events=public_events,
         )

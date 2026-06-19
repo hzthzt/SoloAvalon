@@ -1,16 +1,20 @@
 import unittest
 
-from backend.app.game.models import Faction, MissionAction, Phase, Role, Vote
+from backend.app.game.models import Faction, GameOption, MissionAction, Phase, Role, Vote
 from backend.app.game.rules import (
     InvalidActionError,
     assassinate,
     cast_vote,
+    create_game,
     create_five_player_game,
+    eligible_lady_of_lake_target_ids,
     finalize_quest,
     finalize_vote,
+    private_view_for_player,
     propose_team,
     record_speech,
     submit_quest_action,
+    use_lady_of_lake,
 )
 
 
@@ -99,6 +103,104 @@ class QuestAndEndgameTests(unittest.TestCase):
         self.assertEqual(state.phase, Phase.ASSASSINATION)
         self.assertIsNone(state.winner)
         self.assertEqual(state.quest_results, (True, True, True))
+
+    def test_lady_of_lake_triggers_after_second_quest_and_transfers_holder(self):
+        state = create_game(
+            player_count=8,
+            seed=28,
+            human_seat_index=0,
+            enabled_options={GameOption.LADY_OF_LAKE},
+        )
+        holder_id = state.lady_of_lake_holder_player_id
+        self.assertEqual(holder_id, "player_8")
+
+        state = complete_successful_quest(state)
+        self.assertEqual(state.phase, Phase.TEAM_PROPOSAL)
+        self.assertEqual(state.current_round, 2)
+
+        state = complete_successful_quest(state)
+        self.assertEqual(state.phase, Phase.LADY_OF_LAKE)
+        self.assertEqual(state.current_round, 3)
+        self.assertEqual(
+            eligible_lady_of_lake_target_ids(state),
+            tuple(player.id for player in state.players if player.id != holder_id),
+        )
+
+        target = state.players[0]
+        state = use_lady_of_lake(state, holder_id, target.id)
+
+        self.assertEqual(state.phase, Phase.TEAM_PROPOSAL)
+        self.assertEqual(state.lady_of_lake_holder_player_id, target.id)
+        self.assertEqual(
+            state.lady_of_lake_previous_holder_ids,
+            ("player_8", target.id),
+        )
+        self.assertEqual(len(state.lady_of_lake_inspections), 1)
+        inspection = state.lady_of_lake_inspections[0]
+        self.assertEqual(inspection.viewer_player_id, holder_id)
+        self.assertEqual(inspection.target_player_id, target.id)
+        self.assertEqual(inspection.target_faction, target.faction)
+        self.assertEqual(inspection.round_number, 2)
+
+    def test_lady_of_lake_rejects_self_and_previous_holders(self):
+        state = create_game(
+            player_count=8,
+            seed=29,
+            human_seat_index=0,
+            enabled_options={GameOption.LADY_OF_LAKE},
+        )
+        state = complete_successful_quest(state)
+        state = complete_successful_quest(state)
+        holder_id = state.lady_of_lake_holder_player_id
+
+        with self.assertRaises(InvalidActionError):
+            use_lady_of_lake(state, holder_id, holder_id)
+
+        first_target = state.players[0].id
+        state = use_lady_of_lake(state, holder_id, first_target)
+        state = complete_failed_quest(state)
+        holder_id = state.lady_of_lake_holder_player_id
+
+        with self.assertRaises(InvalidActionError):
+            use_lady_of_lake(state, holder_id, "player_8")
+
+    def test_lady_of_lake_private_view_only_reveals_result_to_viewer(self):
+        state = create_game(
+            player_count=8,
+            seed=30,
+            human_seat_index=0,
+            enabled_options={GameOption.LADY_OF_LAKE},
+        )
+        state = complete_successful_quest(state)
+        state = complete_successful_quest(state)
+        holder_id = state.lady_of_lake_holder_player_id
+        target = state.players[0]
+
+        state = use_lady_of_lake(state, holder_id, target.id)
+
+        holder_view = private_view_for_player(state, holder_id)
+        target_view = private_view_for_player(state, target.id)
+        self.assertEqual(holder_view.lady_of_lake_known_factions, {target.id: target.faction})
+        self.assertEqual(target_view.lady_of_lake_known_factions, {})
+
+    def test_lady_of_lake_does_not_trigger_when_third_success_enters_assassination(self):
+        state = create_game(
+            player_count=8,
+            seed=31,
+            human_seat_index=0,
+            enabled_options={GameOption.LADY_OF_LAKE},
+        )
+        state = complete_successful_quest(state)
+        state = complete_successful_quest(state)
+        state = use_lady_of_lake(
+            state,
+            state.lady_of_lake_holder_player_id,
+            state.players[0].id,
+        )
+
+        state = complete_successful_quest(state)
+
+        self.assertEqual(state.phase, Phase.ASSASSINATION)
 
     def test_assassin_killing_merlin_gives_evil_victory(self):
         state = create_five_player_game(seed=26)

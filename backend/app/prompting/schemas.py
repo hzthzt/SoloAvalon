@@ -6,12 +6,14 @@ from typing import Any
 
 from backend.app.ai.strategy import (
     AssassinationDecision,
+    LadyOfLakeDecision,
     MissionActionDecision,
     SpeechDecision,
     TeamProposalDecision,
     VoteDecision,
 )
 from backend.app.game.models import Faction, GameState, MissionAction, Vote
+from backend.app.game.rules import eligible_lady_of_lake_target_ids
 
 
 def parse_json_object(raw: str) -> dict[str, Any]:
@@ -118,6 +120,22 @@ def assassination_decision_from_output(
         target_player_id=target,
         private_reason_summary=_string(output, "private_reason_summary"),
         candidate_ranking=tuple(player_id for player_id in ranking if player_id in valid_targets),
+    )
+
+
+def lady_of_lake_decision_from_output(
+    output: dict[str, Any],
+    state: GameState,
+    viewer_player_id: str,
+) -> LadyOfLakeDecision:
+    target = _string(output, "target_player_id")
+    if target not in set(eligible_lady_of_lake_target_ids(state)):
+        raise ValueError("invalid lady of the lake target")
+    if state.lady_of_lake_holder_player_id != viewer_player_id:
+        raise ValueError("viewer is not the lady of the lake holder")
+    return LadyOfLakeDecision(
+        target_player_id=target,
+        private_reason_summary=_string(output, "private_reason_summary"),
     )
 
 

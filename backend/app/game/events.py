@@ -14,6 +14,15 @@ def build_game_created_payloads(
         {
             "game_id": game_id,
             "player_count": len(state.players),
+            "enabled_options": sorted(option.value for option in state.enabled_options),
+            "missions": [
+                {
+                    "round_number": mission.round_number,
+                    "team_size": mission.team_size,
+                    "fail_cards_required": mission.fail_cards_required,
+                }
+                for mission in state.missions
+            ],
             "current_round": state.current_round,
             "current_phase": state.phase.value,
         },
@@ -53,6 +62,12 @@ def build_private_view_payloads(
         {
             "viewer_player_id": viewer_player_id,
             "known_evil_player_ids": view.known_evil_player_ids,
+            "known_good_player_ids": view.known_good_player_ids,
+            "merlin_candidate_player_ids": view.merlin_candidate_player_ids,
+            "lady_of_lake_known_factions": {
+                player_id: faction.value
+                for player_id, faction in view.lady_of_lake_known_factions.items()
+            },
             "visible_roles": visible_roles,
         },
     )

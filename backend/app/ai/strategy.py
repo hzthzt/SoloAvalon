@@ -37,3 +37,9 @@ class AssassinationDecision:
     target_player_id: str
     private_reason_summary: str
     candidate_ranking: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class LadyOfLakeDecision:
+    target_player_id: str
+    private_reason_summary: str

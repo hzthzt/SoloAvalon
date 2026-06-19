@@ -28,6 +28,8 @@ class GamesApiTests(unittest.TestCase):
         api.create_game({"seed": 9, "human_name": "张三", "ai_names": ["A"]})
 
         self.assertEqual(service.create_kwargs, {
+            "player_count": 5,
+            "enabled_options": frozenset(),
             "human_name": "张三",
             "ai_names": ["A"],
             "default_llm_profile_id": None,

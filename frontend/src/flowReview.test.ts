@@ -173,6 +173,31 @@ test("does not expose quest action detail from public events", () => {
   assert.deepEqual(review.rounds[0].questActions, []);
 });
 
+test("broadcasts lady of lake use without revealing private faction", () => {
+  const events: GameEvent[] = [
+    event(
+      1,
+      "lady_of_lake_used",
+      {
+        viewer_player_id: "player_5",
+        target_player_id: "player_2",
+        next_holder_player_id: "player_2",
+        round_number: 2
+      },
+      {
+        target_faction: "evil"
+      }
+    )
+  ];
+
+  const review = buildFlowReview(events, playerNames);
+
+  assert.equal(review.broadcasts[0].kind, "lady_of_lake_used");
+  assert.equal(review.broadcasts[0].text, "AI 4 使用湖中仙女查看 AI 1");
+  assert.equal(review.broadcasts[0].text.includes("evil"), false);
+  assert.equal(review.broadcasts[0].text.includes("恶方"), false);
+});
+
 test("keeps all broadcast rows in the unified information feed", () => {
   const events = Array.from({ length: 30 }, (_, index) =>
     event(index + 1, "speech", {

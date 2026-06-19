@@ -119,7 +119,7 @@ API 层的职责是将 HTTP 输入转换为服务层调用，并把 `ValueError`
 
 规则层是确定性领域核心，主要文件：
 
-- `models.py`：定义 `Role`、`Faction`、`Phase`、`Vote`、`MissionAction`、`Player`、`MissionConfig`、`GameState`、`PrivateView`。
+- `models.py`：定义 `Role`、`Faction`、`Phase`、`Vote`、`MissionAction`、`GameOption`、`Player`、`MissionConfig`、`LadyOfLakeInspection`、`GameState`、`PrivateView`。
 - `rules.py`：实现身份阵营映射、建局、私有视角、组队、发言、投票、任务、刺杀和胜负结算。
 - `events.py`：构建开局、身份分配、私有视角记录的公开/私有事件 payload。
 
@@ -127,8 +127,9 @@ API 层的职责是将 HTTP 输入转换为服务层调用，并把 `ValueError`
 
 - 5-10 人任务配置 `STANDARD_MISSION_CONFIGS`。
 - 5-10 人阵营人数配置 `STANDARD_FACTION_COUNTS`。
-- 当前 `create_five_player_game()` 仍只创建 5 人局。
-- 5 人默认角色为 Merlin、Percival、Loyal Servant、Assassin、Morgana。
+- `create_game()` 支持 5-10 人标准局，`create_five_player_game()` 是兼容封装。
+- 9-10 人可开启 Tristan / Isolde，规则层会用这对身份替换两个忠臣。
+- 8-10 人可开启湖中仙女，湖女作为完整规则阶段处理。
 
 阶段流转：
 
@@ -141,6 +142,8 @@ stateDiagram-v2
     VOTING --> QUEST: 多数赞成
     VOTING --> TEAM_PROPOSAL: 未过半赞成
     QUEST --> TEAM_PROPOSAL: 未达到 3 成功/3 失败
+    QUEST --> LADY_OF_LAKE: 第 2/3/4 次任务后触发湖女
+    LADY_OF_LAKE --> TEAM_PROPOSAL: 查验并转交湖女
     QUEST --> ASSASSINATION: 3 次任务成功
     QUEST --> COMPLETE: 3 次任务失败
     ASSASSINATION --> COMPLETE
@@ -158,6 +161,7 @@ stateDiagram-v2
 - 任务失败牌数量达到当前任务阈值时任务失败。
 - 3 次任务失败恶方胜利；3 次任务成功进入刺杀。
 - 只有刺客能刺杀，刺中梅林则恶方胜利，否则善方胜利。
+- 启用湖中仙女时，第 2、3、4 次任务结算且未进入刺杀/结束时进入 `LADY_OF_LAKE`；持有者只能查看一名从未持有过湖女的玩家阵营，结果只进入持有者私有视角，随后湖女转交给目标。
 
 私有视角由 `private_view_for_player()` 统一生成：
 
@@ -166,6 +170,7 @@ stateDiagram-v2
 - Percival 看到 Merlin 和 Morgana 候选，但只标记为 `unknown_merlin`。
 - 非 Oberon 恶方能看到其他非 Oberon 恶方，但不暴露精确角色。
 - Tristan 和 Isolde 能互相识别。
+- 湖女持有者能看到自己通过湖女查验得到的目标阵营。
 - 普通忠臣看不到隐藏身份。
 
 ### 4.5 AI 与 prompt 链路：`backend/app/ai/`、`backend/app/prompting/`、`backend/app/llm/`
@@ -270,13 +275,13 @@ prompt 配置文件默认路径：
 
 三个主要视图：
 
-- 对局：创建 5 人局、选择默认模型和 AI 覆盖模型、显示座位与任务轨道、提交真人动作、触发 AI 代打。
+- 对局：创建 5-10 人局、选择默认模型和 AI 覆盖模型、配置可选项、显示座位与任务轨道、提交真人动作、触发 AI 代打。
 - 模型：创建、编辑、删除和测试 OpenAI-compatible 模型配置。
 - 日志：查看历史对局、加载完整事件、按轮次复盘、导出 JSON、展开 AI prompt 私有记录。
 
 前端数据原则：
 
-- `GameState` 中只使用后端返回的 `visible_role`、`human_role`、`known_evil_player_ids` 等过滤字段。
+- `GameState` 中只使用后端返回的 `visible_role`、`human_role`、`known_evil_player_ids`、`lady_of_lake_known_factions` 等过滤字段。
 - 前端根据 `next_human_action` 决定显示哪种动作控件。
 - `flowReview.ts` 只把事件转为展示结构，不裁判规则。
 - 日志页显式请求 `include_private=true` 时可以展示任务行动和 AI prompt；普通游戏态事件仍按公开视角展示。
@@ -294,7 +299,7 @@ Vite 配置：
 POST /api/games
   -> CreateGameRequest.from_payload
   -> GameService.create_game
-  -> create_five_player_game
+  -> create_game
   -> 应用 AI 名称和模型覆盖配置
   -> GameRepository.save_new_game
   -> EventStore 记录 game_created / roles_assigned / private_view_recorded
@@ -304,8 +309,8 @@ POST /api/games
 
 创建对局的关键结果有三类：
 
-- 规则状态：`GameState` 进入 `TEAM_PROPOSAL`，默认由座位 0 开始当队长。
-- 持久化摘要：`games` 保存当前阶段、轮次、胜者和默认模型配置；`players` 保存真实身份、阵营和每席模型覆盖。
+- 规则状态：`GameState` 进入 `TEAM_PROPOSAL`，默认由座位 0 开始当队长；启用湖女时初始持有者为首任队长右手边玩家。
+- 持久化摘要：`games` 保存当前阶段、轮次、胜者、默认模型配置和每局可选项；`players` 保存真实身份、阵营和每席模型覆盖。
 - 初始事件：`game_created` 记录公开开局信息，`roles_assigned` 把完整身份放入私有 payload，`private_view_recorded` 为每名玩家记录合法私有视角。
 
 `create_game()` 返回前会调用 `_auto_advance()`。如果当前队长、发言者、投票者或任务队员是 AI，服务层会持续推进；如果轮到真人，则停止并把 `next_human_action` 返回给前端。
@@ -559,7 +564,7 @@ npm run test
 
 可优先扩展的位置：
 
-- 6-10 人建局：已有任务与阵营数量常量，但需要新增建局函数、角色选择策略、前端队伍人数展示和 API 参数。
+- 自定义身份编辑器：当前只支持 5-10 人推荐组合和有限开关，尚不支持任意身份池编辑。
 - 新身份：扩展 `Role`、`faction_for_role()`、`private_view_for_player()`、prompt 配置、前端 `roleLabel()`。
 - AI fallback 或重试：当前失败会记录并抛出；如要恢复历史设计，需要在 `AiPlayer` 或 `GameService._run_ai_turn()` 增加明确策略，并补齐测试。
 - Prompt 模板产品化：可把 `config.example/prompt_templates.json` 复制到本地可编辑路径，并用 `SOLOAVALON_PROMPT_CONFIG` 指向。

@@ -14,6 +14,7 @@ class GameSummary:
     status: str
     player_count: int
     role_set: list[str]
+    enabled_options: list[str]
     current_round: int
     current_phase: str
     winner: str | None
@@ -52,19 +53,25 @@ class GameRepository:
             ensure_ascii=False,
             separators=(",", ":"),
         )
+        enabled_options = json.dumps(
+            sorted(option.value for option in state.enabled_options),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         self._connection.execute(
             """
             insert into games (
-                id, status, player_count, role_set, current_round, current_phase,
+                id, status, player_count, role_set, enabled_options, current_round, current_phase,
                 winner, default_llm_profile_id, created_at, updated_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 game_id,
                 status,
                 len(state.players),
                 role_set,
+                enabled_options,
                 state.current_round,
                 state.phase.value,
                 state.winner.value if state.winner else None,
@@ -186,6 +193,7 @@ def _game_summary_from_row(row: sqlite3.Row) -> GameSummary:
         status=row["status"],
         player_count=row["player_count"],
         role_set=json.loads(row["role_set"]),
+        enabled_options=json.loads(row["enabled_options"]),
         current_round=row["current_round"],
         current_phase=row["current_phase"],
         winner=row["winner"],

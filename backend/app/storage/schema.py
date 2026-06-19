@@ -4,6 +4,7 @@ create table if not exists games (
     status text not null,
     player_count integer not null,
     role_set text not null,
+    enabled_options text not null default '[]',
     current_round integer not null,
     current_phase text not null,
     winner text,

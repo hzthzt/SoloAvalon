@@ -20,13 +20,24 @@ export type GameEvent = {
 export type GameState = {
   id: string;
   status: string;
+  player_count: number;
   phase: string;
   current_round: number;
   leader_player_id: string;
+  missions: Array<{
+    round_number: number;
+    team_size: number;
+    fail_cards_required: number;
+  }>;
+  enabled_options: string[];
   human_player_id: string;
   human_role: string;
   human_faction: string;
   known_evil_player_ids: string[];
+  lady_of_lake_holder_player_id: string | null;
+  lady_of_lake_previous_holder_ids: string[];
+  lady_of_lake_eligible_target_ids: string[];
+  lady_of_lake_known_factions: Record<string, string>;
   players: PlayerView[];
   proposed_team: string[];
   speech_order: string[];
@@ -81,6 +92,8 @@ export type LlmProfileInput = {
 const jsonHeaders = { "Content-Type": "application/json" };
 
 export async function createGame(payload: {
+  player_count?: number;
+  enabled_options?: string[];
   human_name?: string;
   ai_names?: string[];
   default_llm_profile_id?: string;

@@ -4,11 +4,11 @@ from dataclasses import fields
 
 from backend.app.ai.context import ContextBuilder
 from backend.app.ai.player import AiDecisionError, AiPlayer
-from backend.app.game.models import Faction, GameState, MissionAction, MissionConfig, Phase, Player, Role, Vote
-from backend.app.game.rules import create_five_player_game, propose_team
+from backend.app.game.models import Faction, GameOption, GameState, MissionAction, MissionConfig, Phase, Player, Role, Vote
+from backend.app.game.rules import create_five_player_game, create_game, propose_team
 from backend.app.llm.profiles import LlmProfile
 from backend.app.llm.provider import LlmProvider
-from backend.app.prompting.schemas import parse_json_object
+from backend.app.prompting.schemas import lady_of_lake_decision_from_output, parse_json_object
 from backend.app.prompting.templates import PromptBuilder
 
 
@@ -70,6 +70,7 @@ class PromptingAndProviderTests(unittest.TestCase):
                 MissionConfig(round_number=4, team_size=4, fail_cards_required=2),
                 MissionConfig(round_number=5, team_size=4, fail_cards_required=1),
             ),
+            enabled_options=frozenset({GameOption.LADY_OF_LAKE}),
         )
 
         context = ContextBuilder().build(state, "player_3", Phase.SPEECH)
@@ -206,6 +207,67 @@ class PromptingAndProviderTests(unittest.TestCase):
             "legal_actions",
         ):
             self.assertNotIn(schema_key, prompt_text)
+
+    def test_prompt_builder_includes_lady_of_lake_action_contract(self):
+        base_state = create_game(
+            player_count=8,
+            seed=8,
+            enabled_options={GameOption.LADY_OF_LAKE},
+        )
+        state = GameState(
+            players=base_state.players,
+            missions=base_state.missions,
+            enabled_options=base_state.enabled_options,
+            current_round=3,
+            phase=Phase.LADY_OF_LAKE,
+            lady_of_lake_holder_player_id="player_8",
+            lady_of_lake_previous_holder_ids=("player_8",),
+        )
+
+        context = ContextBuilder().build(state, "player_8", Phase.LADY_OF_LAKE)
+        messages = PromptBuilder().build_messages(context, Phase.LADY_OF_LAKE)
+        prompt_text = "\n".join(message["content"] for message in messages)
+
+        self.assertIn("现在轮到你使用湖中仙女", prompt_text)
+        self.assertIn('"target_player_id"', prompt_text)
+        self.assertIn("player_1", prompt_text)
+        self.assertNotIn("player_8", messages[-1]["content"])
+
+    def test_lady_of_lake_decision_validates_target(self):
+        base_state = create_game(
+            player_count=8,
+            seed=8,
+            enabled_options={GameOption.LADY_OF_LAKE},
+        )
+        state = GameState(
+            players=base_state.players,
+            missions=base_state.missions,
+            enabled_options=base_state.enabled_options,
+            current_round=3,
+            phase=Phase.LADY_OF_LAKE,
+            lady_of_lake_holder_player_id="player_8",
+            lady_of_lake_previous_holder_ids=("player_8",),
+        )
+
+        decision = lady_of_lake_decision_from_output(
+            {
+                "target_player_id": "player_1",
+                "private_reason_summary": "需要确认 1 号阵营。",
+            },
+            state,
+            "player_8",
+        )
+
+        self.assertEqual(decision.target_player_id, "player_1")
+        with self.assertRaises(ValueError):
+            lady_of_lake_decision_from_output(
+                {
+                    "target_player_id": "player_8",
+                    "private_reason_summary": "非法自查。",
+                },
+                state,
+                "player_8",
+            )
 
     def test_speech_prompt_uses_seat_names_without_internal_player_ids(self):
         state = create_five_player_game(seed=20)

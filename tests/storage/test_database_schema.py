@@ -35,6 +35,11 @@ class DatabaseSchemaTests(unittest.TestCase):
                     for row in connection.execute("pragma table_info(players)").fetchall()
                 }
                 self.assertIn("original_name", player_columns)
+                game_columns = {
+                    row["name"]
+                    for row in connection.execute("pragma table_info(games)").fetchall()
+                }
+                self.assertIn("enabled_options", game_columns)
             finally:
                 connection.close()
 
@@ -89,6 +94,7 @@ class DatabaseSchemaTests(unittest.TestCase):
                     status text not null,
                     player_count integer not null,
                     role_set text not null,
+                    enabled_options text not null default '[]',
                     current_round integer not null,
                     current_phase text not null,
                     winner text,
@@ -146,7 +152,7 @@ class DatabaseSchemaTests(unittest.TestCase):
                     '2026-06-15T00:00:00Z', '2026-06-15T00:00:00Z'
                 );
                 insert into games values (
-                    'game_1', 'active', 5, '[]', 1, 'team_proposal', null,
+                    'game_1', 'active', 5, '[]', '[]', 1, 'team_proposal', null,
                     'profile_1', '2026-06-15T00:00:00Z', '2026-06-15T00:00:00Z'
                 );
                 insert into players values (

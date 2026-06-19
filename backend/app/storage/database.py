@@ -22,6 +22,7 @@ def initialize_database(connection: sqlite3.Connection) -> None:
     try:
         _migrate_legacy_llm_profile_references(connection)
         connection.executescript(SCHEMA_SQL)
+        _ensure_column(connection, "games", "enabled_options", "enabled_options text not null default '[]'")
         _ensure_column(connection, "players", "original_name", "original_name text")
         connection.execute("drop table if exists llm_profiles")
         connection.commit()
@@ -39,6 +40,7 @@ def _migrate_legacy_llm_profile_references(connection: sqlite3.Connection) -> No
                 status text not null,
                 player_count integer not null,
                 role_set text not null,
+                enabled_options text not null default '[]',
                 current_round integer not null,
                 current_phase text not null,
                 winner text,

@@ -62,7 +62,7 @@ def _player_view_message(context: AiContext, prompt_config: PromptTemplateConfig
             prompt_config.labels["role_strategy"].format(
                 strategy=_role_strategy_text(role, prompt_config)
             ),
-            *_role_detail_tip_lines(role, prompt_config),
+            *_role_detail_tip_lines(role, prompt_config, context),
             prompt_config.labels["extra_information"].format(
                 extra_information=_extra_information_text(context, prompt_config, player_labels)
             ),
@@ -122,6 +122,8 @@ def _phase_contract(
         )
     if phase == Phase.ASSASSINATION:
         return prompt_config.action_prompts["assassinate"]["json"]
+    if phase == Phase.LADY_OF_LAKE:
+        return prompt_config.action_prompts["use_lady_of_lake"]["json"]
     return prompt_config.action_prompts["none"]["json"]
 
 
@@ -157,6 +159,13 @@ def _action_lines(
     if action == "assassinate":
         return [
             *prompt_config.action_prompts["assassinate"]["lines"],
+            prompt_config.labels["assassination_targets"].format(
+                targets=_join_or_none(legal_actions.get("target_player_ids"))
+            ),
+        ]
+    if action == "use_lady_of_lake":
+        return [
+            *prompt_config.action_prompts["use_lady_of_lake"]["lines"],
             prompt_config.labels["assassination_targets"].format(
                 targets=_join_or_none(legal_actions.get("target_player_ids"))
             ),
@@ -263,6 +272,15 @@ def _public_record_lines(
                     winner=winner,
                 )
             )
+        elif event_type == "lady_of_lake_used":
+            viewer = _payload_player_text(public_payload, player_labels, "viewer_player_id")
+            target = _payload_player_text(public_payload, player_labels, "target_player_id")
+            lines.append(
+                prompt_config.event_templates["lady_of_lake_used"].format(
+                    viewer=viewer,
+                    target=target,
+                )
+            )
         else:
             lines.append(
                 prompt_config.event_templates["unknown_event"].format(
@@ -367,9 +385,15 @@ def _role_strategy_text(role: object, prompt_config: PromptTemplateConfig) -> st
     )
 
 
-def _role_detail_tip_lines(role: object, prompt_config: PromptTemplateConfig) -> list[str]:
+def _role_detail_tip_lines(
+    role: object,
+    prompt_config: PromptTemplateConfig,
+    context: AiContext,
+) -> list[str]:
+    if "role_tip_detail" not in context.public_state.get("enabled_options", []):
+        return []
     detail_config = prompt_config.role_tip_detail
-    if not detail_config.get("enabled"):
+    if not detail_config.get("role_tips"):
         return []
     role_tips = detail_config.get("role_tips", {})
     if not isinstance(role_tips, dict):
@@ -390,23 +414,39 @@ def _extra_information_text(
     known_evil_ids = context.private_view.get("known_evil_player_ids", [])
     merlin_candidate_ids = context.private_view.get("merlin_candidate_player_ids", [])
     known_good_ids = context.private_view.get("known_good_player_ids", [])
+    lake_known_factions = context.private_view.get("lady_of_lake_known_factions", {})
+    extra_lines: list[str] = []
     if role == "merlin" and known_evil_ids:
-        return prompt_config.extra_information["merlin_known_evil"].format(
-            players=_join_player_labels(known_evil_ids, player_labels)
+        extra_lines.append(
+            prompt_config.extra_information["merlin_known_evil"].format(
+                players=_join_player_labels(known_evil_ids, player_labels)
+            )
         )
-    if role == "percival" and merlin_candidate_ids:
-        return prompt_config.extra_information["percival_merlin_candidates"].format(
-            players=_join_player_labels(merlin_candidate_ids, player_labels)
+    elif role == "percival" and merlin_candidate_ids:
+        extra_lines.append(
+            prompt_config.extra_information["percival_merlin_candidates"].format(
+                players=_join_player_labels(merlin_candidate_ids, player_labels)
+            )
         )
-    if known_good_ids:
-        return prompt_config.extra_information["known_good"].format(
-            players=_join_player_labels(known_good_ids, player_labels)
+    elif known_good_ids:
+        extra_lines.append(
+            prompt_config.extra_information["known_good"].format(
+                players=_join_player_labels(known_good_ids, player_labels)
+            )
         )
-    if context.private_view.get("viewer_faction") == "evil" and known_evil_ids:
-        return prompt_config.extra_information["evil_teammates"].format(
-            players=_join_player_labels(known_evil_ids, player_labels)
+    elif context.private_view.get("viewer_faction") == "evil" and known_evil_ids:
+        extra_lines.append(
+            prompt_config.extra_information["evil_teammates"].format(
+                players=_join_player_labels(known_evil_ids, player_labels)
+            )
         )
-    return prompt_config.extra_information["none"]
+    if isinstance(lake_known_factions, dict):
+        for player_id, faction in lake_known_factions.items():
+            extra_lines.append(
+                f"你通过湖中仙女确认：{_player_label(player_id, player_labels)} 为"
+                f"{_faction_label(str(faction), prompt_config)}阵营。"
+            )
+    return " ".join(extra_lines) if extra_lines else prompt_config.extra_information["none"]
 
 
 _PLAYER_ID_PATTERN = re.compile(r"(?<![A-Za-z0-9_])player_(\d+)(?![A-Za-z0-9_])")

@@ -54,3 +54,23 @@ test("player cards show original names while start request sends human name", ()
   assert.equal(source.includes("human_name: humanName"), true);
   assert.equal(source.includes("player.original_name"), true);
 });
+
+test("start game request sends player count and enabled options", () => {
+  assert.equal(source.includes("player_count: playerCount"), true);
+  assert.equal(source.includes("enabled_options: enabledOptions"), true);
+  assert.equal(source.includes("setPlayerCount"), true);
+  assert.equal(apiSource.includes("player_count?: number"), true);
+  assert.equal(apiSource.includes("enabled_options?: string[]"), true);
+});
+
+test("game view uses backend mission metadata and dynamic player counts", () => {
+  assert.equal(source.includes("game.missions"), true);
+  assert.equal(source.includes("game.players.length"), true);
+  assert.equal(source.includes("missionSizes"), false);
+});
+
+test("lady of lake action is available in the frontend", () => {
+  assert.equal(source.includes('activeAction === "use_lady_of_lake"'), true);
+  assert.equal(source.includes("lady_of_lake_eligible_target_ids"), true);
+  assert.equal(source.includes("lady_of_lake_known_factions"), true);
+});

@@ -2,12 +2,22 @@ import json
 import re
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 import backend.app.services.game_service as game_service_module
 from backend.app.ai.player import AiDecisionError, AiPlayer, AiTurnResult
 from backend.app.ai.strategy import SpeechDecision
-from backend.app.game.models import Faction, Phase, Role
+from backend.app.game.models import Faction, GameOption, MissionAction, Phase, Role, Vote
+from backend.app.game.rules import (
+    cast_vote,
+    create_game as create_rules_game,
+    finalize_quest,
+    finalize_vote,
+    propose_team,
+    record_speech,
+    submit_quest_action,
+)
 from backend.app.services.game_service import GameService
 from backend.app.storage.ai_decision_repository import AiDecisionRepository
 from backend.app.storage.ai_memory_repository import AiMemoryRepository
@@ -83,6 +93,67 @@ class GameServiceTests(unittest.TestCase):
             self.assertNotIn("张三", prompt_text)
             for original_name in ("阿尔法", "贝塔", "伽马", "德尔塔"):
                 self.assertNotIn(original_name, prompt_text)
+
+    def test_create_game_with_options_returns_rule_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = _service(tmpdir)
+
+            state = service.create_game(
+                seed=9,
+                player_count=8,
+                enabled_options={GameOption.LADY_OF_LAKE, GameOption.ROLE_TIP_DETAIL},
+            )
+
+            self.assertEqual(state["player_count"], 8)
+            self.assertEqual(len(state["players"]), 8)
+            self.assertEqual(state["enabled_options"], ["lady_of_lake", "role_tip_detail"])
+            self.assertEqual(state["missions"][0]["team_size"], 3)
+            self.assertEqual(state["lady_of_lake_holder_player_id"], "player_8")
+            self.assertEqual(state["lady_of_lake_previous_holder_ids"], ["player_8"])
+            self.assertEqual(
+                state["lady_of_lake_eligible_target_ids"],
+                [f"player_{index}" for index in range(1, 8)],
+            )
+            self.assertEqual(state["lady_of_lake_known_factions"], {})
+
+    def test_human_can_use_lady_of_lake_and_receive_private_result(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = _service(tmpdir)
+            state = service.create_game(
+                seed=9,
+                player_count=8,
+                enabled_options={GameOption.LADY_OF_LAKE},
+            )
+            internal_state = create_rules_game(
+                player_count=8,
+                seed=9,
+                human_seat_index=7,
+                enabled_options={GameOption.LADY_OF_LAKE},
+            )
+            internal_state = _complete_successful_quest(internal_state)
+            internal_state = _complete_successful_quest(internal_state)
+            internal_state = replace(internal_state, leader_index=7)
+            service._set_state(state["id"], internal_state)
+
+            updated = service.submit_human_action(
+                state["id"],
+                "use_lady_of_lake",
+                {"target_player_id": "player_1"},
+            )
+
+            self.assertEqual(updated["phase"], Phase.TEAM_PROPOSAL.value)
+            self.assertEqual(updated["lady_of_lake_holder_player_id"], "player_1")
+            self.assertEqual(
+                updated["lady_of_lake_known_factions"],
+                {"player_1": service._state(state["id"]).players[0].faction.value},
+            )
+            lake_events = [
+                event for event in service.list_events(state["id"]) if event.event_type == "lady_of_lake_used"
+            ]
+            self.assertEqual(len(lake_events), 1)
+            self.assertEqual(lake_events[0].public_payload["viewer_player_id"], "player_8")
+            self.assertEqual(lake_events[0].public_payload["target_player_id"], "player_1")
+            self.assertIn(lake_events[0].private_payload["target_faction"], {"good", "evil"})
 
     def test_human_actions_trigger_ai_until_next_human_decision(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -464,6 +535,21 @@ def _service(tmpdir, ai_player=None):
     if ai_player is None:
         ai_player = AiPlayer(provider=_DeterministicProvider())
     return GameService(connection, ai_player=ai_player)
+
+
+def _complete_successful_quest(state):
+    team_size = state.missions[state.current_round - 1].team_size
+    team = state.players[:team_size]
+    leader = state.players[state.leader_index]
+    state = propose_team(state, leader.id, tuple(player.id for player in team))
+    for player_id in state.speech_order:
+        state = record_speech(state, player_id, f"{player_id} supports the service test team")
+    for player in state.players:
+        state = cast_vote(state, player.id, Vote.APPROVE)
+    state = finalize_vote(state)
+    for player in team:
+        state = submit_quest_action(state, player.id, MissionAction.SUCCESS)
+    return finalize_quest(state)
 
 
 class _DeterministicProvider:

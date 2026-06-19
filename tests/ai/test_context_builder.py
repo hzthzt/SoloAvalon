@@ -1,8 +1,8 @@
 import unittest
 
 from backend.app.ai.context import ContextBuilder
-from backend.app.game.models import Phase, Role
-from backend.app.game.rules import create_five_player_game, propose_team
+from backend.app.game.models import GameOption, Phase, Role
+from backend.app.game.rules import create_five_player_game, create_game, propose_team, use_lady_of_lake
 
 
 class ContextBuilderTests(unittest.TestCase):
@@ -80,3 +80,51 @@ class ContextBuilderTests(unittest.TestCase):
         self.assertTrue(context.context_truncated)
         self.assertIn("message 9", context.dynamic_private_suffix)
         self.assertNotIn("message 0", context.dynamic_private_suffix)
+
+    def test_stable_prefix_only_includes_enabled_optional_mechanics(self):
+        without_lake = create_game(player_count=8, seed=8)
+        with_lake = create_game(
+            player_count=8,
+            seed=8,
+            enabled_options={GameOption.LADY_OF_LAKE},
+        )
+
+        without_context = ContextBuilder().build(without_lake, without_lake.players[0].id, Phase.SPEECH)
+        with_context = ContextBuilder().build(with_lake, with_lake.players[0].id, Phase.SPEECH)
+
+        self.assertNotIn("湖中仙女", without_context.stable_prefix)
+        self.assertIn("湖中仙女", with_context.stable_prefix)
+
+    def test_lady_of_lake_context_only_reveals_viewer_inspections(self):
+        state = create_game(
+            player_count=8,
+            seed=8,
+            enabled_options={GameOption.LADY_OF_LAKE},
+        )
+        state = propose_team(
+            state,
+            state.players[0].id,
+            tuple(player.id for player in state.players[:3]),
+        )
+        state = use_lady_of_lake(
+            state.__class__(
+                players=state.players,
+                missions=state.missions,
+                enabled_options=state.enabled_options,
+                current_round=3,
+                phase=Phase.LADY_OF_LAKE,
+                lady_of_lake_holder_player_id="player_8",
+                lady_of_lake_previous_holder_ids=("player_8",),
+            ),
+            "player_8",
+            "player_1",
+        )
+
+        holder_context = ContextBuilder().build(state, "player_8", Phase.SPEECH)
+        target_context = ContextBuilder().build(state, "player_1", Phase.SPEECH)
+
+        self.assertEqual(
+            holder_context.private_view["lady_of_lake_known_factions"],
+            {"player_1": state.players[0].faction.value},
+        )
+        self.assertNotIn("lady_of_lake_known_factions", target_context.private_view)

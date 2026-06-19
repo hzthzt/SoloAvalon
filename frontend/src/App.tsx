@@ -42,7 +42,7 @@ import type { FlowReview, InformationFeedItem, ReviewRound } from "./flowReview"
 
 type Tab = "game" | "profiles" | "logs";
 
-const missionSizes = [2, 3, 2, 3, 3];
+const playerCountOptions = [5, 6, 7, 8, 9, 10];
 
 const emptyProfile: LlmProfileInput = {
   id: "",
@@ -60,6 +60,10 @@ export function App() {
   const [game, setGame] = useState<GameState | null>(null);
   const [profiles, setProfiles] = useState<LlmProfile[]>([]);
   const [games, setGames] = useState<GameSummary[]>([]);
+  const [playerCount, setPlayerCount] = useState(5);
+  const [ladyOfLakeEnabled, setLadyOfLakeEnabled] = useState(false);
+  const [tristanIsoldeEnabled, setTristanIsoldeEnabled] = useState(false);
+  const [roleTipDetailEnabled, setRoleTipDetailEnabled] = useState(false);
   const [humanName, setHumanName] = useState("真人玩家");
   const [aiNames, setAiNames] = useState(["AI 1", "AI 2", "AI 3", "AI 4"]);
   const [defaultProfileId, setDefaultProfileId] = useState("");
@@ -69,6 +73,7 @@ export function App() {
   const [activeGameEvents, setActiveGameEvents] = useState<GameEvent[]>([]);
   const [speech, setSpeech] = useState("");
   const [assassinationTarget, setAssassinationTarget] = useState("");
+  const [ladyOfLakeTarget, setLadyOfLakeTarget] = useState("");
   const [profileForm, setProfileForm] = useState<LlmProfileInput>(emptyProfile);
   const [profileTestResults, setProfileTestResults] = useState<Record<string, string>>({});
   const [editingProfileId, setEditingProfileId] = useState("");
@@ -81,7 +86,12 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [autoPlaying, setAutoPlaying] = useState(false);
 
-  const requiredTeamSize = game ? missionSizes[game.current_round - 1] : 2;
+  const enabledOptions = [
+    ...(ladyOfLakeEnabled ? ["lady_of_lake"] : []),
+    ...(tristanIsoldeEnabled ? ["tristan_isolde"] : []),
+    ...(roleTipDetailEnabled ? ["role_tip_detail"] : [])
+  ];
+  const requiredTeamSize = game ? game.missions[game.current_round - 1]?.team_size ?? 2 : 2;
   const humanOnQuest = Boolean(game?.proposed_team.includes(game.human_player_id));
   const canSaveProfile = Boolean(
     profileForm.id.trim() &&
@@ -100,6 +110,22 @@ export function App() {
   useEffect(() => {
     void refreshLists();
   }, []);
+
+  useEffect(() => {
+    const aiCount = playerCount - 1;
+    setAiNames((current) =>
+      Array.from({ length: aiCount }, (_, index) => current[index] ?? `AI ${index + 1}`)
+    );
+    setAiProfileOverrides((current) =>
+      Array.from({ length: aiCount }, (_, index) => current[index] ?? "")
+    );
+    if (playerCount < 8) {
+      setLadyOfLakeEnabled(false);
+    }
+    if (playerCount < 9) {
+      setTristanIsoldeEnabled(false);
+    }
+  }, [playerCount]);
 
   useEffect(() => {
     if (!game) {
@@ -151,6 +177,8 @@ export function App() {
   async function startGame() {
     await run(async () => {
       let created = await createGame({
+        player_count: playerCount,
+        enabled_options: enabledOptions,
         human_name: humanName,
         ai_names: aiNames,
         default_llm_profile_id: defaultProfileId || undefined,
@@ -168,6 +196,7 @@ export function App() {
       setSelectedTeam([created.human_player_id]);
       setSpeech("");
       setAssassinationTarget("");
+      setLadyOfLakeTarget("");
       setTab("game");
       await refreshLists();
     });
@@ -207,6 +236,7 @@ export function App() {
       setSelectedTeam([updated.human_player_id]);
       setSpeech("");
       setAssassinationTarget("");
+      setLadyOfLakeTarget("");
       setManualRetryRepeat(null);
       await refreshLists();
     }, (error) => {
@@ -349,7 +379,7 @@ export function App() {
       <header className="topbar">
         <div>
           <h1>SoloAvalon</h1>
-          <p>{game ? phaseLabel(game.phase) : "Local 5-player Avalon"}</p>
+          <p>{game ? `${game.player_count} 人 · ${phaseLabel(game.phase)}` : `Local ${playerCount}-player Avalon`}</p>
         </div>
         <nav className="tabs" aria-label="Main views">
           <button className={tab === "game" ? "active" : ""} onClick={() => setTab("game")}>
@@ -406,6 +436,19 @@ export function App() {
               </select>
             </label>
             <label>
+              玩家人数
+              <select
+                value={playerCount}
+                onChange={(event) => setPlayerCount(Number(event.target.value))}
+              >
+                {playerCountOptions.map((count) => (
+                  <option key={count} value={count}>
+                    {count} 人
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
               真人昵称
               <input value={humanName} onChange={(event) => setHumanName(event.target.value)} />
             </label>
@@ -452,6 +495,32 @@ export function App() {
               />
               <span>AI 接管真人</span>
             </label>
+            <label className="switch-row">
+              <input
+                type="checkbox"
+                checked={ladyOfLakeEnabled}
+                disabled={playerCount < 8}
+                onChange={(event) => setLadyOfLakeEnabled(event.target.checked)}
+              />
+              <span>湖中仙女</span>
+            </label>
+            <label className="switch-row">
+              <input
+                type="checkbox"
+                checked={tristanIsoldeEnabled}
+                disabled={playerCount < 9}
+                onChange={(event) => setTristanIsoldeEnabled(event.target.checked)}
+              />
+              <span>崔斯坦 / 伊索尔德</span>
+            </label>
+            <label className="switch-row">
+              <input
+                type="checkbox"
+                checked={roleTipDetailEnabled}
+                onChange={(event) => setRoleTipDetailEnabled(event.target.checked)}
+              />
+              <span>详细身份提示</span>
+            </label>
             <button className="primary" onClick={startGame} disabled={busy || !defaultProfileId}>
               <Play size={18} /> {autoPlayHuman ? "新对局并代打" : "新对局"}
             </button>
@@ -473,6 +542,15 @@ export function App() {
                   </button>
                 </div>
                 <StatusStrip game={game} />
+                {Object.keys(game.lady_of_lake_known_factions).length > 0 && (
+                  <div className="lake-results">
+                    {Object.entries(game.lady_of_lake_known_factions).map(([playerId, faction]) => (
+                      <span key={playerId}>
+                        湖女：{playerName(game, playerId)} 是{factionLabel(faction)}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {activeAction && (
                   <div className="button-row">
                     <button disabled={busy || autoPlaying} onClick={() => sendHumanAiAction(false)}>
@@ -612,6 +690,34 @@ export function App() {
                       }
                     >
                       <Swords size={18} /> 刺杀
+                    </button>
+                  </div>
+                )}
+
+                {activeAction === "use_lady_of_lake" && (
+                  <div className="action-block">
+                    <select
+                      value={ladyOfLakeTarget}
+                      onChange={(event) => setLadyOfLakeTarget(event.target.value)}
+                    >
+                      <option value="">选择湖女目标</option>
+                      {game.lady_of_lake_eligible_target_ids.map((playerId) => (
+                        <option key={playerId} value={playerId}>
+                          {playerName(game, playerId)}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="primary"
+                      disabled={!ladyOfLakeTarget || busy}
+                      onClick={() =>
+                        sendAction({
+                          action_type: "use_lady_of_lake",
+                          target_player_id: ladyOfLakeTarget
+                        })
+                      }
+                    >
+                      <Shield size={18} /> 使用湖女
                     </button>
                   </div>
                 )}
@@ -1001,7 +1107,7 @@ function StatusStrip({ game }: { game: GameState }) {
     <div className="status-strip">
       <span>{game.quest_results.filter((result) => result === "success").length} 成功</span>
       <span>{game.quest_results.filter((result) => result === "fail").length} 失败</span>
-      <span>{game.votes_cast_count}/5 投票</span>
+      <span>{game.votes_cast_count}/{game.players.length} 投票</span>
       <span>{game.failed_team_votes} 轮拒绝</span>
     </div>
   );
@@ -1114,12 +1220,26 @@ function winnerLabel(winner: string | null) {
 function roleLabel(role: string) {
   const labels: Record<string, string> = {
     merlin: "梅林",
+    percival: "派西维尔",
     assassin: "刺客",
+    morgana: "莫甘娜",
+    mordred: "莫德雷德",
+    oberon: "奥伯伦",
     minion: "爪牙",
     loyal_servant: "忠臣",
+    tristan: "崔斯坦",
+    isolde: "伊索尔德",
     unknown_evil: "恶方"
   };
   return labels[role] ?? role;
+}
+
+function factionLabel(faction: string) {
+  const labels: Record<string, string> = {
+    good: "好人",
+    evil: "恶方"
+  };
+  return labels[faction] ?? faction;
 }
 
 function phaseLabel(phase: string) {

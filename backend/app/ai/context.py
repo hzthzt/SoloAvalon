@@ -6,8 +6,12 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
-from backend.app.game.models import GameState, Phase, Role
-from backend.app.game.rules import STANDARD_FACTION_COUNTS, private_view_for_player
+from backend.app.game.models import GameOption, GameState, Phase, Role
+from backend.app.game.rules import (
+    STANDARD_FACTION_COUNTS,
+    eligible_lady_of_lake_target_ids,
+    private_view_for_player,
+)
 from backend.app.prompting.config import PromptTemplateConfig, load_prompt_template_config
 
 
@@ -80,6 +84,11 @@ class ContextBuilder:
             private_view["merlin_candidate_player_ids"] = view.merlin_candidate_player_ids
         if view.known_good_player_ids:
             private_view["known_good_player_ids"] = view.known_good_player_ids
+        if view.lady_of_lake_known_factions:
+            private_view["lady_of_lake_known_factions"] = {
+                player_id: faction.value
+                for player_id, faction in view.lady_of_lake_known_factions.items()
+            }
         public_state = {
             "players": [
                 {
@@ -100,6 +109,8 @@ class ContextBuilder:
             "quest_results": ["success" if result else "fail" for result in state.quest_results],
             "failed_team_votes": state.failed_team_votes,
             "forced_team": state.forced_team,
+            "enabled_options": sorted(option.value for option in state.enabled_options),
+            "lady_of_lake_holder_player_id": state.lady_of_lake_holder_player_id,
         }
         legal_actions = _legal_actions(state, viewer_player_id, phase)
         dynamic_payload = {
@@ -223,10 +234,11 @@ def _optional_mechanic_section_lines(
     state: GameState,
     prompt_config: PromptTemplateConfig,
 ) -> list[str]:
+    enabled_mechanic_ids = _enabled_optional_mechanic_ids(state)
     enabled_mechanics = [
         mechanic
-        for mechanic in prompt_config.optional_mechanics.values()
-        if _optional_mechanic_enabled(mechanic, len(state.players))
+        for mechanic_id, mechanic in prompt_config.optional_mechanics.items()
+        if mechanic_id in enabled_mechanic_ids
     ]
     if not enabled_mechanics:
         return []
@@ -243,11 +255,13 @@ def _optional_mechanic_section_lines(
     return lines
 
 
-def _optional_mechanic_enabled(mechanic: dict[str, Any], player_count: int) -> bool:
-    return bool(mechanic.get("enabled")) or player_count in mechanic.get(
-        "default_enabled_for_player_counts",
-        [],
-    )
+def _enabled_optional_mechanic_ids(state: GameState) -> set[str]:
+    mechanic_ids: set[str] = set()
+    if GameOption.LADY_OF_LAKE in state.enabled_options:
+        mechanic_ids.add("lady_of_lake")
+    if GameOption.TRISTAN_ISOLDE in state.enabled_options:
+        mechanic_ids.update({"tristan", "isolde"})
+    return mechanic_ids
 
 
 def _role_label(role: Role, prompt_config: PromptTemplateConfig) -> str:
@@ -283,5 +297,10 @@ def _legal_actions(state: GameState, player_id: str, phase: Phase) -> dict[str, 
         return {
             "action": "assassinate",
             "target_player_ids": [player.id for player in state.players if player.id != player_id],
+        }
+    if phase == Phase.LADY_OF_LAKE:
+        return {
+            "action": "use_lady_of_lake",
+            "target_player_ids": list(eligible_lady_of_lake_target_ids(state)),
         }
     return {"action": "none"}
