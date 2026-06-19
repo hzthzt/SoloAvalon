@@ -59,10 +59,7 @@ def _player_view_message(context: AiContext, prompt_config: PromptTemplateConfig
             prompt_config.labels["role_gameplay"].format(
                 gameplay=_role_gameplay_text(role, prompt_config)
             ),
-            prompt_config.labels["role_strategy"].format(
-                strategy=_role_strategy_text(role, prompt_config)
-            ),
-            *_role_detail_tip_lines(role, prompt_config, context),
+            *_advanced_role_tip_lines(role, prompt_config, context),
             prompt_config.labels["extra_information"].format(
                 extra_information=_extra_information_text(context, prompt_config, player_labels)
             ),
@@ -385,24 +382,18 @@ def _role_strategy_text(role: object, prompt_config: PromptTemplateConfig) -> st
     )
 
 
-def _role_detail_tip_lines(
+def _advanced_role_tip_lines(
     role: object,
     prompt_config: PromptTemplateConfig,
     context: AiContext,
 ) -> list[str]:
     if "role_tip_detail" not in context.public_state.get("enabled_options", []):
         return []
-    detail_config = prompt_config.role_tip_detail
-    if not detail_config.get("role_tips"):
-        return []
-    role_tips = detail_config.get("role_tips", {})
-    if not isinstance(role_tips, dict):
-        return []
-    tips = role_tips.get(str(role), [])
-    if not isinstance(tips, list) or not tips:
-        return []
-    label = str(detail_config.get("label", "详细身份提示"))
-    return [f"{label}：", *(f"- {tip}" for tip in tips if str(tip))]
+    return [
+        prompt_config.labels["role_strategy"].format(
+            strategy=_role_strategy_text(role, prompt_config)
+        )
+    ]
 
 
 def _extra_information_text(

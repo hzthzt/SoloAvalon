@@ -541,7 +541,7 @@ export function App() {
                 checked={roleTipDetailEnabled}
                 onChange={(event) => setRoleTipDetailEnabled(event.target.checked)}
               />
-              <span>详细身份提示</span>
+              <span>进阶模式</span>
             </label>
             <button className="primary" onClick={startGame} disabled={busy || !defaultProfileId}>
               <Play size={18} /> {autoPlayHuman ? "新对局并代打" : "新对局"}
@@ -1352,7 +1352,7 @@ function questResultLabel(result: string) {
 function winnerLabel(winner: string | null) {
   const labels: Record<string, string> = {
     good: "好人胜利",
-    evil: "恶方胜利"
+    evil: "坏人胜利"
   };
   return winner ? labels[winner] ?? `${winner} 胜利` : "胜负未定";
 }
@@ -1369,7 +1369,7 @@ function roleLabel(role: string) {
     loyal_servant: "忠臣",
     tristan: "崔斯坦",
     isolde: "伊索尔德",
-    unknown_evil: "恶方"
+    unknown_evil: "坏人"
   };
   return labels[role] ?? role;
 }
@@ -1377,7 +1377,7 @@ function roleLabel(role: string) {
 function factionLabel(faction: string) {
   const labels: Record<string, string> = {
     good: "好人",
-    evil: "恶方"
+    evil: "坏人"
   };
   return labels[faction] ?? faction;
 }

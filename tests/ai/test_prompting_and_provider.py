@@ -50,13 +50,13 @@ class PromptingAndProviderTests(unittest.TestCase):
             config.optional_mechanics["lady_of_lake"]["default_enabled_for_player_counts"],
             [8, 9, 10],
         )
+        self.assertIn("候选中包含梅林和莫甘娜", config.role_descriptions["percival"])
         self.assertIn("包含梅林和莫甘娜", config.role_descriptions["percival"])
-        self.assertIn("包含梅林和莫甘娜", config.role_gameplay["percival"])
         self.assertIn("包含梅林和莫甘娜", config.extra_information["percival_merlin_candidates"])
         self.assertNotIn("若有莫甘娜", config.role_descriptions["percival"])
         self.assertNotIn("可能包含莫甘娜", config.extra_information["percival_merlin_candidates"])
 
-    def test_player_view_includes_percival_strategy_and_merlin_candidates(self):
+    def test_player_view_includes_basic_role_gameplay_and_hides_advanced_tips_by_default(self):
         state = GameState(
             players=(
                 Player("player_1", 0, "You", True, Role.MERLIN, Faction.GOOD),
@@ -74,12 +74,39 @@ class PromptingAndProviderTests(unittest.TestCase):
         )
 
         self.assertIn("身份：派西维尔。", prompt_text)
-        self.assertIn("身份策略：", prompt_text)
+        self.assertIn("角色基础玩法：", prompt_text)
+        self.assertNotIn("角色进阶玩法：", prompt_text)
         self.assertIn("梅林候选", prompt_text)
         self.assertIn("包含梅林和莫甘娜", prompt_text)
         self.assertNotIn("若有莫甘娜", prompt_text)
         self.assertNotIn("可能包含莫甘娜", prompt_text)
         self.assertIn("玩家1、玩家5", prompt_text)
+
+    def test_player_view_appends_advanced_role_tips_when_advanced_mode_enabled(self):
+        state = GameState(
+            players=(
+                Player("player_1", 0, "You", True, Role.MERLIN, Faction.GOOD),
+                Player("player_2", 1, "AI 1", False, Role.PERCIVAL, Faction.GOOD),
+                Player("player_3", 2, "AI 2", False, Role.LOYAL_SERVANT, Faction.GOOD),
+                Player("player_4", 3, "AI 3", False, Role.ASSASSIN, Faction.EVIL),
+                Player("player_5", 4, "AI 4", False, Role.MORGANA, Faction.EVIL),
+            ),
+            missions=(MissionConfig(round_number=1, team_size=2, fail_cards_required=1),),
+            enabled_options=frozenset({GameOption.ROLE_TIP_DETAIL}),
+        )
+
+        context = ContextBuilder().build(state, "player_2", Phase.SPEECH)
+        prompt_text = "\n".join(
+            message["content"] for message in PromptBuilder().build_messages(context, Phase.SPEECH)
+        )
+
+        self.assertIn("角色基础玩法：", prompt_text)
+        self.assertIn("角色进阶玩法：", prompt_text)
+        self.assertLess(
+            prompt_text.index("角色基础玩法："),
+            prompt_text.index("角色进阶玩法："),
+        )
+        self.assertIn("为梅林挡刺杀视线", prompt_text)
 
     def test_stable_prefix_uses_game_facts_without_prompt_metadata(self):
         state = GameState(
@@ -138,7 +165,7 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertIn("扮演", context.stable_prefix)
         self.assertIn("【本局配置】", context.stable_prefix)
         self.assertIn("玩家人数：5", context.stable_prefix)
-        self.assertIn("阵营人数：好人 3 人，恶方 2 人", context.stable_prefix)
+        self.assertIn("阵营人数：好人 3 人，坏人 2 人", context.stable_prefix)
         self.assertIn("第 1 轮：车队 2 人，任务失败需要 1 张失败票", context.stable_prefix)
         self.assertIn("梅林", context.stable_prefix)
         self.assertIn("派西维尔", context.stable_prefix)
@@ -167,13 +194,13 @@ class PromptingAndProviderTests(unittest.TestCase):
         context = ContextBuilder().build(state, "player_2", Phase.SPEECH)
 
         self.assertIn("玩家人数：6", context.stable_prefix)
-        self.assertIn("阵营人数：好人 4 人，恶方 2 人", context.stable_prefix)
+        self.assertIn("阵营人数：好人 4 人，坏人 2 人", context.stable_prefix)
         self.assertIn("忠臣 3 名", context.stable_prefix)
         self.assertIn("第 1 轮：车队 2 人，任务失败需要 1 张失败票", context.stable_prefix)
         self.assertNotIn("5 人局", context.stable_prefix)
         self.assertNotIn("忠臣 2 名", context.stable_prefix)
-        self.assertIn("梅林 1 名：好人阵营", context.stable_prefix)
-        self.assertIn("刺客 1 名：恶方阵营", context.stable_prefix)
+        self.assertIn("梅林 1 名：你是好人", context.stable_prefix)
+        self.assertIn("刺客 1 名：你是坏人", context.stable_prefix)
 
     def test_stable_prefix_formats_seven_player_mission_configuration(self):
         state = GameState(
@@ -198,7 +225,7 @@ class PromptingAndProviderTests(unittest.TestCase):
         context = ContextBuilder().build(state, "player_2", Phase.SPEECH)
 
         self.assertIn("玩家人数：7", context.stable_prefix)
-        self.assertIn("阵营人数：好人 4 人，恶方 3 人", context.stable_prefix)
+        self.assertIn("阵营人数：好人 4 人，坏人 3 人", context.stable_prefix)
         self.assertIn("第 4 轮：车队 4 人，任务失败需要 2 张失败票", context.stable_prefix)
         self.assertIn("爪牙 2 名", context.stable_prefix)
 
@@ -221,7 +248,7 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertIn("简体中文", prompt_text)
         self.assertIn("正常阿瓦隆玩家", prompt_text)
         self.assertIn("【你的视角】", prompt_text)
-        self.assertIn("身份玩法", prompt_text)
+        self.assertIn("角色基础玩法", prompt_text)
         self.assertIn("你的额外信息", prompt_text)
         self.assertIn("【公开记录】", prompt_text)
         self.assertIn("【本次行动】", prompt_text)
@@ -446,9 +473,10 @@ class PromptingAndProviderTests(unittest.TestCase):
             message["content"] for message in PromptBuilder().build_messages(context, Phase.SPEECH)
         )
 
-        self.assertIn("身份玩法：你知道哪些玩家属于恶方", prompt_text)
+        self.assertIn("角色基础玩法：你需要秘密帮助好人完成任务", prompt_text)
+        self.assertIn("你知道哪些玩家是坏人，但看不到莫德雷德", context.stable_prefix)
         evil_labels = "、".join(f"玩家{int(player_id.split('_')[1])}" for player_id in evil_ids)
-        self.assertIn(f"你的额外信息：{evil_labels} 属于恶方。", prompt_text)
+        self.assertIn(f"你的额外信息：{evil_labels} 是坏人。", prompt_text)
 
     def test_player_facing_prompt_omits_parenthetical_noise(self):
         state = create_five_player_game(seed=20)
