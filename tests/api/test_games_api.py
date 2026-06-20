@@ -7,6 +7,7 @@ from pathlib import Path
 import backend.app.api.games as games_module
 from backend.app.api.games import GamesApi
 from backend.app.ai.player import AiDecisionError, AiPlayer
+from backend.app.llm.provider import LlmCompletionResult
 from backend.app.services.game_service import GameService
 from backend.app.storage.database import connect_sqlite, initialize_database
 from backend.app.storage.event_store import EventStore
@@ -148,6 +149,41 @@ class GamesApiTests(unittest.TestCase):
             self.assertTrue(
                 all("vote" in event["public_payload"] for event in settled_vote_events)
             )
+
+    def test_room_detail_includes_ai_decisions_and_usage_summaries(self):
+        class UsageProvider(_DeterministicProvider):
+            def chat_completion(self, profile, messages):
+                return LlmCompletionResult(
+                    content=super().chat_completion(profile, messages),
+                    prompt_tokens=80,
+                    completion_tokens=20,
+                    total_tokens=100,
+                    cached_tokens=40,
+                    cache_hit_rate=0.5,
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            connection = connect_sqlite(":memory:")
+            initialize_database(connection)
+            api = GamesApi(GameService(connection, ai_player=AiPlayer(provider=UsageProvider())))
+            created = api._service.create_game(seed=2)
+
+            api.submit_human_ai_action(created["id"])
+            detail = api.get_room_detail(created["id"])
+
+            self.assertEqual(detail["game"]["id"], created["id"])
+            self.assertGreater(len(detail["events"]), 0)
+            self.assertGreater(len(detail["ai_decisions"]), 0)
+            first_decision = detail["ai_decisions"][0]
+            self.assertEqual(first_decision["total_tokens"], 100)
+            self.assertEqual(first_decision["cache_hit_rate"], 0.5)
+            self.assertTrue(
+                any(summary["total_tokens"] >= 100 for summary in detail["usage_by_player"])
+            )
+            model_summary = next(
+                summary for summary in detail["usage_by_model"] if summary["model_name"] == "unconfigured"
+            )
+            self.assertEqual(model_summary["average_cache_hit_rate"], 0.5)
 
 
 def _api(tmpdir):

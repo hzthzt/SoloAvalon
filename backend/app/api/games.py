@@ -59,6 +59,9 @@ class GamesApi:
             exported["events"] = hide_unsettled_vote_values(exported["events"])
         return exported
 
+    def get_room_detail(self, game_id: str) -> dict[str, Any]:
+        return self._service.get_room_detail(game_id)
+
     def delete_game(self, game_id: str) -> dict[str, str]:
         self._service.delete_game(game_id)
         return {"status": "deleted"}
@@ -97,6 +100,10 @@ def build_games_router(service: GameService):
     @router.get("/{game_id}/export")
     def export_game(game_id: str, include_private: bool = False):
         return _call(lambda: api.export_game(game_id, include_private=include_private))
+
+    @router.get("/{game_id}/room")
+    def get_room_detail(game_id: str):
+        return _call(lambda: api.get_room_detail(game_id))
 
     @router.delete("/{game_id}")
     def delete_game(game_id: str):

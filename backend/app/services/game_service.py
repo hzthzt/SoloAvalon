@@ -354,6 +354,20 @@ class GameService:
     def export_game_log(self, game_id: str, include_private: bool = False) -> dict[str, Any]:
         return self._events.export_game_log(game_id, include_private=include_private)
 
+    def get_room_detail(self, game_id: str) -> dict[str, Any]:
+        game = self.get_game_state(game_id)
+        events = [asdict(event) for event in self._events.list_events(game_id)]
+        decisions = self._ai_decisions.list_decisions(game_id)
+        decision_rows = [asdict(decision) for decision in decisions]
+        players = {player.id: player.name for player in self._games.list_players(game_id)}
+        return {
+            "game": game,
+            "events": events,
+            "ai_decisions": decision_rows,
+            "usage_by_player": _usage_by_player(decision_rows, players),
+            "usage_by_model": _usage_by_model(decision_rows),
+        }
+
     def _auto_advance(self, game_id: str) -> GameState:
         state = self._state(game_id)
         for _ in range(100):
@@ -992,6 +1006,60 @@ def _json_ready(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_json_ready(item) for item in value]
     return value
+
+
+def _usage_by_player(
+    decisions: list[dict[str, Any]],
+    players: dict[str, str],
+) -> list[dict[str, Any]]:
+    summaries = _usage_groups(decisions, lambda decision: str(decision["player_id"]))
+    return [
+        {
+            **summary,
+            "player_id": key,
+            "player_name": players.get(key, key),
+        }
+        for key, summary in summaries.items()
+    ]
+
+
+def _usage_by_model(decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    summaries = _usage_groups(decisions, lambda decision: str(decision["model_name"]))
+    return [
+        {
+            **summary,
+            "model_name": key,
+        }
+        for key, summary in summaries.items()
+    ]
+
+
+def _usage_groups(
+    decisions: list[dict[str, Any]],
+    key_for: Callable[[dict[str, Any]], str],
+) -> dict[str, dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    hit_rates: dict[str, list[float]] = {}
+    for decision in decisions:
+        key = key_for(decision)
+        if key not in groups:
+            groups[key] = {
+                "decision_count": 0,
+                "total_tokens": 0,
+                "average_cache_hit_rate": None,
+            }
+            hit_rates[key] = []
+        groups[key]["decision_count"] += 1
+        total_tokens = decision.get("total_tokens")
+        if isinstance(total_tokens, int):
+            groups[key]["total_tokens"] += total_tokens
+        cache_hit_rate = decision.get("cache_hit_rate")
+        if isinstance(cache_hit_rate, (int, float)):
+            hit_rates[key].append(float(cache_hit_rate))
+    for key, rates in hit_rates.items():
+        if rates:
+            groups[key]["average_cache_hit_rate"] = sum(rates) / len(rates)
+    return groups
 
 
 def _memory_payload_from_decision(
