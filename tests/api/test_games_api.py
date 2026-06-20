@@ -185,6 +185,18 @@ class GamesApiTests(unittest.TestCase):
             )
             self.assertEqual(model_summary["average_cache_hit_rate"], 0.5)
 
+    def test_games_api_archives_game_and_returns_archived_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            api = _api(tmpdir)
+            created = api._service.create_game(seed=2)
+
+            archived = api.archive_game(created["id"])
+            listed = api.list_games()[0]
+
+            self.assertEqual(archived["id"], created["id"])
+            self.assertIsNotNone(archived["archived_at"])
+            self.assertEqual(listed["archived_at"], archived["archived_at"])
+
 
 def _api(tmpdir):
     connection = connect_sqlite(":memory:")

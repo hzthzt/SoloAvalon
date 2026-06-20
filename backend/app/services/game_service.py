@@ -113,6 +113,7 @@ class GameService:
         action_type: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        self._ensure_playable(game_id)
         state = self._state(game_id)
         human = _human_player(state)
         expected = self._next_human_action(state)
@@ -186,6 +187,7 @@ class GameService:
         return self._public_state(game_id, state)
 
     def submit_human_ai_action(self, game_id: str) -> dict[str, Any]:
+        self._ensure_playable(game_id)
         state = self._state(game_id)
         human = _human_player(state)
         action_type = self._next_human_action(state)
@@ -347,6 +349,9 @@ class GameService:
     def delete_game(self, game_id: str) -> None:
         self._states.pop(game_id, None)
         self._games.delete_game(game_id)
+
+    def archive_game(self, game_id: str) -> GameSummary:
+        return self._games.archive_game(game_id)
 
     def list_events(self, game_id: str) -> list[EventRecord]:
         return self._events.list_events(game_id)
@@ -633,6 +638,13 @@ class GameService:
     def _set_state(self, game_id: str, state: GameState) -> None:
         self._states[game_id] = state
         self._games.update_game_state(game_id, state)
+
+    def _ensure_playable(self, game_id: str) -> None:
+        summary = self._games.get_game_summary(game_id)
+        if summary is None:
+            raise ValueError(f"unknown active game id: {game_id}")
+        if summary.archived_at is not None:
+            raise ValueError("archived game cannot be played")
 
     def _profile_for_ai(self, game_id: str, player_id: str) -> LlmProfile:
         try:

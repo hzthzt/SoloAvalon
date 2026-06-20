@@ -27,10 +27,30 @@ test("rooms replace logs and load room details", () => {
   assert.equal(apiSource.includes("RoomDetail"), true);
 });
 
+test("game summaries expose archive metadata and archive api", () => {
+  assert.equal(apiSource.includes("archived_at: string | null"), true);
+  assert.equal(apiSource.includes("archiveGame"), true);
+  assert.equal(apiSource.includes("/archive"), true);
+});
+
+test("play view owns unarchived room list and enters rooms for play", () => {
+  assert.equal(source.includes("playableRooms"), true);
+  assert.equal(source.includes("archivedRooms"), true);
+  assert.equal(source.includes("enterPlayableRoom"), true);
+  assert.equal(source.includes("archiveRoom"), true);
+  assert.equal(source.includes("游玩房间"), true);
+});
+
 test("creating a game enters the new room without removing other rooms", () => {
   assert.equal(source.includes("setSelectedRoomGameId(created.id)"), true);
   assert.equal(source.includes("setTab(\"game\")"), true);
   assert.equal(source.includes("setGames(gameList)"), true);
+});
+
+test("archive view only renders archived rooms as replay records", () => {
+  assert.equal(source.includes("archivedRooms.map"), true);
+  assert.equal(source.includes("games.map((summary)"), false);
+  assert.equal(source.includes("showEvents(summary.id)"), true);
 });
 
 test("ended rooms show ai usage summaries and missing usage fallback", () => {

@@ -23,6 +23,7 @@ def initialize_database(connection: sqlite3.Connection) -> None:
         _migrate_legacy_llm_profile_references(connection)
         connection.executescript(SCHEMA_SQL)
         _ensure_column(connection, "games", "enabled_options", "enabled_options text not null default '[]'")
+        _ensure_column(connection, "games", "archived_at", "archived_at text")
         _ensure_column(connection, "players", "original_name", "original_name text")
         _ensure_column(connection, "ai_decisions", "prompt_tokens", "prompt_tokens integer")
         _ensure_column(connection, "ai_decisions", "completion_tokens", "completion_tokens integer")
@@ -50,6 +51,7 @@ def _migrate_legacy_llm_profile_references(connection: sqlite3.Connection) -> No
                 current_phase text not null,
                 winner text,
                 default_llm_profile_id text,
+                archived_at text,
                 created_at text not null,
                 updated_at text not null
             )

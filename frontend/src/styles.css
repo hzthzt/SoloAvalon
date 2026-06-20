@@ -171,6 +171,12 @@ label {
   gap: 12px;
 }
 
+.setup-subtitle {
+  border-top: 1px solid #d9e1ea;
+  margin-top: 4px;
+  padding-top: 12px;
+}
+
 .primary {
   background: #0f766e;
   border-color: #0f766e;
@@ -748,6 +754,39 @@ label {
 .list-panel {
   display: grid;
   gap: 10px;
+}
+
+.playable-room-list {
+  display: grid;
+  gap: 8px;
+}
+
+.room-list-item {
+  align-items: center;
+  border: 1px solid #d9e1ea;
+  border-radius: 8px;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 10px;
+}
+
+.room-list-item h3,
+.room-list-item p {
+  margin: 0;
+}
+
+.room-list-item h3 {
+  color: #18212f;
+  font-size: 14px;
+}
+
+.room-list-item p {
+  color: #5e6b7a;
+  font-size: 12px;
+  font-weight: 700;
+  margin-top: 3px;
 }
 
 .log-detail-stack {

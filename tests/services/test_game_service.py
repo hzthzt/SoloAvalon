@@ -566,6 +566,27 @@ class GameServiceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 service.get_game_state(state["id"])
 
+    def test_archived_game_cannot_be_played_but_can_be_read(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = _service(tmpdir)
+            state = service.create_game(seed=2)
+            archived = service.archive_game(state["id"])
+
+            self.assertIsNotNone(archived.archived_at)
+            with self.assertRaisesRegex(ValueError, "archived game cannot be played"):
+                service.submit_human_ai_action(state["id"])
+            with self.assertRaisesRegex(ValueError, "archived game cannot be played"):
+                service.submit_human_action(
+                    state["id"],
+                    "propose_team",
+                    {"team": ["player_1", "player_2"]},
+                )
+
+            self.assertEqual(service.get_game_state(state["id"])["id"], state["id"])
+            self.assertGreater(len(service.list_events(state["id"])), 0)
+            self.assertEqual(service.get_room_detail(state["id"])["game"]["id"], state["id"])
+            self.assertEqual(service.export_game_log(state["id"])["game"]["id"], state["id"])
+
     def test_active_game_state_can_be_restored_from_persisted_log(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             database_path = Path(tmpdir) / "soloavalon.sqlite3"

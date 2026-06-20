@@ -17,6 +17,7 @@ import {
   X
 } from "lucide-react";
 import {
+  archiveGame,
   ApiError,
   createGame,
   createProfile,
@@ -124,6 +125,14 @@ export function App() {
   const activeGameReview = useMemo(
     () => buildFlowReview(activeGameEvents, activePlayerNames),
     [activeGameEvents, activePlayerNames]
+  );
+  const playableRooms = useMemo(
+    () => games.filter((summary) => summary.archived_at === null),
+    [games]
+  );
+  const archivedRooms = useMemo(
+    () => games.filter((summary) => summary.archived_at !== null),
+    [games]
   );
   const activeTeamAttemptNumber = game ? currentTeamAttemptNumber(game, activeGameReview) : 1;
 
@@ -349,6 +358,33 @@ export function App() {
     });
   }
 
+  async function enterPlayableRoom(gameId: string) {
+    await run(async () => {
+      const [updated, events] = await Promise.all([getGame(gameId), listGameEvents(gameId)]);
+      setSelectedRoomGameId(gameId);
+      await applyActiveGame({ ...updated, events }, true);
+      setSelectedTeam([updated.human_player_id]);
+      setSpeech("");
+      setAssassinationTarget("");
+      setLadyOfLakeTarget("");
+      setTab("game");
+    });
+  }
+
+  async function archiveRoom(gameId: string) {
+    await run(async () => {
+      await archiveGame(gameId);
+      if (game?.id === gameId) {
+        setGame(null);
+        setActiveGameEvents([]);
+      }
+      if (selectedRoomGameId === gameId) {
+        setSelectedRoomGameId("");
+      }
+      await refreshLists();
+    });
+  }
+
   async function removeGame(gameId: string) {
     await run(async () => {
       await deleteGame(gameId);
@@ -446,7 +482,32 @@ export function App() {
           <section className="panel setup-panel">
             <div className="section-title">
               <Play size={18} />
-              <h2>开局</h2>
+              <h2>游玩房间</h2>
+            </div>
+            <div className="playable-room-list">
+              {playableRooms.length === 0 && <div className="empty-state">暂无可游玩房间</div>}
+              {playableRooms.map((summary) => (
+                <article className="room-list-item" key={summary.id}>
+                  <div>
+                    <h3>{summary.id}</h3>
+                    <p>
+                      {phaseLabel(summary.current_phase)} · {roomStatusLabel(summary.status)}
+                    </p>
+                  </div>
+                  <div className="item-actions">
+                    <button onClick={() => enterPlayableRoom(summary.id)} title="进入游玩">
+                      <Play size={17} />
+                    </button>
+                    <button onClick={() => archiveRoom(summary.id)} title="归档">
+                      <History size={17} />
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+            <div className="section-title setup-subtitle">
+              <Play size={18} />
+              <h2>新建房间</h2>
             </div>
             <label>
               默认模型
@@ -835,17 +896,18 @@ export function App() {
       {tab === "rooms" && (
         <section className="two-column">
           <section className="list-panel">
-            {games.map((summary) => (
+            {archivedRooms.length === 0 && <div className="empty-state">暂无归档房间</div>}
+            {archivedRooms.map((summary) => (
               <article className="profile-item" key={summary.id}>
                 <div>
                   <h3>{summary.id}</h3>
                   <p>
                     {phaseLabel(summary.current_phase)} · {roomStatusLabel(summary.status)}
                   </p>
-                  <span>{summary.winner ? `胜方：${winnerLabel(summary.winner)}` : "可进入游玩"}</span>
+                  <span>{summary.winner ? `胜方：${winnerLabel(summary.winner)}` : "已归档"}</span>
                 </div>
                 <div className="item-actions">
-                  <button onClick={() => showEvents(summary.id)} title="进入房间">
+                  <button onClick={() => showEvents(summary.id)} title="查看归档">
                     <History size={17} />
                   </button>
                   <button onClick={() => showExport(summary.id)} title="导出">

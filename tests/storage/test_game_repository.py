@@ -28,6 +28,7 @@ class GameRepositoryTests(unittest.TestCase):
                 self.assertEqual(summary.current_round, 1)
                 self.assertEqual(summary.current_phase, Phase.TEAM_PROPOSAL.value)
                 self.assertIsNone(summary.winner)
+                self.assertIsNone(summary.archived_at)
                 self.assertEqual(len(players), 5)
                 self.assertEqual(players[0].game_id, "game_1")
                 self.assertEqual(players[0].seat_index, 0)
@@ -87,6 +88,24 @@ class GameRepositoryTests(unittest.TestCase):
                 repository.save_new_game(state, game_id="游戏#7")
 
                 self.assertEqual(repository.next_room_game_id(), "游戏#8")
+            finally:
+                connection.close()
+
+    def test_archive_game_sets_archived_at_idempotently(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
+            try:
+                initialize_database(connection)
+                repository = GameRepository(connection)
+                repository.save_new_game(create_five_player_game(seed=4), game_id="game_1")
+
+                first = repository.archive_game("game_1")
+                second = repository.archive_game("game_1")
+                summary = repository.get_game_summary("game_1")
+
+                self.assertIsNotNone(first.archived_at)
+                self.assertEqual(second.archived_at, first.archived_at)
+                self.assertEqual(summary.archived_at, first.archived_at)
             finally:
                 connection.close()
 

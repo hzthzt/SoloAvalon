@@ -20,6 +20,7 @@ class GameSummary:
     current_phase: str
     winner: str | None
     default_llm_profile_id: str | None
+    archived_at: str | None
     created_at: str
     updated_at: str
 
@@ -192,6 +193,28 @@ class GameRepository:
         if cursor.rowcount == 0:
             raise ValueError(f"unknown game id: {game_id}")
 
+    def archive_game(self, game_id: str) -> GameSummary:
+        current = self.get_game_summary(game_id)
+        if current is None:
+            raise ValueError(f"unknown game id: {game_id}")
+        if current.archived_at is not None:
+            return current
+        archived_at = _utc_now()
+        self._connection.execute(
+            """
+            update games
+            set archived_at = ?,
+                updated_at = ?
+            where id = ?
+            """,
+            (archived_at, archived_at, game_id),
+        )
+        self._connection.commit()
+        archived = self.get_game_summary(game_id)
+        if archived is None:
+            raise RuntimeError("failed to archive game")
+        return archived
+
     def set_player_llm_profile(
         self,
         game_id: str,
@@ -222,6 +245,7 @@ def _game_summary_from_row(row: sqlite3.Row) -> GameSummary:
         current_phase=row["current_phase"],
         winner=row["winner"],
         default_llm_profile_id=row["default_llm_profile_id"],
+        archived_at=row["archived_at"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

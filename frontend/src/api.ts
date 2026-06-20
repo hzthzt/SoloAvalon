@@ -61,6 +61,7 @@ export type GameSummary = {
   current_round: number;
   current_phase: string;
   winner: string | null;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -168,6 +169,10 @@ export async function listGames(): Promise<GameSummary[]> {
 
 export async function getRoomDetail(gameId: string): Promise<RoomDetail> {
   return request(`/api/games/${gameId}/room`);
+}
+
+export async function archiveGame(gameId: string): Promise<GameSummary> {
+  return request(`/api/games/${gameId}/archive`, { method: "POST" });
 }
 
 export async function deleteGame(gameId: string): Promise<void> {

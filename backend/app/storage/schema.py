@@ -9,6 +9,7 @@ create table if not exists games (
     current_phase text not null,
     winner text,
     default_llm_profile_id text,
+    archived_at text,
     created_at text not null,
     updated_at text not null
 );

@@ -62,6 +62,9 @@ class GamesApi:
     def get_room_detail(self, game_id: str) -> dict[str, Any]:
         return self._service.get_room_detail(game_id)
 
+    def archive_game(self, game_id: str) -> dict[str, Any]:
+        return asdict(self._service.archive_game(game_id))
+
     def delete_game(self, game_id: str) -> dict[str, str]:
         self._service.delete_game(game_id)
         return {"status": "deleted"}
@@ -104,6 +107,10 @@ def build_games_router(service: GameService):
     @router.get("/{game_id}/room")
     def get_room_detail(game_id: str):
         return _call(lambda: api.get_room_detail(game_id))
+
+    @router.post("/{game_id}/archive")
+    def archive_game(game_id: str):
+        return _call(lambda: api.archive_game(game_id))
 
     @router.delete("/{game_id}")
     def delete_game(game_id: str):
