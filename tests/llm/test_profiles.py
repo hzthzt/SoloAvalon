@@ -68,3 +68,28 @@ class LlmProfileTests(unittest.TestCase):
             LlmProfileInput(**_profile_input_kwargs(temperature=-0.1))
         with self.assertRaises(ValueError):
             LlmProfileInput(**_profile_input_kwargs(timeout_retries=-1))
+
+    def test_input_validation_rejects_non_http_base_url(self):
+        for base_url in ("api.example.com/v1", "file:///v1"):
+            with self.subTest(base_url=base_url):
+                with self.assertRaisesRegex(ValueError, "base_url must start with http:// or https://"):
+                    LlmProfileInput(**_profile_input_kwargs(base_url=base_url))
+
+                profile_kwargs = _profile_kwargs() | {"base_url": base_url}
+                with self.assertRaisesRegex(ValueError, "base_url must start with http:// or https://"):
+                    LlmProfile(**profile_kwargs)
+
+    def test_unconfigured_profile_allows_empty_base_url(self):
+        profile = LlmProfile(
+            id="unconfigured",
+            name="Unconfigured",
+            base_url="",
+            api_key="",
+            model="unconfigured",
+            temperature=0.0,
+            timeout=1.0,
+            created_at="",
+            updated_at="",
+        )
+
+        self.assertEqual(profile.base_url, "")

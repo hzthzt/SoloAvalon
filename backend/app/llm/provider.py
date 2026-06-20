@@ -4,7 +4,7 @@ import json
 import urllib.request
 from typing import Any, Callable
 
-from .profiles import LlmProfile
+from .profiles import LlmProfile, validate_base_url
 
 
 Transport = Callable[[str, dict[str, str], dict[str, Any], float], dict[str, Any]]
@@ -69,6 +69,7 @@ def _completion_content(response: dict[str, Any]) -> str:
 
 
 def _completion_url(base_url: str) -> str:
+    validate_base_url(base_url)
     trimmed = base_url.rstrip("/")
     if trimmed.endswith("/chat/completions"):
         return trimmed

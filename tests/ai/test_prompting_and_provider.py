@@ -616,6 +616,30 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["model"], "model")
         self.assertNotIn("max_tokens", captured["payload"])
 
+    def test_llm_provider_rejects_invalid_base_url_before_transport(self):
+        calls = []
+
+        def transport(url, headers, payload, timeout):
+            calls.append(url)
+            return {"choices": [{"message": {"content": "{}"}}]}
+
+        profile = object.__new__(LlmProfile)
+        object.__setattr__(profile, "id", "bad_profile")
+        object.__setattr__(profile, "name", "Bad")
+        object.__setattr__(profile, "base_url", "file:///v1")
+        object.__setattr__(profile, "api_key", "test-api-key")
+        object.__setattr__(profile, "model", "model")
+        object.__setattr__(profile, "temperature", 0.3)
+        object.__setattr__(profile, "timeout", 5.0)
+        object.__setattr__(profile, "timeout_retries", 0)
+        object.__setattr__(profile, "created_at", "2026-06-15T00:00:00Z")
+        object.__setattr__(profile, "updated_at", "2026-06-15T00:00:00Z")
+
+        with self.assertRaisesRegex(ValueError, "base_url must start with http:// or https://"):
+            LlmProvider(transport=transport).chat_completion(profile, messages=[])
+
+        self.assertEqual(calls, [])
+
     def test_llm_provider_retries_timeout_errors_until_success(self):
         attempts = []
 
