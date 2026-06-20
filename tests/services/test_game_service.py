@@ -83,15 +83,17 @@ class GameServiceTests(unittest.TestCase):
                 },
             )
 
-    def test_create_game_uses_room_sequence_id(self):
+    def test_create_game_separates_internal_id_from_room_display_name(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             service = _service(tmpdir)
 
             first = service.create_game(seed=2)
             second = service.create_game(seed=3)
 
-            self.assertEqual(first["id"], "游戏#1")
-            self.assertEqual(second["id"], "游戏#2")
+            self.assertEqual(first["id"], "game_1")
+            self.assertEqual(first["display_name"], "游戏#1")
+            self.assertEqual(second["id"], "game_2")
+            self.assertEqual(second["display_name"], "游戏#2")
 
     def test_create_game_returns_anonymous_names_and_keeps_original_names_out_of_prompt(self):
         with tempfile.TemporaryDirectory() as tmpdir:

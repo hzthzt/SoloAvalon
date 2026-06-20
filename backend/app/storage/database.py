@@ -22,6 +22,8 @@ def initialize_database(connection: sqlite3.Connection) -> None:
     try:
         _migrate_legacy_llm_profile_references(connection)
         connection.executescript(SCHEMA_SQL)
+        _ensure_column(connection, "games", "display_name", "display_name text")
+        connection.execute("update games set display_name = id where display_name is null")
         _ensure_column(connection, "games", "enabled_options", "enabled_options text not null default '[]'")
         _ensure_column(connection, "games", "archived_at", "archived_at text")
         _ensure_column(connection, "players", "original_name", "original_name text")
@@ -43,6 +45,7 @@ def _migrate_legacy_llm_profile_references(connection: sqlite3.Connection) -> No
         temp_table_sql="""
             create table games_new (
                 id text primary key,
+                display_name text,
                 status text not null,
                 player_count integer not null,
                 role_set text not null,
@@ -58,6 +61,7 @@ def _migrate_legacy_llm_profile_references(connection: sqlite3.Connection) -> No
         """,
         columns=(
             "id",
+            "display_name",
             "status",
             "player_count",
             "role_set",
@@ -170,11 +174,17 @@ def _rebuild_table_if_references_llm_profiles(
         return
 
     temp_table_name = f"{table_name}_new"
-    column_list = ", ".join(columns)
+    existing_columns = {
+        row["name"]
+        for row in connection.execute(f"pragma table_info({table_name})").fetchall()
+    }
+    selected_columns = [column for column in columns if column in existing_columns]
+    insert_column_list = ", ".join(selected_columns)
+    select_column_list = ", ".join(selected_columns)
     connection.execute(f"drop table if exists {temp_table_name}")
     connection.execute(temp_table_sql)
     connection.execute(
-        f"insert into {temp_table_name} ({column_list}) select {column_list} from {table_name}"
+        f"insert into {temp_table_name} ({insert_column_list}) select {select_column_list} from {table_name}"
     )
     connection.execute(f"drop table {table_name}")
     connection.execute(f"alter table {temp_table_name} rename to {table_name}")

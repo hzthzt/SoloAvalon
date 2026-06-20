@@ -5,6 +5,7 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Iterable
 
 from backend.app.game.models import GameState
 
@@ -12,6 +13,7 @@ from backend.app.game.models import GameState
 @dataclass(frozen=True)
 class GameSummary:
     id: str
+    display_name: str
     status: str
     player_count: int
     role_set: list[str]
@@ -46,6 +48,7 @@ class GameRepository:
         self,
         state: GameState,
         game_id: str,
+        display_name: str | None = None,
         default_llm_profile_id: str | None = None,
     ) -> None:
         now = _utc_now()
@@ -63,13 +66,14 @@ class GameRepository:
         self._connection.execute(
             """
             insert into games (
-                id, status, player_count, role_set, enabled_options, current_round, current_phase,
+                id, display_name, status, player_count, role_set, enabled_options, current_round, current_phase,
                 winner, default_llm_profile_id, created_at, updated_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 game_id,
+                display_name or game_id,
                 status,
                 len(state.players),
                 role_set,
@@ -121,13 +125,19 @@ class GameRepository:
         ).fetchall()
         return [_game_summary_from_row(row) for row in rows]
 
-    def next_room_game_id(self) -> str:
+    def next_game_id(self) -> str:
         rows = self._connection.execute("select id from games").fetchall()
-        numbers = []
+        numbers = _matching_numbers((row["id"] for row in rows), r"game_(\d+)")
+        return f"game_{max(numbers, default=0) + 1}"
+
+    def next_room_display_name(self) -> str:
+        rows = self._connection.execute("select id, display_name from games").fetchall()
+        values = []
         for row in rows:
-            match = re.fullmatch(r"游戏#(\d+)", row["id"])
-            if match:
-                numbers.append(int(match.group(1)))
+            values.append(row["id"])
+            if "display_name" in row.keys():
+                values.append(row["display_name"])
+        numbers = _matching_numbers(values, r"游戏#(\d+)")
         return f"游戏#{max(numbers, default=0) + 1}"
 
     def list_players(self, game_id: str) -> list[StoredPlayer]:
@@ -234,9 +244,21 @@ class GameRepository:
             raise ValueError(f"unknown player id for game: {game_id}/{player_id}")
 
 
+def _matching_numbers(values: Iterable[str | None], pattern: str) -> list[int]:
+    numbers = []
+    for value in values:
+        if value is None:
+            continue
+        match = re.fullmatch(pattern, value)
+        if match:
+            numbers.append(int(match.group(1)))
+    return numbers
+
+
 def _game_summary_from_row(row: sqlite3.Row) -> GameSummary:
     return GameSummary(
         id=row["id"],
+        display_name=row["display_name"],
         status=row["status"],
         player_count=row["player_count"],
         role_set=json.loads(row["role_set"]),

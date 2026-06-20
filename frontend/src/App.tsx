@@ -444,7 +444,11 @@ export function App() {
       <header className="topbar">
         <div>
           <h1>SoloAvalon</h1>
-          <p>{game ? `${game.player_count} 人 · ${phaseLabel(game.phase)}` : `Local ${playerCount}-player Avalon`}</p>
+          <p>
+            {game
+              ? `${game.display_name} · ${game.player_count} 人 · ${phaseLabel(game.phase)}`
+              : `Local ${playerCount}-player Avalon`}
+          </p>
         </div>
         <nav className="tabs" aria-label="Main views">
           <button className={tab === "game" ? "active" : ""} onClick={() => setTab("game")}>
@@ -882,7 +886,7 @@ export function App() {
             {archivedRooms.map((summary) => (
               <article className="profile-item" key={summary.id}>
                 <div>
-                  <h3>{summary.id}</h3>
+                  <h3>{summary.display_name}</h3>
                   <p>
                     {phaseLabel(summary.current_phase)} · {roomStatusLabel(summary.status)}
                   </p>
@@ -903,13 +907,19 @@ export function App() {
             ))}
           </section>
           <section className="log-detail-stack">
-            <ReplayDetail review={selectedLogReview} selectedGameId={selectedRoomGameId} />
+            <ReplayDetail
+              review={selectedLogReview}
+              selectedGameId={selectedRoomGameId}
+              selectedDisplayName={roomDetail?.game.display_name ?? ""}
+            />
             {roomDetail?.game.status === "complete" && <AiUsageSummary detail={roomDetail} />}
             <section className="panel event-panel">
               <div className="section-title">
                 <History size={18} />
                 <h2>事件流</h2>
-                {selectedRoomGameId && <span className="subtle-id">{selectedRoomGameId}</span>}
+                {roomDetail?.game.display_name && (
+                  <span className="subtle-id">{roomDetail.game.display_name}</span>
+                )}
               </div>
               <div className="event-list">
                 {eventLog.length === 0 && <div className="empty-state">暂无事件</div>}
@@ -975,7 +985,7 @@ function PlayableRoomList({
         {rooms.map((summary) => (
           <article className="room-list-item" key={summary.id}>
             <div className="room-list-copy">
-              <h3>{summary.id}</h3>
+              <h3>{summary.display_name}</h3>
               <p>
                 {phaseLabel(summary.current_phase)} · {roomStatusLabel(summary.status)}
               </p>
@@ -1013,7 +1023,7 @@ function GameDesk({
         <div>
           <h2>第 {game.current_round} 轮任务 · 第 {teamAttemptNumber} 次组队</h2>
           <p>
-            队长 {leaderName} · 需要 {requiredTeamSize} 人
+            {game.display_name} · 队长 {leaderName} · 需要 {requiredTeamSize} 人
           </p>
         </div>
         <div className={`winner-badge ${game.winner ?? ""}`}>
@@ -1233,17 +1243,19 @@ function RoundSummary({ round }: { round: ReviewRound }) {
 
 function ReplayDetail({
   review,
-  selectedGameId
+  selectedGameId,
+  selectedDisplayName
 }: {
   review: FlowReview;
   selectedGameId: string;
+  selectedDisplayName: string;
 }) {
   return (
     <section className="panel replay-panel">
       <div className="section-title">
         <History size={18} />
         <h2>完整复盘</h2>
-        {selectedGameId && <span className="subtle-id">{selectedGameId}</span>}
+        {selectedGameId && <span className="subtle-id">{selectedDisplayName || selectedGameId}</span>}
       </div>
       <div className="replay-rounds">
         {!selectedGameId && <div className="empty-state">选择一局查看复盘</div>}

@@ -1,6 +1,7 @@
 SCHEMA_SQL = """
 create table if not exists games (
     id text primary key,
+    display_name text not null,
     status text not null,
     player_count integer not null,
     role_set text not null,

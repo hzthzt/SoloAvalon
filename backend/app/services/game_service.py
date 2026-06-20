@@ -76,7 +76,8 @@ class GameService:
         default_llm_profile_id: str | None = None,
         ai_profile_overrides: dict[str, str | None] | None = None,
     ) -> dict[str, Any]:
-        game_id = self._games.next_room_game_id()
+        game_id = self._games.next_game_id()
+        display_name = self._games.next_room_display_name()
         state = create_rules_game(
             player_count=player_count,
             seed=seed,
@@ -88,6 +89,7 @@ class GameService:
         self._games.save_new_game(
             state,
             game_id=game_id,
+            display_name=display_name,
             default_llm_profile_id=default_llm_profile_id,
         )
         self._states[game_id] = state
@@ -666,12 +668,14 @@ class GameService:
         return public_event_dicts(self._events.list_events(game_id))
 
     def _public_state(self, game_id: str, state: GameState) -> dict[str, Any]:
+        summary = self._games.get_game_summary(game_id)
         human = _human_player(state)
         view_payload = build_private_view_payloads(state, human.id)[1]
         visible_roles = view_payload["visible_roles"]
         return {
             "id": game_id,
-            "status": "complete" if state.winner else "active",
+            "display_name": summary.display_name if summary else game_id,
+            "status": summary.status if summary else ("complete" if state.winner else "active"),
             "player_count": len(state.players),
             "phase": state.phase.value,
             "current_round": state.current_round,

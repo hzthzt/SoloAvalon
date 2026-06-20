@@ -456,6 +456,7 @@ function event(
 function gameState(overrides: Partial<GameState>): GameState {
   return {
     id: "game_1",
+    display_name: "游戏#1",
     status: "active",
     player_count: 5,
     phase: "team_proposal",

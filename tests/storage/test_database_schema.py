@@ -40,6 +40,7 @@ class DatabaseSchemaTests(unittest.TestCase):
                     for row in connection.execute("pragma table_info(games)").fetchall()
                 }
                 self.assertIn("enabled_options", game_columns)
+                self.assertIn("display_name", game_columns)
             finally:
                 connection.close()
 
@@ -187,6 +188,9 @@ class DatabaseSchemaTests(unittest.TestCase):
             game_profile_id = connection.execute(
                 "select default_llm_profile_id from games where id = 'game_1'"
             ).fetchone()[0]
+            game_display_name = connection.execute(
+                "select display_name from games where id = 'game_1'"
+            ).fetchone()[0]
             player_profile_id = connection.execute(
                 "select llm_profile_id from players where game_id = 'game_1' and id = 'player_1'"
             ).fetchone()[0]
@@ -199,6 +203,7 @@ class DatabaseSchemaTests(unittest.TestCase):
 
             self.assertNotIn("llm_profiles", table_names)
             self.assertEqual(game_profile_id, "profile_1")
+            self.assertEqual(game_display_name, "game_1")
             self.assertEqual(player_profile_id, "profile_1")
             self.assertIsNone(player_original_name)
             self.assertEqual(decision_profile_id, "profile_1")

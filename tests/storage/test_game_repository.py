@@ -17,11 +17,12 @@ class GameRepositoryTests(unittest.TestCase):
                 repository = GameRepository(connection)
                 state = create_five_player_game(seed=20260615)
 
-                repository.save_new_game(state, game_id="game_1")
+                repository.save_new_game(state, game_id="game_1", display_name="游戏#1")
                 summary = repository.get_game_summary("game_1")
                 players = repository.list_players("game_1")
 
                 self.assertEqual(summary.id, "game_1")
+                self.assertEqual(summary.display_name, "游戏#1")
                 self.assertEqual(summary.status, "active")
                 self.assertEqual(summary.player_count, 5)
                 self.assertEqual(summary.enabled_options, [])
@@ -75,7 +76,7 @@ class GameRepositoryTests(unittest.TestCase):
             finally:
                 connection.close()
 
-    def test_next_room_game_id_ignores_legacy_ids(self):
+    def test_next_room_display_name_uses_display_sequence(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
             try:
@@ -84,10 +85,11 @@ class GameRepositoryTests(unittest.TestCase):
                 state = create_five_player_game(seed=1)
 
                 repository.save_new_game(state, game_id="20260620_120000_000001")
-                repository.save_new_game(state, game_id="游戏#1")
-                repository.save_new_game(state, game_id="游戏#7")
+                repository.save_new_game(state, game_id="legacy_hash_id", display_name="游戏#1")
+                repository.save_new_game(state, game_id="another_legacy_id", display_name="游戏#7")
 
-                self.assertEqual(repository.next_room_game_id(), "游戏#8")
+                self.assertEqual(repository.next_game_id(), "game_1")
+                self.assertEqual(repository.next_room_display_name(), "游戏#8")
             finally:
                 connection.close()
 

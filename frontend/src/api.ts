@@ -20,6 +20,7 @@ export type GameEvent = {
 
 export type GameState = {
   id: string;
+  display_name: string;
   status: string;
   player_count: number;
   phase: string;
@@ -56,6 +57,7 @@ export type GameState = {
 
 export type GameSummary = {
   id: string;
+  display_name: string;
   status: string;
   player_count: number;
   current_round: number;
@@ -145,14 +147,14 @@ export async function createGame(payload: {
 }
 
 export async function getGame(gameId: string): Promise<GameState> {
-  return request(`/api/games/${gameId}`);
+  return request(gamePath(gameId));
 }
 
 export async function submitAction(
   gameId: string,
   payload: Record<string, unknown>
 ): Promise<GameState> {
-  return request(`/api/games/${gameId}/actions`, {
+  return request(`${gamePath(gameId)}/actions`, {
     method: "POST",
     headers: jsonHeaders,
     body: JSON.stringify(payload)
@@ -160,7 +162,7 @@ export async function submitAction(
 }
 
 export async function submitHumanAiAction(gameId: string): Promise<GameState> {
-  return request(`/api/games/${gameId}/ai-actions/human`, { method: "POST" });
+  return request(`${gamePath(gameId)}/ai-actions/human`, { method: "POST" });
 }
 
 export async function listGames(): Promise<GameSummary[]> {
@@ -168,20 +170,20 @@ export async function listGames(): Promise<GameSummary[]> {
 }
 
 export async function getRoomDetail(gameId: string): Promise<RoomDetail> {
-  return request(`/api/games/${gameId}/room`);
+  return request(`${gamePath(gameId)}/room`);
 }
 
 export async function archiveGame(gameId: string): Promise<GameSummary> {
-  return request(`/api/games/${gameId}/archive`, { method: "POST" });
+  return request(`${gamePath(gameId)}/archive`, { method: "POST" });
 }
 
 export async function deleteGame(gameId: string): Promise<void> {
-  await request(`/api/games/${gameId}`, { method: "DELETE" });
+  await request(gamePath(gameId), { method: "DELETE" });
 }
 
 export async function exportGame(gameId: string, includePrivate = false): Promise<unknown> {
   const query = includePrivate ? "?include_private=true" : "";
-  return request(`/api/games/${gameId}/export${query}`);
+  return request(`${gamePath(gameId)}/export${query}`);
 }
 
 export async function listGameEvents(
@@ -189,7 +191,7 @@ export async function listGameEvents(
   includePrivate = false
 ): Promise<GameEvent[]> {
   const query = includePrivate ? "?include_private=true" : "";
-  return request(`/api/games/${gameId}/events${query}`);
+  return request(`${gamePath(gameId)}/events${query}`);
 }
 
 export async function listProfiles(): Promise<LlmProfile[]> {
@@ -239,6 +241,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return undefined as T;
   }
   return response.json() as Promise<T>;
+}
+
+function gamePath(gameId: string) {
+  return `/api/games/${encodeURIComponent(gameId)}`;
 }
 
 export class ApiError extends Error {

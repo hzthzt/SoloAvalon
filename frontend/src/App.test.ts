@@ -30,8 +30,22 @@ test("rooms replace logs and load room details", () => {
 
 test("game summaries expose archive metadata and archive api", () => {
   assert.equal(apiSource.includes("archived_at: string | null"), true);
+  assert.equal(apiSource.includes("display_name: string"), true);
   assert.equal(apiSource.includes("archiveGame"), true);
   assert.equal(apiSource.includes("/archive"), true);
+});
+
+test("room display names are separate from internal game ids", () => {
+  assert.equal(source.includes("{summary.display_name}"), true);
+  assert.equal(source.includes("<h3>{summary.id}</h3>"), false);
+  assert.equal(source.includes("enterPlayableRoom(summary.id)"), true);
+  assert.equal(source.includes("archiveRoom(summary.id)"), true);
+});
+
+test("game id route segments are encoded for room ids containing hash", () => {
+  assert.equal(apiSource.includes("gamePath(gameId)"), true);
+  assert.equal(apiSource.includes("encodeURIComponent(gameId)"), true);
+  assert.equal(apiSource.includes("`/api/games/${encodeURIComponent(gameId)}`"), true);
 });
 
 test("play view owns unarchived room list and enters rooms for play", () => {
@@ -60,6 +74,7 @@ test("playable room cards constrain long room names inside the list", () => {
 
 test("creating a game enters the new room without removing other rooms", () => {
   assert.equal(source.includes("setSelectedRoomGameId(created.id)"), true);
+  assert.equal(apiSource.includes("display_name: string"), true);
   assert.equal(source.includes("setTab(\"game\")"), true);
   assert.equal(source.includes("setGames(gameList)"), true);
 });
