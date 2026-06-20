@@ -482,32 +482,7 @@ export function App() {
           <section className="panel setup-panel">
             <div className="section-title">
               <Play size={18} />
-              <h2>游玩房间</h2>
-            </div>
-            <div className="playable-room-list">
-              {playableRooms.length === 0 && <div className="empty-state">暂无可游玩房间</div>}
-              {playableRooms.map((summary) => (
-                <article className="room-list-item" key={summary.id}>
-                  <div>
-                    <h3>{summary.id}</h3>
-                    <p>
-                      {phaseLabel(summary.current_phase)} · {roomStatusLabel(summary.status)}
-                    </p>
-                  </div>
-                  <div className="item-actions">
-                    <button onClick={() => enterPlayableRoom(summary.id)} title="进入游玩">
-                      <Play size={17} />
-                    </button>
-                    <button onClick={() => archiveRoom(summary.id)} title="归档">
-                      <History size={17} />
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
-            <div className="section-title setup-subtitle">
-              <Play size={18} />
-              <h2>新建房间</h2>
+              <h2>开局</h2>
             </div>
             <label>
               默认模型
@@ -616,6 +591,13 @@ export function App() {
             </button>
           </section>
 
+          {!game && !startingGame && (
+            <PlayableRoomList
+              rooms={playableRooms}
+              enterPlayableRoom={enterPlayableRoom}
+              archiveRoom={archiveRoom}
+            />
+          )}
           {game && (
             <>
               <GameDesk
@@ -969,6 +951,48 @@ export function App() {
 
 function pauseForFlow() {
   return new Promise<void>((resolve) => window.setTimeout(resolve, 280));
+}
+
+function PlayableRoomList({
+  rooms,
+  enterPlayableRoom,
+  archiveRoom
+}: {
+  rooms: GameSummary[];
+  enterPlayableRoom: (gameId: string) => void;
+  archiveRoom: (gameId: string) => void;
+}) {
+  return (
+    <section className="desk room-list-desk">
+      <div className="desk-header">
+        <div>
+          <h2>游玩房间</h2>
+          <p>选择一个未归档房间继续游玩</p>
+        </div>
+      </div>
+      <div className="playable-room-list">
+        {rooms.length === 0 && <div className="empty-state">暂无可游玩房间</div>}
+        {rooms.map((summary) => (
+          <article className="room-list-item" key={summary.id}>
+            <div className="room-list-copy">
+              <h3>{summary.id}</h3>
+              <p>
+                {phaseLabel(summary.current_phase)} · {roomStatusLabel(summary.status)}
+              </p>
+            </div>
+            <div className="item-actions">
+              <button onClick={() => enterPlayableRoom(summary.id)} title="进入游玩">
+                <Play size={17} />
+              </button>
+              <button onClick={() => archiveRoom(summary.id)} title="归档">
+                <History size={17} />
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function GameDesk({

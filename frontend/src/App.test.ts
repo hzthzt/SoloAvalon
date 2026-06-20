@@ -4,6 +4,7 @@ import test from "node:test";
 
 const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const apiSource = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
+const styleSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
 test("start game UI does not expose seed controls", () => {
   assert.equal(source.includes("Seed"), false);
@@ -39,6 +40,22 @@ test("play view owns unarchived room list and enters rooms for play", () => {
   assert.equal(source.includes("enterPlayableRoom"), true);
   assert.equal(source.includes("archiveRoom"), true);
   assert.equal(source.includes("游玩房间"), true);
+});
+
+test("playable room list is centered while setup panel keeps new room controls", () => {
+  assert.equal(source.includes("<h2>开局</h2>"), true);
+  assert.equal(source.includes("PlayableRoomList"), true);
+  assert.equal(
+    source.indexOf("<PlayableRoomList") > source.indexOf("</section>\r\n\r\n          {game &&"),
+    true
+  );
+  assert.equal(source.includes("<h2>新建房间</h2>"), false);
+});
+
+test("playable room cards constrain long room names inside the list", () => {
+  assert.equal(styleSource.includes(".room-list-item h3"), true);
+  assert.equal(styleSource.includes("overflow-wrap: anywhere"), true);
+  assert.equal(styleSource.includes("min-width: 0"), true);
 });
 
 test("creating a game enters the new room without removing other rooms", () => {
