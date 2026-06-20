@@ -45,6 +45,11 @@ class AiDecisionRepositoryTests(unittest.TestCase):
                         output_raw=None,
                         output_parsed=None,
                         validation_status="valid",
+                        prompt_tokens=100,
+                        completion_tokens=25,
+                        total_tokens=125,
+                        cached_tokens=40,
+                        cache_hit_rate=0.4,
                     )
                 )
 
@@ -55,5 +60,10 @@ class AiDecisionRepositoryTests(unittest.TestCase):
                 self.assertEqual(decisions[0].decision_type, "speech")
                 self.assertEqual(decisions[0].output["public_message"], "I support this team.")
                 self.assertFalse(decisions[0].context_truncated)
+                self.assertEqual(decisions[0].prompt_tokens, 100)
+                self.assertEqual(decisions[0].completion_tokens, 25)
+                self.assertEqual(decisions[0].total_tokens, 125)
+                self.assertEqual(decisions[0].cached_tokens, 40)
+                self.assertEqual(decisions[0].cache_hit_rate, 0.4)
             finally:
                 connection.close()

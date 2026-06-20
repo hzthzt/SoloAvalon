@@ -19,6 +19,7 @@ from backend.app.game.rules import (
     record_speech,
     submit_quest_action,
 )
+from backend.app.llm.provider import LlmCompletionResult
 from backend.app.services.game_service import GameService
 from backend.app.storage.ai_decision_repository import AiDecisionRepository
 from backend.app.storage.ai_memory_repository import AiMemoryRepository
@@ -300,6 +301,34 @@ class GameServiceTests(unittest.TestCase):
             self.assertGreaterEqual(len(decisions), 4)
             self.assertIn("speech", {decision.decision_type for decision in decisions})
             self.assertTrue(all(decision.prompt_template_version for decision in decisions))
+
+    def test_ai_turn_usage_is_persisted_as_ai_decision_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            class UsageProvider(_DeterministicProvider):
+                def chat_completion(self, profile, messages):
+                    return LlmCompletionResult(
+                        content=super().chat_completion(profile, messages),
+                        prompt_tokens=90,
+                        completion_tokens=30,
+                        total_tokens=120,
+                        cached_tokens=45,
+                        cache_hit_rate=0.5,
+                    )
+
+            service = _service(tmpdir, ai_player=AiPlayer(provider=UsageProvider()))
+            state = service.create_game(seed=2)
+
+            service.submit_human_ai_action(state["id"])
+            decisions = AiDecisionRepository(service.connection).list_decisions(state["id"])
+            human_decision = next(
+                decision for decision in decisions if decision.player_id == "player_1"
+            )
+
+            self.assertEqual(human_decision.prompt_tokens, 90)
+            self.assertEqual(human_decision.completion_tokens, 30)
+            self.assertEqual(human_decision.total_tokens, 120)
+            self.assertEqual(human_decision.cached_tokens, 45)
+            self.assertEqual(human_decision.cache_hit_rate, 0.5)
 
     def test_ai_decision_private_event_includes_prompt_messages(self):
         with tempfile.TemporaryDirectory() as tmpdir:

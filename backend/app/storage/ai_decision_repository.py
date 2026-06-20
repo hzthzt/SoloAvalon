@@ -28,6 +28,11 @@ class AiDecisionInput:
     output_raw: str | None
     output_parsed: dict[str, Any] | None
     validation_status: str
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    cached_tokens: int | None = None
+    cache_hit_rate: float | None = None
 
 
 @dataclass(frozen=True)
@@ -52,6 +57,11 @@ class StoredAiDecision:
     output_raw: str | None
     output_parsed: dict[str, Any] | None
     validation_status: str
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    total_tokens: int | None
+    cached_tokens: int | None
+    cache_hit_rate: float | None
     created_at: str
 
 
@@ -68,9 +78,10 @@ class AiDecisionRepository:
                 strategy_summary, output, model_name, llm_profile_id,
                 prompt_template_name, prompt_template_version, context_builder_version,
                 stable_prefix_hash, cache_strategy, context_summary, context_truncated,
-                output_raw, output_parsed, validation_status, created_at
+                output_raw, output_parsed, validation_status, prompt_tokens,
+                completion_tokens, total_tokens, cached_tokens, cache_hit_rate, created_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 decision.game_id,
@@ -92,6 +103,11 @@ class AiDecisionRepository:
                 decision.output_raw,
                 _dump_json(decision.output_parsed) if decision.output_parsed is not None else None,
                 decision.validation_status,
+                decision.prompt_tokens,
+                decision.completion_tokens,
+                decision.total_tokens,
+                decision.cached_tokens,
+                decision.cache_hit_rate,
                 created_at,
             ),
         )
@@ -139,6 +155,11 @@ def _decision_from_row(row: sqlite3.Row) -> StoredAiDecision:
         output_raw=row["output_raw"],
         output_parsed=json.loads(output_parsed) if output_parsed is not None else None,
         validation_status=row["validation_status"],
+        prompt_tokens=row["prompt_tokens"],
+        completion_tokens=row["completion_tokens"],
+        total_tokens=row["total_tokens"],
+        cached_tokens=row["cached_tokens"],
+        cache_hit_rate=row["cache_hit_rate"],
         created_at=row["created_at"],
     )
 

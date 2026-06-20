@@ -24,6 +24,11 @@ def initialize_database(connection: sqlite3.Connection) -> None:
         connection.executescript(SCHEMA_SQL)
         _ensure_column(connection, "games", "enabled_options", "enabled_options text not null default '[]'")
         _ensure_column(connection, "players", "original_name", "original_name text")
+        _ensure_column(connection, "ai_decisions", "prompt_tokens", "prompt_tokens integer")
+        _ensure_column(connection, "ai_decisions", "completion_tokens", "completion_tokens integer")
+        _ensure_column(connection, "ai_decisions", "total_tokens", "total_tokens integer")
+        _ensure_column(connection, "ai_decisions", "cached_tokens", "cached_tokens integer")
+        _ensure_column(connection, "ai_decisions", "cache_hit_rate", "cache_hit_rate real")
         connection.execute("drop table if exists llm_profiles")
         connection.commit()
     finally:

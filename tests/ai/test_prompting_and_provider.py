@@ -7,7 +7,7 @@ from backend.app.ai.player import AiDecisionError, AiPlayer
 from backend.app.game.models import Faction, GameOption, GameState, MissionAction, MissionConfig, Phase, Player, Role, Vote
 from backend.app.game.rules import create_five_player_game, create_game, propose_team
 from backend.app.llm.profiles import LlmProfile
-from backend.app.llm.provider import LlmProvider
+from backend.app.llm.provider import LlmCompletionResult, LlmProvider
 from backend.app.prompting.config import load_prompt_template_config
 from backend.app.prompting.schemas import (
     lady_of_lake_decision_from_output,
@@ -541,6 +541,33 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertEqual(result.decision.public_message, "这轮我先看车队结构和后续票型。")
         self.assertEqual(result.decision.stance, "uncertain")
 
+    def test_ai_player_carries_completion_usage(self):
+        class UsageProvider:
+            def chat_completion(self, profile, messages):
+                return LlmCompletionResult(
+                    content=json.dumps(
+                        {
+                            "vote": "approve",
+                            "private_reason_summary": "usage test",
+                        }
+                    ),
+                    prompt_tokens=80,
+                    completion_tokens=20,
+                    total_tokens=100,
+                    cached_tokens=40,
+                    cache_hit_rate=0.5,
+                )
+
+        state = create_five_player_game(seed=21)
+        state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
+        result = AiPlayer(provider=UsageProvider()).vote(state, state.players[3].id, test_profile())
+
+        self.assertEqual(result.prompt_tokens, 80)
+        self.assertEqual(result.completion_tokens, 20)
+        self.assertEqual(result.total_tokens, 100)
+        self.assertEqual(result.cached_tokens, 40)
+        self.assertEqual(result.cache_hit_rate, 0.5)
+
     def test_ai_player_extracts_malformed_speech_json_without_private_summary_leak(self):
         class AlmostJsonProvider:
             def chat_completion(self, profile, messages):
@@ -605,16 +632,58 @@ class PromptingAndProviderTests(unittest.TestCase):
 
         provider = LlmProvider(transport=transport)
 
-        content = provider.chat_completion(
+        result = provider.chat_completion(
             test_profile(),
             messages=[{"role": "user", "content": "vote"}],
         )
 
-        self.assertEqual(json.loads(content), {"vote": "approve"})
+        self.assertEqual(json.loads(result.content), {"vote": "approve"})
         self.assertEqual(captured["url"], "https://api.example.com/v1/chat/completions")
         self.assertEqual(captured["headers"]["Authorization"], "Bearer test-api-key")
         self.assertEqual(captured["payload"]["model"], "model")
         self.assertNotIn("max_tokens", captured["payload"])
+
+    def test_llm_provider_returns_openai_usage_when_available(self):
+        def transport(url, headers, payload, timeout):
+            return {
+                "choices": [
+                    {"message": {"content": json.dumps({"vote": "approve"})}}
+                ],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 25,
+                    "total_tokens": 125,
+                    "prompt_tokens_details": {"cached_tokens": 40},
+                },
+            }
+
+        result = LlmProvider(transport=transport).chat_completion(
+            test_profile(),
+            messages=[{"role": "user", "content": "vote"}],
+        )
+
+        self.assertEqual(json.loads(result.content), {"vote": "approve"})
+        self.assertEqual(result.prompt_tokens, 100)
+        self.assertEqual(result.completion_tokens, 25)
+        self.assertEqual(result.total_tokens, 125)
+        self.assertEqual(result.cached_tokens, 40)
+        self.assertEqual(result.cache_hit_rate, 0.4)
+
+    def test_llm_provider_returns_empty_usage_when_provider_omits_usage(self):
+        def transport(url, headers, payload, timeout):
+            return {"choices": [{"message": {"content": "{}"}}]}
+
+        result = LlmProvider(transport=transport).chat_completion(
+            test_profile(),
+            messages=[{"role": "user", "content": "vote"}],
+        )
+
+        self.assertEqual(result.content, "{}")
+        self.assertIsNone(result.prompt_tokens)
+        self.assertIsNone(result.completion_tokens)
+        self.assertIsNone(result.total_tokens)
+        self.assertIsNone(result.cached_tokens)
+        self.assertIsNone(result.cache_hit_rate)
 
     def test_llm_provider_rejects_invalid_base_url_before_transport(self):
         calls = []
@@ -656,12 +725,12 @@ class PromptingAndProviderTests(unittest.TestCase):
         profile_kwargs = test_profile().__dict__ | {"timeout_retries": 5}
         provider = LlmProvider(transport=transport)
 
-        content = provider.chat_completion(
+        result = provider.chat_completion(
             LlmProfile(**profile_kwargs),
             messages=[{"role": "user", "content": "vote"}],
         )
 
-        self.assertEqual(json.loads(content), {"vote": "approve"})
+        self.assertEqual(json.loads(result.content), {"vote": "approve"})
         self.assertEqual(len(attempts), 3)
 
     def test_llm_provider_stops_after_configured_timeout_retries(self):
@@ -698,12 +767,12 @@ class PromptingAndProviderTests(unittest.TestCase):
         profile_kwargs = test_profile().__dict__ | {"timeout_retries": 5}
         provider = LlmProvider(transport=transport)
 
-        content = provider.chat_completion(
+        result = provider.chat_completion(
             LlmProfile(**profile_kwargs),
             messages=[{"role": "user", "content": "vote"}],
         )
 
-        self.assertEqual(json.loads(content), {"vote": "approve"})
+        self.assertEqual(json.loads(result.content), {"vote": "approve"})
         self.assertEqual(len(attempts), 3)
 
     def test_llm_provider_stops_after_configured_empty_content_retries(self):

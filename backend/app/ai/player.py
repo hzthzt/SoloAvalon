@@ -47,6 +47,11 @@ class AiTurnResult(Generic[DecisionT]):
     stable_prefix_hash: str
     context_summary: str
     context_truncated: bool
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    cached_tokens: int | None = None
+    cache_hit_rate: float | None = None
     prompt_messages: list[dict[str, str]] = field(default_factory=list)
 
 
@@ -66,6 +71,11 @@ class AiDecisionError(RuntimeError):
         context_summary: str,
         context_truncated: bool,
         prompt_messages: list[dict[str, str]],
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        total_tokens: int | None = None,
+        cached_tokens: int | None = None,
+        cache_hit_rate: float | None = None,
     ):
         super().__init__(error_message)
         self.error_type = error_type
@@ -82,6 +92,11 @@ class AiDecisionError(RuntimeError):
         self.context_summary = context_summary
         self.context_truncated = context_truncated
         self.prompt_messages = prompt_messages
+        self.prompt_tokens = prompt_tokens
+        self.completion_tokens = completion_tokens
+        self.total_tokens = total_tokens
+        self.cached_tokens = cached_tokens
+        self.cache_hit_rate = cache_hit_rate
 
 
 class AiPlayer:
@@ -211,11 +226,13 @@ class AiPlayer:
         messages = self._prompt_builder.build_messages(context, phase)
         last_output_raw: str | None = None
         last_output_parsed: dict[str, Any] | None = None
+        last_usage: dict[str, int | float | None] = _empty_usage()
 
         def raise_decision_error(
             exc: Exception,
             output_raw: str | None,
             output_parsed: dict[str, Any] | None,
+            usage: dict[str, int | float | None],
         ) -> None:
             error_message = str(exc) or type(exc).__name__
             raise AiDecisionError(
@@ -231,15 +248,23 @@ class AiPlayer:
                 context_summary=context.context_summary,
                 context_truncated=context.context_truncated,
                 prompt_messages=messages,
+                prompt_tokens=_usage_int(usage["prompt_tokens"]),
+                completion_tokens=_usage_int(usage["completion_tokens"]),
+                total_tokens=_usage_int(usage["total_tokens"]),
+                cached_tokens=_usage_int(usage["cached_tokens"]),
+                cache_hit_rate=_usage_float(usage["cache_hit_rate"]),
             ) from exc
 
         for retry_index in range(profile.timeout_retries + 1):
             output_raw: str | None = None
             output_parsed: dict[str, Any] | None = None
+            usage = _empty_usage()
             try:
-                output_raw = self._provider.chat_completion(profile, messages)
+                completion = self._provider.chat_completion(profile, messages)
+                output_raw = _completion_content(completion)
+                usage = _completion_usage(completion)
             except Exception as exc:
-                raise_decision_error(exc, output_raw, output_parsed)
+                raise_decision_error(exc, output_raw, output_parsed, usage)
 
             try:
                 decision, output_parsed = _parse_decision_output(
@@ -250,9 +275,10 @@ class AiPlayer:
             except Exception as exc:
                 last_output_raw = output_raw
                 last_output_parsed = output_parsed
+                last_usage = usage
                 if retry_index < profile.timeout_retries:
                     continue
-                raise_decision_error(exc, last_output_raw, last_output_parsed)
+                raise_decision_error(exc, last_output_raw, last_output_parsed, last_usage)
             else:
                 validation_status = "valid"
                 break
@@ -272,6 +298,11 @@ class AiPlayer:
             stable_prefix_hash=context.stable_prefix_hash,
             context_summary=context.context_summary,
             context_truncated=context.context_truncated,
+            prompt_tokens=_usage_int(usage["prompt_tokens"]),
+            completion_tokens=_usage_int(usage["completion_tokens"]),
+            total_tokens=_usage_int(usage["total_tokens"]),
+            cached_tokens=_usage_int(usage["cached_tokens"]),
+            cache_hit_rate=_usage_float(usage["cache_hit_rate"]),
             prompt_messages=messages,
         )
 
@@ -293,3 +324,38 @@ def _parse_decision_output(
         except Exception as text_exc:
             raise text_exc from json_exc
     return parse_decision(output_parsed), output_parsed
+
+
+def _completion_content(completion: Any) -> str:
+    content = getattr(completion, "content", completion)
+    if not isinstance(content, str):
+        raise TypeError("llm completion content must be a string")
+    return content
+
+
+def _completion_usage(completion: Any) -> dict[str, int | float | None]:
+    return {
+        "prompt_tokens": getattr(completion, "prompt_tokens", None),
+        "completion_tokens": getattr(completion, "completion_tokens", None),
+        "total_tokens": getattr(completion, "total_tokens", None),
+        "cached_tokens": getattr(completion, "cached_tokens", None),
+        "cache_hit_rate": getattr(completion, "cache_hit_rate", None),
+    }
+
+
+def _empty_usage() -> dict[str, int | float | None]:
+    return {
+        "prompt_tokens": None,
+        "completion_tokens": None,
+        "total_tokens": None,
+        "cached_tokens": None,
+        "cache_hit_rate": None,
+    }
+
+
+def _usage_int(value: int | float | None) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _usage_float(value: int | float | None) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None

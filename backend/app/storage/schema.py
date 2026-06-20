@@ -61,6 +61,11 @@ create table if not exists ai_decisions (
     output_raw text,
     output_parsed text,
     validation_status text not null,
+    prompt_tokens integer,
+    completion_tokens integer,
+    total_tokens integer,
+    cached_tokens integer,
+    cache_hit_rate real,
     created_at text not null,
     foreign key(game_id) references games(id) on delete cascade,
     foreign key(game_id, player_id) references players(game_id, id) on delete cascade

@@ -780,6 +780,11 @@ class GameService:
                 output_raw=error.output_raw,
                 output_parsed=error.output_parsed,
                 validation_status=error.validation_status,
+                prompt_tokens=error.prompt_tokens,
+                completion_tokens=error.completion_tokens,
+                total_tokens=error.total_tokens,
+                cached_tokens=error.cached_tokens,
+                cache_hit_rate=error.cache_hit_rate,
             )
         )
         self._events.append_event(
@@ -805,6 +810,11 @@ class GameService:
                 "stable_prefix_hash": error.stable_prefix_hash,
                 "context_summary": error.context_summary,
                 "context_truncated": error.context_truncated,
+                "prompt_tokens": error.prompt_tokens,
+                "completion_tokens": error.completion_tokens,
+                "total_tokens": error.total_tokens,
+                "cached_tokens": error.cached_tokens,
+                "cache_hit_rate": error.cache_hit_rate,
             },
         )
 
@@ -838,6 +848,11 @@ class GameService:
                 output_raw=result.output_raw,
                 output_parsed=result.output_parsed,
                 validation_status=result.validation_status,
+                prompt_tokens=result.prompt_tokens,
+                completion_tokens=result.completion_tokens,
+                total_tokens=result.total_tokens,
+                cached_tokens=result.cached_tokens,
+                cache_hit_rate=result.cache_hit_rate,
             )
         )
         self._ai_memory.save_snapshot(
@@ -870,6 +885,11 @@ class GameService:
                 "stable_prefix_hash": result.stable_prefix_hash,
                 "context_summary": result.context_summary,
                 "context_truncated": result.context_truncated,
+                "prompt_tokens": result.prompt_tokens,
+                "completion_tokens": result.completion_tokens,
+                "total_tokens": result.total_tokens,
+                "cached_tokens": result.cached_tokens,
+                "cache_hit_rate": result.cache_hit_rate,
             },
         )
 

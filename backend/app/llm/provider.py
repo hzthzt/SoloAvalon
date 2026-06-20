@@ -2,12 +2,23 @@ from __future__ import annotations
 
 import json
 import urllib.request
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from .profiles import LlmProfile, validate_base_url
 
 
 Transport = Callable[[str, dict[str, str], dict[str, Any], float], dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class LlmCompletionResult:
+    content: str
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    cached_tokens: int | None = None
+    cache_hit_rate: float | None = None
 
 
 class LlmProvider:
@@ -18,7 +29,7 @@ class LlmProvider:
         self,
         profile: LlmProfile,
         messages: list[dict[str, str]],
-    ) -> str:
+    ) -> LlmCompletionResult:
         payload = {
             "model": profile.model,
             "messages": messages,
@@ -45,7 +56,7 @@ class LlmProvider:
         for retry_index in range(profile.timeout_retries + 1):
             try:
                 response = self._transport(url, headers, payload, profile.timeout)
-                return _completion_content(response)
+                return _completion_result(response)
             except (TimeoutError, EmptyModelOutputError):
                 if retry_index >= profile.timeout_retries:
                     raise
@@ -56,7 +67,7 @@ class EmptyModelOutputError(ValueError):
     pass
 
 
-def _completion_content(response: dict[str, Any]) -> str:
+def _completion_result(response: dict[str, Any]) -> LlmCompletionResult:
     choices = response.get("choices")
     if not choices:
         raise ValueError("llm response did not include choices")
@@ -65,7 +76,33 @@ def _completion_content(response: dict[str, Any]) -> str:
         raise ValueError("llm response did not include message content")
     if not content.strip():
         raise EmptyModelOutputError("llm response did not include non-empty message content")
-    return content
+    usage = response.get("usage")
+    prompt_tokens = _int_or_none(usage.get("prompt_tokens")) if isinstance(usage, dict) else None
+    completion_tokens = (
+        _int_or_none(usage.get("completion_tokens")) if isinstance(usage, dict) else None
+    )
+    total_tokens = _int_or_none(usage.get("total_tokens")) if isinstance(usage, dict) else None
+    details = usage.get("prompt_tokens_details") if isinstance(usage, dict) else None
+    cached_tokens = (
+        _int_or_none(details.get("cached_tokens")) if isinstance(details, dict) else None
+    )
+    cache_hit_rate = (
+        cached_tokens / prompt_tokens
+        if cached_tokens is not None and prompt_tokens not in (None, 0)
+        else None
+    )
+    return LlmCompletionResult(
+        content=content,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+        cached_tokens=cached_tokens,
+        cache_hit_rate=cache_hit_rate,
+    )
+
+
+def _int_or_none(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _completion_url(base_url: str) -> str:
