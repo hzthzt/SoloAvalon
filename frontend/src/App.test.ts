@@ -20,6 +20,26 @@ test("event log renders expandable AI prompt details", () => {
   assert.equal(source.includes("<details"), true);
 });
 
+test("rooms replace logs and load room details", () => {
+  assert.equal(source.includes('type Tab = "game" | "profiles" | "rooms"'), true);
+  assert.equal(source.includes("房间"), true);
+  assert.equal(source.includes("getRoomDetail"), true);
+  assert.equal(apiSource.includes("RoomDetail"), true);
+});
+
+test("creating a game enters the new room without removing other rooms", () => {
+  assert.equal(source.includes("setSelectedRoomGameId(created.id)"), true);
+  assert.equal(source.includes("setTab(\"game\")"), true);
+  assert.equal(source.includes("setGames(gameList)"), true);
+});
+
+test("ended rooms show ai usage summaries and missing usage fallback", () => {
+  assert.equal(source.includes("AiUsageSummary"), true);
+  assert.equal(source.includes("usage_by_player"), true);
+  assert.equal(source.includes("usage_by_model"), true);
+  assert.equal(source.includes("暂无数据"), true);
+});
+
 test("start game requires a real model profile instead of fallback", () => {
   assert.equal(source.includes("Fallback"), false);
   assert.equal(source.includes("请选择模型"), true);

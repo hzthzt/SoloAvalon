@@ -65,6 +65,43 @@ export type GameSummary = {
   updated_at: string;
 };
 
+export type AiDecisionDetail = {
+  id: number;
+  game_id: string;
+  player_id: string;
+  phase: string;
+  decision_type: string;
+  output: Record<string, unknown>;
+  model_name: string;
+  llm_profile_id: string | null;
+  output_raw: string | null;
+  output_parsed: Record<string, unknown> | null;
+  validation_status: string;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  total_tokens: number | null;
+  cached_tokens: number | null;
+  cache_hit_rate: number | null;
+  created_at: string;
+};
+
+export type AiUsageSummary = {
+  decision_count: number;
+  total_tokens: number;
+  average_cache_hit_rate: number | null;
+  player_id?: string;
+  player_name?: string;
+  model_name?: string;
+};
+
+export type RoomDetail = {
+  game: GameState;
+  events: GameEvent[];
+  ai_decisions: AiDecisionDetail[];
+  usage_by_player: AiUsageSummary[];
+  usage_by_model: AiUsageSummary[];
+};
+
 export type LlmProfile = {
   id: string;
   name: string;
@@ -127,6 +164,10 @@ export async function submitHumanAiAction(gameId: string): Promise<GameState> {
 
 export async function listGames(): Promise<GameSummary[]> {
   return request("/api/games");
+}
+
+export async function getRoomDetail(gameId: string): Promise<RoomDetail> {
+  return request(`/api/games/${gameId}/room`);
 }
 
 export async function deleteGame(gameId: string): Promise<void> {

@@ -755,6 +755,49 @@ label {
   gap: 14px;
 }
 
+.usage-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.usage-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.usage-table {
+  border: 1px solid #d9e1ea;
+  border-radius: 8px;
+  overflow: auto;
+}
+
+.usage-table h3 {
+  color: #18212f;
+  font-size: 14px;
+  margin: 0;
+  padding: 10px;
+}
+
+.usage-table table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.usage-table th,
+.usage-table td {
+  border-top: 1px solid #d9e1ea;
+  color: #3c4654;
+  font-size: 13px;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.usage-table th {
+  color: #5e6b7a;
+  font-weight: 800;
+}
+
 .event-list {
   display: grid;
   gap: 10px;
@@ -824,6 +867,33 @@ label {
   display: grid;
   gap: 8px;
   margin-top: 8px;
+}
+
+.decision-metrics {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 8px 0;
+}
+
+.decision-metrics div {
+  background: #f3f6fa;
+  border-radius: 8px;
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+}
+
+.decision-metrics dt,
+.decision-metrics dd {
+  color: #5e6b7a;
+  font-size: 12px;
+  margin: 0;
+}
+
+.decision-metrics dd {
+  color: #18212f;
+  font-weight: 800;
 }
 
 .prompt-message {
@@ -908,7 +978,9 @@ label {
   .profile-form,
   .seat-grid,
   .round-grid,
-  .button-row {
+  .button-row,
+  .usage-grid,
+  .decision-metrics {
     grid-template-columns: 1fr;
   }
 }

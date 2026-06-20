@@ -23,9 +23,11 @@ import {
   deleteGame,
   deleteProfile,
   exportGame,
+  AiDecisionDetail,
   GameEvent,
   GameState,
   GameSummary,
+  getRoomDetail,
   getGame,
   listGameEvents,
   listGames,
@@ -33,6 +35,7 @@ import {
   LlmProfile,
   LlmProfileInput,
   PlayerView,
+  RoomDetail,
   submitAction,
   submitHumanAiAction,
   testProfile,
@@ -46,7 +49,7 @@ import {
 } from "./flowReview";
 import type { FlowReview, InformationFeedItem, ReviewRound, SummaryCard } from "./flowReview";
 
-type Tab = "game" | "profiles" | "logs";
+type Tab = "game" | "profiles" | "rooms";
 
 const playerCountOptions = [5, 6, 7, 8, 9, 10];
 
@@ -83,9 +86,10 @@ export function App() {
   const [profileForm, setProfileForm] = useState<LlmProfileInput>(emptyProfile);
   const [profileTestResults, setProfileTestResults] = useState<Record<string, string>>({});
   const [editingProfileId, setEditingProfileId] = useState("");
-  const [selectedLogGameId, setSelectedLogGameId] = useState("");
+  const [selectedRoomGameId, setSelectedRoomGameId] = useState("");
   const [selectedLogPlayerNames, setSelectedLogPlayerNames] = useState<Record<string, string>>({});
   const [eventLog, setEventLog] = useState<GameEvent[]>([]);
+  const [roomDetail, setRoomDetail] = useState<RoomDetail | null>(null);
   const [exportedLog, setExportedLog] = useState("");
   const [notice, setNotice] = useState("");
   const [manualRetryRepeat, setManualRetryRepeat] = useState<boolean | null>(null);
@@ -213,6 +217,7 @@ export function App() {
         created = await driveHumanWithAi(created, true);
       }
       setSelectedTeam([created.human_player_id]);
+      setSelectedRoomGameId(created.id);
       setSpeech("");
       setAssassinationTarget("");
       setLadyOfLakeTarget("");
@@ -351,10 +356,11 @@ export function App() {
         setGame(null);
         setActiveGameEvents([]);
       }
-      if (selectedLogGameId === gameId) {
-        setSelectedLogGameId("");
+      if (selectedRoomGameId === gameId) {
+        setSelectedRoomGameId("");
         setSelectedLogPlayerNames({});
         setEventLog([]);
+        setRoomDetail(null);
         setExportedLog("");
       }
       await refreshLists();
@@ -364,19 +370,20 @@ export function App() {
   async function showExport(gameId: string) {
     await run(async () => {
       const payload = await exportGame(gameId, true);
-      setSelectedLogGameId(gameId);
+      setSelectedRoomGameId(gameId);
       setExportedLog(JSON.stringify(payload, null, 2));
     });
   }
 
   async function showEvents(gameId: string) {
     await run(async () => {
-      const [events, logGame] = await Promise.all([listGameEvents(gameId, true), getGame(gameId)]);
-      setSelectedLogGameId(gameId);
+      const detail = await getRoomDetail(gameId);
+      setSelectedRoomGameId(gameId);
       setSelectedLogPlayerNames(
-        Object.fromEntries(logGame.players.map((player) => [player.id, player.name]))
+        Object.fromEntries(detail.game.players.map((player) => [player.id, player.name]))
       );
-      setEventLog(events);
+      setEventLog(detail.events);
+      setRoomDetail(detail);
     });
   }
 
@@ -413,8 +420,8 @@ export function App() {
           >
             <Settings size={18} /> 模型
           </button>
-          <button className={tab === "logs" ? "active" : ""} onClick={() => setTab("logs")}>
-            <History size={18} /> 日志
+          <button className={tab === "rooms" ? "active" : ""} onClick={() => setTab("rooms")}>
+            <History size={18} /> 房间
           </button>
         </nav>
       </header>
@@ -825,7 +832,7 @@ export function App() {
         </section>
       )}
 
-      {tab === "logs" && (
+      {tab === "rooms" && (
         <section className="two-column">
           <section className="list-panel">
             {games.map((summary) => (
@@ -833,12 +840,12 @@ export function App() {
                 <div>
                   <h3>{summary.id}</h3>
                   <p>
-                    {phaseLabel(summary.current_phase)} · {summary.status}
+                    {phaseLabel(summary.current_phase)} · {roomStatusLabel(summary.status)}
                   </p>
-                  <span>{summary.winner ? `winner: ${summary.winner}` : "active log"}</span>
+                  <span>{summary.winner ? `胜方：${winnerLabel(summary.winner)}` : "可进入游玩"}</span>
                 </div>
                 <div className="item-actions">
-                  <button onClick={() => showEvents(summary.id)} title="复盘">
+                  <button onClick={() => showEvents(summary.id)} title="进入房间">
                     <History size={17} />
                   </button>
                   <button onClick={() => showExport(summary.id)} title="导出">
@@ -852,12 +859,13 @@ export function App() {
             ))}
           </section>
           <section className="log-detail-stack">
-            <ReplayDetail review={selectedLogReview} selectedGameId={selectedLogGameId} />
+            <ReplayDetail review={selectedLogReview} selectedGameId={selectedRoomGameId} />
+            {roomDetail?.game.status === "complete" && <AiUsageSummary detail={roomDetail} />}
             <section className="panel event-panel">
               <div className="section-title">
                 <History size={18} />
                 <h2>事件流</h2>
-                {selectedLogGameId && <span className="subtle-id">{selectedLogGameId}</span>}
+                {selectedRoomGameId && <span className="subtle-id">{selectedRoomGameId}</span>}
               </div>
               <div className="event-list">
                 {eventLog.length === 0 && <div className="empty-state">暂无事件</div>}
@@ -869,7 +877,16 @@ export function App() {
                       <time>{formatDateTime(event.created_at)}</time>
                     </div>
                     <pre>{JSON.stringify(eventPayloadForLog(event), null, 2)}</pre>
-                    <AiPromptDetails event={event} />
+                    <AiPromptDetails
+                      event={event}
+                      decision={roomDetail?.ai_decisions.find(
+                        (decision) =>
+                          decision.player_id === event.public_payload.player_id &&
+                          decision.phase === event.public_payload.phase &&
+                          decision.decision_type === event.public_payload.decision_type
+                      )}
+                      showPrivate={roomDetail?.game.status === "complete"}
+                    />
                   </article>
                 ))}
               </div>
@@ -1196,14 +1213,139 @@ function ReplayDetail({
   );
 }
 
-function AiPromptDetails({ event }: { event: GameEvent }) {
+function AiUsageSummary({ detail }: { detail: RoomDetail }) {
+  return (
+    <section className="panel usage-panel">
+      <div className="section-title">
+        <Bot size={18} />
+        <h2>AI 用量统计</h2>
+      </div>
+      <div className="usage-grid">
+        <UsageTable
+          title="按玩家"
+          rows={detail.usage_by_player.map((row) => ({
+            key: row.player_id ?? row.player_name ?? "unknown-player",
+            name: row.player_name ?? row.player_id ?? "未知玩家",
+            totalTokens: row.total_tokens,
+            averageCacheHitRate: row.average_cache_hit_rate,
+            decisionCount: row.decision_count
+          }))}
+        />
+        <UsageTable
+          title="按模型"
+          rows={detail.usage_by_model.map((row) => ({
+            key: row.model_name ?? "unknown-model",
+            name: row.model_name ?? "未知模型",
+            totalTokens: row.total_tokens,
+            averageCacheHitRate: row.average_cache_hit_rate,
+            decisionCount: row.decision_count
+          }))}
+        />
+      </div>
+    </section>
+  );
+}
+
+function UsageTable({
+  title,
+  rows
+}: {
+  title: string;
+  rows: Array<{
+    key: string;
+    name: string;
+    totalTokens: number;
+    averageCacheHitRate: number | null;
+    decisionCount: number;
+  }>;
+}) {
+  return (
+    <section className="usage-table">
+      <h3>{title}</h3>
+      {rows.length === 0 && <div className="empty-state">暂无数据</div>}
+      {rows.length > 0 && (
+        <table>
+          <thead>
+            <tr>
+              <th>对象</th>
+              <th>决策</th>
+              <th>总 token</th>
+              <th>平均缓存命中</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.key}>
+                <td>{row.name}</td>
+                <td>{row.decisionCount}</td>
+                <td>{row.totalTokens || "暂无数据"}</td>
+                <td>{formatPercent(row.averageCacheHitRate)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+function AiPromptDetails({
+  event,
+  decision,
+  showPrivate
+}: {
+  event: GameEvent;
+  decision?: AiDecisionDetail;
+  showPrivate: boolean;
+}) {
+  if (!showPrivate || event.event_type !== "ai_decision") {
+    return null;
+  }
   const messages = promptMessagesForLog(event);
-  if (messages.length === 0) {
+  if (messages.length === 0 && !decision) {
     return null;
   }
   return (
     <details className="prompt-details">
-      <summary>展开 AI 提示词</summary>
+      <summary>展开 AI 决策详情</summary>
+      <dl className="decision-metrics">
+        <div>
+          <dt>模型</dt>
+          <dd>{decision?.model_name ?? "暂无数据"}</dd>
+        </div>
+        <div>
+          <dt>Prompt tokens</dt>
+          <dd>{formatNumber(decision?.prompt_tokens)}</dd>
+        </div>
+        <div>
+          <dt>Completion tokens</dt>
+          <dd>{formatNumber(decision?.completion_tokens)}</dd>
+        </div>
+        <div>
+          <dt>Total tokens</dt>
+          <dd>{formatNumber(decision?.total_tokens)}</dd>
+        </div>
+        <div>
+          <dt>Cached tokens</dt>
+          <dd>{formatNumber(decision?.cached_tokens)}</dd>
+        </div>
+        <div>
+          <dt>缓存命中率</dt>
+          <dd>{formatPercent(decision?.cache_hit_rate ?? null)}</dd>
+        </div>
+      </dl>
+      {decision?.output_raw && (
+        <section className="prompt-message">
+          <strong>AI 回答</strong>
+          <pre>{decision.output_raw}</pre>
+        </section>
+      )}
+      {decision?.output_parsed && (
+        <section className="prompt-message">
+          <strong>解析结果</strong>
+          <pre>{JSON.stringify(decision.output_parsed, null, 2)}</pre>
+        </section>
+      )}
       <div className="prompt-message-list">
         {messages.map((message, index) => (
           <section className="prompt-message" key={`${message.role}-${index}`}>
@@ -1357,6 +1499,15 @@ function winnerLabel(winner: string | null) {
   return winner ? labels[winner] ?? `${winner} 胜利` : "胜负未定";
 }
 
+function roomStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    active: "正在游玩中",
+    complete: "已结束",
+    error_paused: "出现错误暂停"
+  };
+  return labels[status] ?? status;
+}
+
 function roleLabel(role: string) {
   const labels: Record<string, string> = {
     merlin: "梅林",
@@ -1446,4 +1597,12 @@ function missionActionLabel(action: string) {
 
 function formatDateTime(value: string) {
   return new Date(value).toLocaleString();
+}
+
+function formatNumber(value: number | null | undefined) {
+  return typeof value === "number" ? String(value) : "暂无数据";
+}
+
+function formatPercent(value: number | null | undefined) {
+  return typeof value === "number" ? `${Math.round(value * 1000) / 10}%` : "暂无数据";
 }
