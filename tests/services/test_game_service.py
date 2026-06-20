@@ -82,13 +82,15 @@ class GameServiceTests(unittest.TestCase):
                 },
             )
 
-    def test_create_game_uses_timestamp_id(self):
+    def test_create_game_uses_room_sequence_id(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             service = _service(tmpdir)
 
-            state = service.create_game(seed=2)
+            first = service.create_game(seed=2)
+            second = service.create_game(seed=3)
 
-            self.assertRegex(state["id"], r"^\d{8}_\d{6}_\d{6}$")
+            self.assertEqual(first["id"], "游戏#1")
+            self.assertEqual(second["id"], "游戏#2")
 
     def test_create_game_returns_anonymous_names_and_keeps_original_names_out_of_prompt(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -351,6 +353,24 @@ class GameServiceTests(unittest.TestCase):
             self.assertIn("provider offline", ai_events[0].private_payload["error_message"])
             self.assertGreater(len(ai_events[0].private_payload["prompt_messages"]), 0)
             self.assertNotIn("team_proposed", {event.event_type for event in service.list_events(state["id"])})
+            self.assertEqual(service.list_games()[0].status, "error_paused")
+
+    def test_ai_retry_after_failure_restores_active_status(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            class FailingProvider:
+                def chat_completion(self, profile, messages):
+                    raise RuntimeError("provider offline")
+
+            service = _service(tmpdir, ai_player=AiPlayer(provider=FailingProvider()))
+            state = service.create_game(seed=2)
+            with self.assertRaises(AiDecisionError):
+                service.submit_human_ai_action(state["id"])
+
+            service._ai_player = AiPlayer(provider=_DeterministicProvider())
+            updated = service.submit_human_ai_action(state["id"])
+
+            self.assertEqual(updated["status"], "active")
+            self.assertEqual(service.list_games()[0].status, "active")
 
     def test_ai_turns_are_persisted_as_private_memory_snapshots(self):
         with tempfile.TemporaryDirectory() as tmpdir:

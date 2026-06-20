@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import asdict, is_dataclass, replace
-from datetime import datetime
 from enum import Enum
 from typing import Any, Callable
 
@@ -77,7 +76,7 @@ class GameService:
         default_llm_profile_id: str | None = None,
         ai_profile_overrides: dict[str, str | None] | None = None,
     ) -> dict[str, Any]:
-        game_id = _timestamp_game_id()
+        game_id = self._games.next_room_game_id()
         state = create_rules_game(
             player_count=player_count,
             seed=seed,
@@ -744,6 +743,7 @@ class GameService:
             return call()
         except AiDecisionError as exc:
             self._log_ai_error(game_id, player_id, phase, decision_type, profile, exc)
+            self._games.update_game_status(game_id, "error_paused")
             raise
 
     def _log_ai_error(
@@ -957,11 +957,6 @@ def _apply_ai_configuration(
         )
         ai_index += 1
     return replace(state, players=tuple(players))
-
-
-def _timestamp_game_id() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-
 
 def _human_player(state: GameState) -> Player:
     return next(player for player in state.players if player.is_human)

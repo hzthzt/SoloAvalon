@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -119,6 +120,15 @@ class GameRepository:
         ).fetchall()
         return [_game_summary_from_row(row) for row in rows]
 
+    def next_room_game_id(self) -> str:
+        rows = self._connection.execute("select id from games").fetchall()
+        numbers = []
+        for row in rows:
+            match = re.fullmatch(r"游戏#(\d+)", row["id"])
+            if match:
+                numbers.append(int(match.group(1)))
+        return f"游戏#{max(numbers, default=0) + 1}"
+
     def list_players(self, game_id: str) -> list[StoredPlayer]:
         rows = self._connection.execute(
             "select * from players where game_id = ? order by seat_index",
@@ -163,6 +173,20 @@ class GameRepository:
                 _utc_now(),
                 game_id,
             ),
+        )
+        self._connection.commit()
+        if cursor.rowcount == 0:
+            raise ValueError(f"unknown game id: {game_id}")
+
+    def update_game_status(self, game_id: str, status: str) -> None:
+        cursor = self._connection.execute(
+            """
+            update games
+            set status = ?,
+                updated_at = ?
+            where id = ?
+            """,
+            (status, _utc_now(), game_id),
         )
         self._connection.commit()
         if cursor.rowcount == 0:

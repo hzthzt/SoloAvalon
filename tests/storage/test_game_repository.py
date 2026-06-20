@@ -74,6 +74,22 @@ class GameRepositoryTests(unittest.TestCase):
             finally:
                 connection.close()
 
+    def test_next_room_game_id_ignores_legacy_ids(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
+            try:
+                initialize_database(connection)
+                repository = GameRepository(connection)
+                state = create_five_player_game(seed=1)
+
+                repository.save_new_game(state, game_id="20260620_120000_000001")
+                repository.save_new_game(state, game_id="游戏#1")
+                repository.save_new_game(state, game_id="游戏#7")
+
+                self.assertEqual(repository.next_room_game_id(), "游戏#8")
+            finally:
+                connection.close()
+
     def test_delete_game_removes_players_by_cascade(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
