@@ -240,7 +240,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     let message = `${response.status} ${response.statusText}`;
     try {
       const error = await response.json();
-      message = error.detail ?? message;
+      message = formatErrorDetail(error.detail ?? error, message);
     } catch {
       // Keep the HTTP status message.
     }
@@ -254,6 +254,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 function gamePath(gameId: string) {
   return `/api/games/${encodeURIComponent(gameId)}`;
+}
+
+function formatErrorDetail(detail: unknown, fallback: string) {
+  if (typeof detail === "string") {
+    return detail;
+  }
+  if (!detail || typeof detail !== "object") {
+    return fallback;
+  }
+  const record = detail as Record<string, unknown>;
+  const lines = [typeof record.message === "string" ? record.message : fallback];
+  if (typeof record.error_type === "string") {
+    lines.push(`错误类型：${record.error_type}`);
+  }
+  if (typeof record.traceback === "string" && record.traceback.trim()) {
+    lines.push("堆栈：", record.traceback);
+  }
+  return lines.join("\n");
 }
 
 export class ApiError extends Error {

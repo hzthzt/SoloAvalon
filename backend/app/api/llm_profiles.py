@@ -4,6 +4,7 @@ from typing import Any
 
 from backend.app.llm.provider import LlmProvider
 from backend.app.storage.llm_profile_repository import LlmProfileRepository
+from .errors import error_detail
 from .models import LlmProfileRequest
 
 try:
@@ -63,12 +64,15 @@ class LlmProfilesApi:
         try:
             content = self._provider.chat_completion(profile, messages)
         except Exception as exc:
+            detail = error_detail(exc)
             return {
                 "status": "failed",
                 "profile_id": profile.id,
                 "model": profile.model,
                 "base_url": profile.base_url,
-                "error": _mask_secret(str(exc), profile.api_key),
+                "error": _mask_secret(detail["message"], profile.api_key),
+                "error_type": detail["error_type"],
+                "traceback": _mask_secret(detail["traceback"], profile.api_key),
             }
         return {
             "status": "ok",
@@ -113,7 +117,11 @@ def _call(handler):
     except ValueError as exc:
         if HTTPException is None:
             raise
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=error_detail(exc)) from exc
+    except Exception as exc:
+        if HTTPException is None:
+            raise
+        raise HTTPException(status_code=500, detail=error_detail(exc)) from exc
 
 
 def _mask_secret(message: str, secret: str) -> str:

@@ -1,4 +1,5 @@
 import json
+import urllib.error
 import unittest
 from dataclasses import fields
 
@@ -708,6 +709,26 @@ class PromptingAndProviderTests(unittest.TestCase):
             LlmProvider(transport=transport).chat_completion(profile, messages=[])
 
         self.assertEqual(calls, [])
+
+    def test_llm_provider_describes_urlopen_file_errors_as_local_ssl_or_proxy_path_issues(self):
+        def transport(url, headers, payload, timeout):
+            raise urllib.error.URLError(FileNotFoundError(2, "No such file or directory"))
+
+        with self.assertRaisesRegex(ConnectionError, "local SSL certificate or proxy path"):
+            LlmProvider(transport=transport).chat_completion(
+                test_profile(),
+                messages=[{"role": "user", "content": "vote"}],
+            )
+
+    def test_llm_provider_describes_http_errors_with_status_code(self):
+        def transport(url, headers, payload, timeout):
+            raise urllib.error.HTTPError(url, 401, "Unauthorized", hdrs=None, fp=None)
+
+        with self.assertRaisesRegex(ConnectionError, "llm endpoint returned HTTP 401"):
+            LlmProvider(transport=transport).chat_completion(
+                test_profile(),
+                messages=[{"role": "user", "content": "vote"}],
+            )
 
     def test_llm_provider_retries_timeout_errors_until_success(self):
         attempts = []

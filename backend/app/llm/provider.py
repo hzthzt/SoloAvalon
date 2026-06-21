@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -57,6 +58,10 @@ class LlmProvider:
             try:
                 response = self._transport(url, headers, payload, profile.timeout)
                 return _completion_result(response)
+            except urllib.error.HTTPError as exc:
+                raise ConnectionError(_http_error_message(url, exc)) from exc
+            except urllib.error.URLError as exc:
+                raise ConnectionError(_connection_error_message(url, exc)) from exc
             except (TimeoutError, EmptyModelOutputError):
                 if retry_index >= profile.timeout_retries:
                     raise
@@ -111,6 +116,21 @@ def _completion_url(base_url: str) -> str:
     if trimmed.endswith("/chat/completions"):
         return trimmed
     return f"{trimmed}/chat/completions"
+
+
+def _connection_error_message(url: str, exc: urllib.error.URLError) -> str:
+    reason = getattr(exc, "reason", exc)
+    if isinstance(reason, FileNotFoundError):
+        return (
+            f"cannot reach llm endpoint {url}: local SSL certificate or proxy path "
+            f"is missing ({reason}). Check SSL_CERT_FILE, SSL_CERT_DIR, "
+            "HTTP_PROXY/HTTPS_PROXY, and the Python interpreter used to start the backend."
+        )
+    return f"cannot reach llm endpoint {url}: {reason}"
+
+
+def _http_error_message(url: str, exc: urllib.error.HTTPError) -> str:
+    return f"llm endpoint returned HTTP {exc.code} for {url}: {exc.reason}"
 
 
 def _urllib_transport(

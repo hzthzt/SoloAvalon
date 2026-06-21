@@ -142,6 +142,11 @@ test("ai decision gateway errors offer manual retry", () => {
   assert.equal(source.includes("手动重试"), true);
 });
 
+test("api errors include structured backend error details and tracebacks", () => {
+  assert.equal(apiSource.includes("formatErrorDetail"), true);
+  assert.equal(apiSource.includes("error_type"), true);
+  assert.equal(apiSource.includes("traceback"), true);
+});
 
 test("model edit form does not display plain api key from saved profile", () => {
   assert.equal(source.includes("api_key: profile.api_key"), false);

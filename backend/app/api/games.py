@@ -9,6 +9,7 @@ from backend.app.services.event_visibility import (
     public_event_dicts,
 )
 from backend.app.services.game_service import GameService
+from .errors import error_detail
 from .models import CreateGameRequest, HumanActionRequest
 
 try:
@@ -125,14 +126,19 @@ def _call(handler):
     except AiDecisionError as exc:
         if HTTPException is None:
             raise
+        message = f"AI 决策失败：{exc.error_message}"
         raise HTTPException(
             status_code=_ai_decision_status_code(exc),
-            detail=f"AI 决策失败：{exc.error_message}",
+            detail=error_detail(exc, message),
         ) from exc
     except ValueError as exc:
         if HTTPException is None:
             raise
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=error_detail(exc)) from exc
+    except Exception as exc:
+        if HTTPException is None:
+            raise
+        raise HTTPException(status_code=500, detail=error_detail(exc)) from exc
 
 
 def _ai_decision_status_code(error: AiDecisionError) -> int:

@@ -84,7 +84,43 @@ class GamesApiTests(unittest.TestCase):
             games_module.HTTPException = original_http_exception
 
         self.assertEqual(captured.exception.status_code, 504)
-        self.assertEqual(captured.exception.detail, "AI 决策失败：The read operation timed out")
+        self.assertEqual(captured.exception.detail["message"], "AI 决策失败：The read operation timed out")
+        self.assertIn("AiDecisionError", captured.exception.detail["traceback"])
+        self.assertIn("The read operation timed out", captured.exception.detail["traceback"])
+
+    def test_route_wrapper_reports_value_errors_with_traceback(self):
+        def fail_with_value_error():
+            raise ValueError("bad payload")
+
+        original_http_exception = games_module.HTTPException
+        games_module.HTTPException = _FakeHTTPException
+        try:
+            with self.assertRaises(_FakeHTTPException) as captured:
+                games_module._call(fail_with_value_error)
+        finally:
+            games_module.HTTPException = original_http_exception
+
+        self.assertEqual(captured.exception.status_code, 400)
+        self.assertEqual(captured.exception.detail["message"], "bad payload")
+        self.assertEqual(captured.exception.detail["error_type"], "ValueError")
+        self.assertIn("ValueError: bad payload", captured.exception.detail["traceback"])
+
+    def test_route_wrapper_reports_unexpected_errors_with_traceback(self):
+        def fail_with_unexpected_error():
+            raise RuntimeError("database unavailable")
+
+        original_http_exception = games_module.HTTPException
+        games_module.HTTPException = _FakeHTTPException
+        try:
+            with self.assertRaises(_FakeHTTPException) as captured:
+                games_module._call(fail_with_unexpected_error)
+        finally:
+            games_module.HTTPException = original_http_exception
+
+        self.assertEqual(captured.exception.status_code, 500)
+        self.assertEqual(captured.exception.detail["message"], "database unavailable")
+        self.assertEqual(captured.exception.detail["error_type"], "RuntimeError")
+        self.assertIn("RuntimeError: database unavailable", captured.exception.detail["traceback"])
 
     def test_list_events_hides_private_payload_by_default(self):
         with tempfile.TemporaryDirectory() as tmpdir:

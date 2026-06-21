@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import backend.app.api.llm_profiles as llm_profiles_module
 from backend.app.api.llm_profiles import LlmProfilesApi
 from backend.app.storage.database import connect_sqlite, initialize_database
 from backend.app.storage.llm_profile_repository import LlmProfileRepository
@@ -120,9 +121,50 @@ class LlmProfilesApiTests(unittest.TestCase):
             finally:
                 connection.close()
 
+    def test_route_wrapper_reports_profile_errors_with_traceback(self):
+        def fail_with_value_error():
+            raise ValueError("unknown llm profile id: missing")
+
+        original_http_exception = llm_profiles_module.HTTPException
+        llm_profiles_module.HTTPException = _FakeHTTPException
+        try:
+            with self.assertRaises(_FakeHTTPException) as captured:
+                llm_profiles_module._call(fail_with_value_error)
+        finally:
+            llm_profiles_module.HTTPException = original_http_exception
+
+        self.assertEqual(captured.exception.status_code, 400)
+        self.assertEqual(captured.exception.detail["message"], "unknown llm profile id: missing")
+        self.assertEqual(captured.exception.detail["error_type"], "ValueError")
+        self.assertIn("ValueError: unknown llm profile id: missing", captured.exception.detail["traceback"])
+
+    def test_route_wrapper_reports_unexpected_profile_errors_with_traceback(self):
+        def fail_with_runtime_error():
+            raise RuntimeError("profile store unavailable")
+
+        original_http_exception = llm_profiles_module.HTTPException
+        llm_profiles_module.HTTPException = _FakeHTTPException
+        try:
+            with self.assertRaises(_FakeHTTPException) as captured:
+                llm_profiles_module._call(fail_with_runtime_error)
+        finally:
+            llm_profiles_module.HTTPException = original_http_exception
+
+        self.assertEqual(captured.exception.status_code, 500)
+        self.assertEqual(captured.exception.detail["message"], "profile store unavailable")
+        self.assertEqual(captured.exception.detail["error_type"], "RuntimeError")
+        self.assertIn("RuntimeError: profile store unavailable", captured.exception.detail["traceback"])
+
 
 def _api(tmpdir, provider=None):
     connection = connect_sqlite(":memory:")
     initialize_database(connection)
     config_path = Path(tmpdir) / "config" / "llm_profiles.json"
     return LlmProfilesApi(LlmProfileRepository(connection, config_path=config_path), provider=provider)
+
+
+class _FakeHTTPException(Exception):
+    def __init__(self, status_code, detail):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
