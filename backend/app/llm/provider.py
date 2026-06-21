@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -120,13 +122,43 @@ def _completion_url(base_url: str) -> str:
 
 def _connection_error_message(url: str, exc: urllib.error.URLError) -> str:
     reason = getattr(exc, "reason", exc)
+    diagnostics = _connection_diagnostics(reason)
     if isinstance(reason, FileNotFoundError):
         return (
             f"cannot reach llm endpoint {url}: local SSL certificate or proxy path "
             f"is missing ({reason}). Check SSL_CERT_FILE, SSL_CERT_DIR, "
-            "HTTP_PROXY/HTTPS_PROXY, and the Python interpreter used to start the backend."
+            "HTTP_PROXY/HTTPS_PROXY, and the Python interpreter used to start the backend. "
+            f"{diagnostics}"
         )
-    return f"cannot reach llm endpoint {url}: {reason}"
+    return f"cannot reach llm endpoint {url}: {reason}. {diagnostics}"
+
+
+def _connection_diagnostics(reason: object) -> str:
+    return (
+        "diagnostics: "
+        f"error_type={type(reason).__name__}; "
+        f"python_executable={sys.executable}; "
+        f"proxies={json.dumps(_masked_proxies(), ensure_ascii=False, sort_keys=True)}"
+    )
+
+
+def _masked_proxies() -> dict[str, str]:
+    return {
+        scheme: _mask_proxy_url(proxy_url)
+        for scheme, proxy_url in urllib.request.getproxies().items()
+    }
+
+
+def _mask_proxy_url(proxy_url: str) -> str:
+    parsed = urllib.parse.urlsplit(proxy_url)
+    if not parsed.username and not parsed.password:
+        return proxy_url
+    hostname = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port is not None else ""
+    masked_netloc = f"***@{hostname}{port}"
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, masked_netloc, parsed.path, parsed.query, parsed.fragment)
+    )
 
 
 def _http_error_message(url: str, exc: urllib.error.HTTPError) -> str:

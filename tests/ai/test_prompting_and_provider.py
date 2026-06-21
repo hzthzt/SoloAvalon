@@ -764,6 +764,22 @@ class PromptingAndProviderTests(unittest.TestCase):
                 messages=[{"role": "user", "content": "vote"}],
             )
 
+    def test_llm_provider_includes_runtime_diagnostics_for_connection_errors(self):
+        def transport(url, headers, payload, timeout):
+            raise urllib.error.URLError(ConnectionRefusedError(10061, "connection refused"))
+
+        with self.assertRaises(ConnectionError) as context:
+            LlmProvider(transport=transport).chat_completion(
+                test_profile(),
+                messages=[{"role": "user", "content": "vote"}],
+            )
+
+        message = str(context.exception)
+        self.assertIn("error_type=ConnectionRefusedError", message)
+        self.assertIn("python_executable=", message)
+        self.assertIn("proxies=", message)
+        self.assertNotIn("test-api-key", message)
+
     def test_llm_provider_describes_http_errors_with_status_code(self):
         def transport(url, headers, payload, timeout):
             raise urllib.error.HTTPError(url, 401, "Unauthorized", hdrs=None, fp=None)
