@@ -356,7 +356,7 @@ class GameServiceTests(unittest.TestCase):
             )
             prompt_text = "\n".join(message["content"] for message in prompt_messages)
             self.assertIn("【本局配置】", prompt_text)
-            self.assertIn("【公开记录】", prompt_text)
+            self.assertIn("【活动日志】", prompt_text)
             self.assertIn("【本次行动】", prompt_text)
             self.assertNotIn("SoloAvalon", prompt_text)
             self.assertNotIn("隐藏真相", prompt_text)
@@ -434,7 +434,7 @@ class GameServiceTests(unittest.TestCase):
             class NoMissionPromptProvider(_DeterministicProvider):
                 def chat_completion(self, profile, messages):
                     text = "\n".join(message["content"] for message in messages)
-                    if '"mission_action"' in text:
+                    if "请求你执行 mission_action" in _current_action_text(text):
                         raise RuntimeError("good mission action should not call provider")
                     return super().chat_completion(profile, messages)
 
@@ -663,17 +663,18 @@ def _complete_successful_quest(state):
 class _DeterministicProvider:
     def chat_completion(self, profile, messages):
         text = "\n".join(message["content"] for message in messages)
-        if '"team"' in text:
-            team_size = _team_size(text)
+        action_text = _current_action_text(text)
+        if "请求你执行 propose_team" in action_text:
+            team_size = _team_size(action_text)
             return json.dumps(
                 {
-                    "team": _player_ids(text)[:team_size],
+                    "team": _player_ids(action_text)[:team_size],
                     "private_reason_summary": "测试模型选择合法车队。",
                     "public_message": "我先给一个方便观察票型的车队。",
                 },
                 ensure_ascii=False,
             )
-        if "现在轮到你发言" in text:
+        if "请求你执行 speak" in action_text:
             return json.dumps(
                 {
                     "public_message": "我先围绕当前车队观察大家的表态，投票分布会很有价值。",
@@ -681,7 +682,7 @@ class _DeterministicProvider:
                 },
                 ensure_ascii=False,
             )
-        if "现在轮到你投票" in text:
+        if "请求你执行 vote" in action_text:
             return json.dumps(
                 {
                     "vote": "approve",
@@ -689,7 +690,7 @@ class _DeterministicProvider:
                 },
                 ensure_ascii=False,
             )
-        if '"mission_action"' in text:
+        if "请求你执行 mission_action" in action_text:
             return json.dumps(
                 {
                     "mission_action": "success",
@@ -697,9 +698,9 @@ class _DeterministicProvider:
                 },
                 ensure_ascii=False,
             )
-        if '"target_player_id"' in text:
+        if "请求你执行 assassinate" in action_text or "请求你执行 use_lady_of_lake" in action_text:
             viewer = _viewer_id(text)
-            candidates = [player_id for player_id in _player_ids(text) if player_id != viewer]
+            candidates = [player_id for player_id in _player_ids(action_text) if player_id != viewer]
             return json.dumps(
                 {
                     "target_player_id": candidates[0],
@@ -709,6 +710,10 @@ class _DeterministicProvider:
                 ensure_ascii=False,
             )
         raise RuntimeError("unhandled test prompt")
+
+
+def _current_action_text(text):
+    return text.split("【本次行动】", 1)[-1]
 
 
 def _team_size(text):

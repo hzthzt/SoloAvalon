@@ -251,7 +251,7 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertIn("【你的视角】", prompt_text)
         self.assertIn("角色基础玩法", prompt_text)
         self.assertIn("你的额外信息", prompt_text)
-        self.assertIn("【公开记录】", prompt_text)
+        self.assertIn("【活动日志】", prompt_text)
         self.assertIn("【本次行动】", prompt_text)
         self.assertIn("只返回 JSON", prompt_text)
         self.assertNotIn("当前局面", prompt_text)
@@ -265,7 +265,7 @@ class PromptingAndProviderTests(unittest.TestCase):
         ):
             self.assertNotIn(schema_key, prompt_text)
 
-    def test_prompt_builder_includes_lady_of_lake_action_contract(self):
+    def test_prompt_builder_adds_lady_of_lake_action_contract_only_when_requested(self):
         base_state = create_game(
             player_count=8,
             seed=8,
@@ -284,9 +284,12 @@ class PromptingAndProviderTests(unittest.TestCase):
         context = ContextBuilder().build(state, "player_8", Phase.LADY_OF_LAKE)
         messages = PromptBuilder().build_messages(context, Phase.LADY_OF_LAKE)
         prompt_text = "\n".join(message["content"] for message in messages)
+        stable_text = "\n".join(message["content"] for message in messages[:-1])
 
         self.assertIn("现在轮到你使用湖中仙女", prompt_text)
-        self.assertIn('"target_player_id"', prompt_text)
+        self.assertNotIn("use_lady_of_lake:", stable_text)
+        self.assertIn("本次临时 JSON 格式：", messages[-1]["content"])
+        self.assertIn('"target_player_id"', messages[-1]["content"])
         self.assertIn("player_1", prompt_text)
         self.assertNotIn("player_8", messages[-1]["content"])
 
@@ -354,8 +357,8 @@ class PromptingAndProviderTests(unittest.TestCase):
 
         self.assertIn("你是 玩家2。", prompt_text)
         self.assertIn("公开玩家：玩家1、玩家2、玩家3、玩家4、玩家5。", prompt_text)
-        self.assertIn("#1 第 1 轮，玩家1 提交车队：玩家1、玩家2。", prompt_text)
-        self.assertIn("#2 玩家2 发言：我支持玩家1和玩家2。", prompt_text)
+        self.assertIn("#0001 第 1 轮，玩家1 提交车队：玩家1、玩家2。", prompt_text)
+        self.assertIn("#0002 玩家2 发言：我支持玩家1和玩家2。", prompt_text)
         self.assertNotRegex(prompt_text, r"player_\d+")
 
     def test_speech_and_vote_prompts_use_minimal_json_contracts(self):
@@ -369,6 +372,8 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertIn('{"public_message"', speech_prompt)
         self.assertIn('"private_reason_summary"', speech_prompt)
         self.assertNotIn('"stance"', speech_prompt)
+        self.assertNotIn("assassinate:", speech_prompt)
+        self.assertNotIn("use_lady_of_lake:", speech_prompt)
 
         vote_context = ContextBuilder().build(state, state.players[1].id, Phase.VOTING)
         vote_prompt = "\n".join(
@@ -413,14 +418,14 @@ class PromptingAndProviderTests(unittest.TestCase):
 
         messages = PromptBuilder().build_messages(context, Phase.SPEECH)
         contents = [message["content"] for message in messages]
-        timeline = next(content for content in contents if content.startswith("【公开记录】"))
+        timeline = next(content for content in contents if content.startswith("【活动日志】"))
 
-        self.assertIn("#1 第 1 轮，玩家1 提交车队", timeline)
-        self.assertIn("#2 玩家2 发言", timeline)
+        self.assertIn("#0001 第 1 轮，玩家1 提交车队", timeline)
+        self.assertIn("#0002 玩家2 发言", timeline)
         self.assertFalse(any("新增公开信息" in content for content in contents))
         self.assertLess(
-            timeline.index("#1 第 1 轮，玩家1 提交车队"),
-            timeline.index("#2 玩家2 发言"),
+            timeline.index("#0001 第 1 轮，玩家1 提交车队"),
+            timeline.index("#0002 玩家2 发言"),
         )
         self.assertTrue(contents[-1].startswith("【本次行动】"))
 
@@ -459,10 +464,49 @@ class PromptingAndProviderTests(unittest.TestCase):
             message["content"] for message in PromptBuilder().build_messages(context, Phase.SPEECH)
         )
 
-        self.assertIn("投票结果：车队通过。赞成：玩家1、玩家2；反对：玩家3。", prompt_text)
-        self.assertNotIn("player_1 已投票", prompt_text)
-        self.assertIn("任务成员 玩家1、玩家2 已提交任务行动。", prompt_text)
-        self.assertIn("第 1 轮任务结果：失败。成功票 1，失败票 1。", prompt_text)
+        self.assertIn("#0005 第 1 轮投票通过。赞成：玩家1、玩家2；反对：玩家3。", prompt_text)
+        self.assertNotIn("已完成投票", prompt_text)
+        self.assertNotIn("已提交任务行动", prompt_text)
+        self.assertIn("#0008 第 1 轮任务失败。成功票 1，失败票 1。", prompt_text)
+
+    def test_activity_log_includes_only_viewer_ai_action_completion(self):
+        state = create_five_player_game(seed=20)
+        events = [
+            {"event_index": 1, "event_type": "game_created", "public_payload": {}},
+            {
+                "event_index": 2,
+                "event_type": "ai_decision",
+                "public_payload": {
+                    "player_id": "player_2",
+                    "decision_type": "speech",
+                    "strategy_summary": "不应进入 prompt",
+                },
+            },
+            {
+                "event_index": 3,
+                "event_type": "ai_decision",
+                "public_payload": {
+                    "player_id": "player_3",
+                    "decision_type": "vote",
+                    "strategy_summary": "其他玩家也不应进入 prompt",
+                },
+            },
+        ]
+        context = ContextBuilder().build(
+            state,
+            "player_2",
+            Phase.SPEECH,
+            public_events=events,
+        )
+
+        prompt_text = "\n".join(
+            message["content"] for message in PromptBuilder().build_messages(context, Phase.SPEECH)
+        )
+
+        self.assertIn("#0001 对局开始。", prompt_text)
+        self.assertIn("#0002 speech 已进行处理。", prompt_text)
+        self.assertNotIn("#0003 vote 已进行处理。", prompt_text)
+        self.assertNotIn("不应进入 prompt", prompt_text)
 
     def test_identity_view_uses_role_specific_gameplay_and_extra_information(self):
         state = create_five_player_game(seed=11)

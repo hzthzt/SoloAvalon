@@ -7,7 +7,7 @@
 - 只使用当前玩家合法可见的信息，包括自己的身份视角、公开玩家列表、公开发言、公开投票结果、任务结果和当前可执行动作。
 - 不向模型发送原始 `private_view`、`public_state`、`recent_public_events`、`legal_actions` 等 JSON 上下文字段。
 - 不向模型发送提示词版本号、配置键名、默认开关、推荐身份组合等元信息。
-- 前缀内容尽量稳定，便于模型服务端缓存；动态信息集中在玩家视角、公开记录和本次行动中。
+- 前缀内容尽量稳定，便于模型服务端缓存；动态信息集中在玩家视角、活动日志和本次行动中。
 - 后端是唯一规则裁判。模型只能提出动作意图，合法性由后端校验。
 
 ## 配置文件
@@ -28,7 +28,7 @@ $env:SOLOAVALON_PROMPT_CONFIG="E:\path\to\prompt_templates.json"
 
 ## 发送给模型的结构
 
-当前模型消息分为四段：
+当前模型消息分为五段：
 
 ```text
 【系统】
@@ -36,12 +36,42 @@ $env:SOLOAVALON_PROMPT_CONFIG="E:\path\to\prompt_templates.json"
 
 【你的视角】
 
-【公开记录】
+【动作 JSON 格式声明】
+
+【活动日志】
 
 【本次行动】
 ```
 
-`【系统】` 和 `【本局配置】` 放在 system message 中，用于提供稳定规则背景。`【你的视角】`、`【公开记录】`、`【本次行动】` 分别作为 user message 发送。
+`【系统】` 和 `【本局配置】` 放在 system message 中，用于提供稳定规则背景。`【你的视角】`、`【动作 JSON 格式声明】`、`【活动日志】`、`【本次行动】` 分别作为 user message 发送。
+
+### 拼接流程
+
+提示词从游戏状态到模型请求的调用链如下：
+
+1. `GameService` 在自动推进 AI 行动或真人托管 AI 行动时调用 `AiPlayer`。
+2. `AiPlayer._decide()` 调用 `ContextBuilder.build()`，把 `GameState`、当前玩家、当前阶段和公开事件整理成 `AiContext`。
+3. `ContextBuilder.build()` 生成两类上下文：
+   - `stable_prefix`：稳定前缀，用于 system message。
+   - 动态上下文：玩家私有视角、公开状态、近期公开事件和当前合法动作。
+4. `PromptBuilder.build_messages()` 把 `AiContext` 渲染成 OpenAI-compatible Chat Completions 的 `messages`。
+5. `LlmProvider.chat_completion()` 把 `messages` 放入请求体并发送给模型接口。
+
+当前最终消息结构是：
+
+```python
+[
+    {"role": "system", "content": context.stable_prefix},
+    {"role": "user", "content": "【你的视角】..."},
+    {"role": "user", "content": "【动作 JSON 格式声明】..."},
+    {"role": "user", "content": "【活动日志】..."},
+    {"role": "user", "content": "【本次行动】..."},
+]
+```
+
+`messages[0]` 必须保持为 `system = context.stable_prefix`。后续 `user` messages 的顺序固定为玩家视角、动作 JSON 格式声明、活动日志、本次行动。
+
+`dynamic_private_suffix` 是 `ContextBuilder` 生成的结构化上下文快照，主要用于测试、审计和确认隐藏信息边界；当前不会直接发给模型。最终发给模型的是 `PromptBuilder` 渲染后的自然语言段落，避免暴露 `private_view`、`public_state`、`recent_public_events`、`legal_actions` 等原始字段名。
 
 ### 系统与本局配置
 
@@ -85,28 +115,41 @@ $env:SOLOAVALON_PROMPT_CONFIG="E:\path\to\prompt_templates.json"
 - 崔斯坦/伊索尔德：可互相确认对方为好人。
 - 普通忠臣：无额外隐藏信息。
 
-### 公开记录
+### 动作 JSON 格式声明
 
-公开记录按时间顺序整理，只保留正常玩家能看到的信息：
+`【动作 JSON 格式声明】` 提前声明整局常用动作的输出格式，后续行动请求不重复声明这些 JSON 契约。当前固定声明：
+
+- `propose_team`。
+- `speak`。
+- `vote`。
+- `mission_action`。
+
+`assassinate` 和 `use_lady_of_lake` 不放入固定声明。只有实际轮到刺杀或湖中仙女行动时，才在 `【本次行动】` 中临时补充本次 JSON 格式。
+
+### 活动日志
+
+活动日志按事件时间顺序追加，只保留正常玩家能看到且有决策价值的信息：
 
 - 组队：队长和车队成员。
 - 发言：玩家 id 和公开发言文本。
 - 投票结果：车队是否通过，具体谁赞成、谁反对。
-- 任务行动提交：只显示哪些任务成员已提交，不显示具体行动。
 - 任务结果：成功/失败，以及成功票、失败票数量。
+- 湖中仙女：公开展示谁查看了谁；若是当前玩家自己的查验，则额外展示查验结果。
 - 刺杀：刺客目标和结算后的胜者。
+- AI 行动确认：当前玩家自己的行动完成后记录为“已进行处理”。
 
-未结算投票不会公开票型；结算后才展示具体赞成/反对玩家。
+活动日志不展示技术事件类型前缀，例如 `SPEECH:`、`TEAM_PROPOSED:`；也不展示单个玩家“已完成投票”“已提交任务行动”这类过程噪音。未结算投票不会公开票型；结算后才展示具体赞成/反对玩家。
 
 ### 本次行动
 
-`【本次行动】` 用配置中的 `action_prompts` 约束模型输出 JSON。不同阶段的契约不同：
+`【本次行动】` 只说明本次要执行什么动作、当前可选参数，以及必要时的临时 JSON 格式。常用动作的 JSON 契约已经在 `【动作 JSON 格式声明】` 中提前声明，不在每次行动里重复。
 
 - 组队：返回车队、公开组队理由和私下判断摘要。
 - 发言：返回公开发言和私下判断摘要。
 - 投票：返回 `approve` 或 `reject`，不需要公开理由。
 - 任务：坏人可选择成功/失败；好人任务行动由后端直接提交成功，不请求模型。
 - 刺杀：返回刺杀目标、候选排序和私下判断摘要。
+- 湖中仙女：返回查验目标和私下判断摘要。
 
 行动提示会引导模型像真实玩家一样说明上车意愿、质疑跳身份、解释投票方向和复盘任务压力。但这些提示只影响模型表达与策略倾向，不改变后端规则判定。
 
@@ -183,7 +226,7 @@ $env:SOLOAVALON_PROMPT_CONFIG="E:\path\to\prompt_templates.json"
 
 只有启用后的机制才进入 `【本局配置】`。未启用机制不会显示给模型，避免模型把未生效规则当成当前对局事实。
 
-湖女查验结果属于执行查验玩家的合法私有信息，只会出现在该玩家后续 prompt 的 `【你的视角】` 中，不进入其他玩家视角或公开记录。公开记录只展示“谁使用湖女查看了谁”，不展示阵营。
+湖女查验结果属于执行查验玩家的合法私有信息，只会出现在该玩家后续 prompt 的 `【你的视角】` 或 `【活动日志】` 中，不进入其他玩家视角。活动日志对其他玩家只展示“谁使用湖女查看了谁”，不展示阵营。
 
 ## 推荐身份组合
 
@@ -210,15 +253,24 @@ $env:SOLOAVALON_PROMPT_CONFIG="E:\path\to\prompt_templates.json"
 
 ## 相关代码
 
-- `backend/app/prompting/config.py`：加载和校验提示词配置。
-- `backend/app/prompting/templates.py`：生成最终模型 messages。
-- `backend/app/ai/context.py`：构造合法玩家视角和稳定前缀。
-- `backend/app/prompting/schemas.py`：解析和校验模型 JSON 输出。
-- `config.example/prompt_templates.json`：可提交的默认提示词配置。
+- `backend/app/services/game_service.py`：在对局推进中触发 AI 行动，保存 AI 决策日志和 `prompt_messages`。
+- `backend/app/ai/player.py`：AI 决策调用链；`AiPlayer._decide()` 负责构造上下文、拼接 prompt、调用模型、解析输出并记录 token/cache usage。
+- `backend/app/ai/context.py`：构造 `AiContext`、`stable_prefix`、`stable_prefix_hash`、动态上下文和当前阶段合法动作。
+- `backend/app/prompting/templates.py`：最终 prompt 拼接入口；`PromptBuilder.build_messages()` 生成模型 `messages`，同文件负责玩家视角、固定动作格式声明、活动日志、本次行动和事件文本渲染。
+- `backend/app/prompting/config.py`：加载和校验 `prompt_templates.json`。
+- `backend/app/prompting/schemas.py`：解析和校验模型 JSON 输出，非法输出会交由后端规则校验或触发 AI 决策错误。
+- `backend/app/llm/provider.py`：把 `messages` 放入 OpenAI-compatible Chat Completions 请求体，并读取 token 与缓存命中用量。
+- `config.example/prompt_templates.json`：可提交的默认提示词文案、角色标签、事件模板和动作输出契约。
 
 ## 维护建议
 
 - 修改提示词展示结构时，优先检查最终生成的 `prompt_messages`，不要只看配置文件。
+- 修改文案、角色标签、事件模板或动作输出契约时，优先看 `config.example/prompt_templates.json`。
+- 修改拼接顺序、消息 role、玩家视角、活动日志或本次行动格式时，优先看 `backend/app/prompting/templates.py` 和 `backend/app/ai/context.py`。
+- 稳定前缀只放固定系统规则和本局固定配置；玩家身份视角、公开事件历史、当前阶段、合法动作等动态内容必须放在 system message 之后。
+- 当前“增量”优化指让每次请求的前文保持一致，并让活动日志按事件时间顺序追加，避免重排、合并改写旧记录或重复声明常用动作 JSON 格式；OpenAI-compatible Chat Completions 仍然是无状态请求，不应假设 API 只接收 delta 或自动记住上一轮上下文。
+- `assassinate` 和 `use_lady_of_lake` 不应进入固定动作 JSON 声明，只在实际请求对应行动时临时声明。
+- 需要排查缓存效果时，看 AI 决策日志中的 `stable_prefix_hash`、`prompt_tokens`、`cached_tokens` 和 `cache_hit_rate`。
 - 增加角色时，至少补齐身份标签、机制说明、玩法、策略、合法视角规则。
 - 增加开关时，区分“配置给系统看的内容”和“模型需要知道的游戏事实”。
 - 测试应优先覆盖长期行为，例如合法视角、不泄露原始 JSON、投票和任务结果可读，而不是绑定某一句攻略文案。

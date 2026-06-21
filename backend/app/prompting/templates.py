@@ -31,7 +31,11 @@ class PromptBuilder:
             },
             {
                 "role": "user",
-                "content": _public_record_message(context, self._prompt_config),
+                "content": _action_format_message(),
+            },
+            {
+                "role": "user",
+                "content": _activity_log_message(context, self._prompt_config),
             },
             {
                 "role": "user",
@@ -70,18 +74,43 @@ def _player_view_message(context: AiContext, prompt_config: PromptTemplateConfig
     )
 
 
-def _public_record_message(context: AiContext, prompt_config: PromptTemplateConfig) -> str:
+def _action_format_message() -> str:
+    return "\n".join(
+        [
+            "【动作 JSON 格式声明】",
+            "以下格式在整局中固定，后续不重复声明。你每次只返回本次请求对应的 JSON。",
+            "",
+            "propose_team:",
+            '{"team":["player_id"],"private_reason_summary":"..."}',
+            "",
+            "speak:",
+            '{"public_message":"...","private_reason_summary":"..."}',
+            "",
+            "vote:",
+            '{"vote":"approve|reject","private_reason_summary":"..."}',
+            "",
+            "mission_action:",
+            '{"mission_action":"success|fail","private_reason_summary":"..."}',
+            "",
+            "刺杀 assassinate 和湖中仙女 use_lady_of_lake 不在这里声明；"
+            "只有实际轮到对应行动时，才在本次行动中临时给出格式。",
+        ]
+    )
+
+
+def _activity_log_message(context: AiContext, prompt_config: PromptTemplateConfig) -> str:
     player_labels = _player_label_map(context.public_state["players"])
-    lines = [prompt_config.section_titles["public_record"]]
-    record_lines = _public_record_lines(
+    lines = ["【活动日志】"]
+    record_lines = _activity_log_lines(
         _player_visible_events(context.recent_public_events),
         prompt_config,
         player_labels,
+        context,
     )
     if not record_lines:
-        lines.append(prompt_config.labels["empty_public_record"])
+        lines.append("暂无活动。")
     else:
-        lines.extend(f"#{index} {line}" for index, line in enumerate(record_lines, start=1))
+        lines.extend(record_lines)
     return "\n".join(lines)
 
 
@@ -90,38 +119,31 @@ def _action_message(
     phase: Phase,
     prompt_config: PromptTemplateConfig,
 ) -> str:
+    action = str(context.legal_actions.get("action", "none"))
+    contract = _temporary_phase_contract(phase, context.legal_actions, prompt_config)
+    contract_lines = [contract] if contract else []
     return "\n".join(
         [
             prompt_config.section_titles["action"],
+            f"请求你执行 {action}。",
             *_action_lines(context.legal_actions, prompt_config),
             prompt_config.labels["json_only"],
-            _phase_contract(phase, context.legal_actions, prompt_config),
+            *contract_lines,
+            f"当前只执行：{action}。",
         ]
     )
 
 
-def _phase_contract(
+def _temporary_phase_contract(
     phase: Phase,
     legal_actions: dict[str, Any],
     prompt_config: PromptTemplateConfig,
 ) -> str:
-    if phase == Phase.TEAM_PROPOSAL:
-        return prompt_config.action_prompts["propose_team"]["json"]
-    if phase == Phase.SPEECH:
-        return prompt_config.action_prompts["speak"]["json"]
-    if phase == Phase.VOTING:
-        return prompt_config.action_prompts["vote"]["json"]
-    if phase == Phase.QUEST:
-        actions = _join_or_none(legal_actions.get("mission_actions"))
-        return prompt_config.action_prompts["mission_action"]["json"].replace(
-            "{mission_actions}",
-            actions.replace("、", "|"),
-        )
     if phase == Phase.ASSASSINATION:
         return prompt_config.action_prompts["assassinate"]["json"]
     if phase == Phase.LADY_OF_LAKE:
         return prompt_config.action_prompts["use_lady_of_lake"]["json"]
-    return prompt_config.action_prompts["none"]["json"]
+    return ""
 
 
 def _action_lines(
@@ -142,7 +164,10 @@ def _action_lines(
     if action == "speak":
         return list(prompt_config.action_prompts["speak"]["lines"])
     if action == "vote":
-        return list(prompt_config.action_prompts["vote"]["lines"])
+        return [
+            *prompt_config.action_prompts["vote"]["lines"],
+            f"当前可选：{_join_or_none(legal_actions.get('votes'))}。",
+        ]
     if action == "mission_action":
         return [
             *prompt_config.action_prompts["mission_action"]["lines"],
@@ -159,6 +184,7 @@ def _action_lines(
             prompt_config.labels["assassination_targets"].format(
                 targets=_join_or_none(legal_actions.get("target_player_ids"))
             ),
+            "本次临时 JSON 格式：",
         ]
     if action == "use_lady_of_lake":
         return [
@@ -166,6 +192,7 @@ def _action_lines(
             prompt_config.labels["assassination_targets"].format(
                 targets=_join_or_none(legal_actions.get("target_player_ids"))
             ),
+            "本次临时 JSON 格式：",
         ]
     return list(prompt_config.action_prompts["none"]["lines"])
 
@@ -174,25 +201,25 @@ def _player_visible_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]
     return [
         event
         for event in events
-        if event.get("event_type")
-        not in {"game_created", "roles_assigned", "private_view_recorded", "ai_decision"}
+        if event.get("event_type") not in {"roles_assigned", "private_view_recorded"}
     ]
 
 
-def _public_record_lines(
+def _activity_log_lines(
     events: list[dict[str, Any]],
     prompt_config: PromptTemplateConfig,
     player_labels: dict[str, str],
+    context: AiContext,
 ) -> list[str]:
     lines: list[str] = []
     pending_votes: list[tuple[str, str]] = []
-    pending_quest_submitters: list[str] = []
     completed_quests = 0
 
-    for event in events:
+    for fallback_index, event in enumerate(events, start=1):
         event_type = str(event.get("event_type", "unknown"))
         payload = event.get("public_payload")
         public_payload = payload if isinstance(payload, dict) else {}
+        prefix = _event_prefix(event, fallback_index)
 
         if event_type == "vote_cast":
             pending_votes.append(
@@ -204,96 +231,61 @@ def _public_record_lines(
             continue
 
         if event_type == "vote_result":
-            lines.append(_vote_result_text(public_payload, pending_votes, prompt_config))
+            lines.append(
+                f"{prefix} {_vote_result_text(public_payload, pending_votes, completed_quests + 1)}"
+            )
             pending_votes = []
             continue
 
         if event_type == "quest_action_submitted":
-            submitter = _payload_player_text(public_payload, player_labels, "player_id")
-            if submitter:
-                pending_quest_submitters.append(submitter)
             continue
 
         if event_type == "quest_result":
-            if pending_quest_submitters:
-                lines.append(
-                    prompt_config.event_templates["quest_submitted"].format(
-                        players=_join_or_none(pending_quest_submitters)
-                    )
-                )
-                pending_quest_submitters = []
             completed_quests = _quest_result_round(public_payload, completed_quests)
-            lines.append(_quest_result_text(public_payload, completed_quests, prompt_config))
+            lines.append(f"{prefix} {_quest_result_text(public_payload, completed_quests, prompt_config)}")
             continue
 
         if pending_votes:
-            lines.extend(_unsettled_vote_lines(pending_votes, prompt_config))
             pending_votes = []
-        if pending_quest_submitters:
-            lines.append(
-                prompt_config.event_templates["quest_submitted"].format(
-                    players=_join_or_none(pending_quest_submitters)
-                )
-            )
-            pending_quest_submitters = []
 
         if event_type == "team_proposed":
             round_number = completed_quests + 1
             leader = _payload_player_text(public_payload, player_labels, "leader_player_id", "leader")
             team = _join_or_none(_payload_player_list(public_payload, "team", player_labels))
             lines.append(
-                prompt_config.event_templates["team_proposed"].format(
-                    round_number=round_number,
-                    leader=leader,
-                    team=team,
-                )
+                f"{prefix} 第 {round_number} 轮，{leader} 提交车队：{team}。"
             )
         elif event_type == "speech":
             player = _payload_player_text(public_payload, player_labels, "player_id")
             message = _replace_player_ids(_payload_text(public_payload, "message"), player_labels)
-            lines.append(
-                prompt_config.event_templates["speech"].format(
-                    player_id=player,
-                    message=message,
-                )
-            )
+            lines.append(f"{prefix} {player} 发言：{message}")
         elif event_type == "assassination":
             assassin = _payload_player_text(public_payload, player_labels, "assassin_player_id")
             target = _payload_player_text(public_payload, player_labels, "target_player_id")
             winner = _payload_text(public_payload, "winner")
-            template_key = "assassination_with_winner" if winner else "assassination"
-            lines.append(
-                prompt_config.event_templates[template_key].format(
-                    assassin=assassin,
-                    target=target,
-                    winner=winner,
-                )
-            )
+            suffix = f"胜者：{winner}。" if winner else ""
+            lines.append(f"{prefix} {assassin} 刺杀了 {target}。{suffix}".rstrip())
         elif event_type == "lady_of_lake_used":
             viewer = _payload_player_text(public_payload, player_labels, "viewer_player_id")
             target = _payload_player_text(public_payload, player_labels, "target_player_id")
-            lines.append(
-                prompt_config.event_templates["lady_of_lake_used"].format(
-                    viewer=viewer,
-                    target=target,
-                )
-            )
+            result = _viewer_lady_of_lake_result(context, public_payload, player_labels, prompt_config)
+            if result:
+                lines.append(f"{prefix} {viewer} 使用湖中仙女查看了 {target}。{result}")
+            else:
+                lines.append(f"{prefix} {viewer} 使用湖中仙女查看了 {target}。")
+        elif event_type == "ai_decision":
+            player_id = _payload_text(public_payload, "player_id")
+            if player_id == context.viewer_player_id:
+                lines.append(f"{prefix} {_action_completion_text(public_payload)}")
+        elif event_type == "game_created":
+            lines.append(f"{prefix} 对局开始。")
         else:
             lines.append(
-                prompt_config.event_templates["unknown_event"].format(
-                    event_type=event_type,
-                    payload=_plain_payload_text(public_payload, player_labels),
-                )
+                f"{prefix} {_plain_payload_text(public_payload, player_labels)}"
             )
 
     if pending_votes:
-        lines.extend(_unsettled_vote_lines(pending_votes, prompt_config))
-    if pending_quest_submitters:
-        lines.append(
-            prompt_config.event_templates["quest_submitted"].format(
-                players=_join_or_none(pending_quest_submitters)
-            )
-        )
+        pending_votes = []
 
     return lines
 
@@ -301,20 +293,17 @@ def _public_record_lines(
 def _vote_result_text(
     payload: dict[str, Any],
     votes: list[tuple[str, str]],
-    prompt_config: PromptTemplateConfig,
+    round_number: int,
 ) -> str:
     approved = "通过" if payload.get("approved") is True else "未通过"
     approvals = [player_id for player_id, vote in votes if vote == "approve"]
     rejections = [player_id for player_id, vote in votes if vote == "reject"]
     if approvals or rejections:
-        return prompt_config.event_templates["vote_result_with_votes"].format(
-            approved_text=approved,
-            approvals=_join_or_none(approvals),
-            rejections=_join_or_none(rejections),
+        return (
+            f"第 {round_number} 轮投票{approved}。"
+            f"赞成：{_join_or_none(approvals)}；反对：{_join_or_none(rejections)}。"
         )
-    return prompt_config.event_templates["vote_result_without_votes"].format(
-        approved_text=approved
-    )
+    return f"第 {round_number} 轮投票{approved}。"
 
 
 def _unsettled_vote_lines(
@@ -356,16 +345,38 @@ def _quest_result_text(
     success_cards = payload.get("success_cards")
     fail_cards = payload.get("fail_cards")
     if success_cards is not None and fail_cards is not None:
-        return prompt_config.event_templates["quest_result_with_cards"].format(
-            round_number=round_number,
-            result_text=result_text,
-            success_cards=success_cards,
-            fail_cards=fail_cards,
-        )
-    return prompt_config.event_templates["quest_result_without_cards"].format(
-        round_number=round_number,
-        result_text=result_text,
-    )
+        return f"第 {round_number} 轮任务{result_text}。成功票 {success_cards}，失败票 {fail_cards}。"
+    return f"第 {round_number} 轮任务{result_text}。"
+
+
+def _event_prefix(event: dict[str, Any], fallback_index: int) -> str:
+    event_index = event.get("event_index")
+    if isinstance(event_index, int):
+        return f"#{event_index:04d}"
+    return f"#{fallback_index:04d}"
+
+
+def _action_completion_text(payload: dict[str, Any]) -> str:
+    decision_type = _payload_text(payload, "decision_type")
+    if decision_type:
+        return f"{decision_type} 已进行处理。"
+    return "行动已进行处理。"
+
+
+def _viewer_lady_of_lake_result(
+    context: AiContext,
+    payload: dict[str, Any],
+    player_labels: dict[str, str],
+    prompt_config: PromptTemplateConfig,
+) -> str:
+    if _payload_text(payload, "viewer_player_id") != context.viewer_player_id:
+        return ""
+    target_id = _payload_text(payload, "target_player_id")
+    known_factions = context.private_view.get("lady_of_lake_known_factions", {})
+    if not isinstance(known_factions, dict) or target_id not in known_factions:
+        return ""
+    faction_label = _faction_label(str(known_factions[target_id]), prompt_config)
+    return f"湖中仙女查验结果：{_player_label(target_id, player_labels)} 为{faction_label}阵营。"
 
 
 def _role_gameplay_text(role: object, prompt_config: PromptTemplateConfig) -> str:
@@ -378,7 +389,7 @@ def _role_gameplay_text(role: object, prompt_config: PromptTemplateConfig) -> st
 def _role_strategy_text(role: object, prompt_config: PromptTemplateConfig) -> str:
     return prompt_config.role_strategy_tips.get(
         str(role),
-        prompt_config.role_strategy_tips.get("default", "结合公开记录和身份目标行动。"),
+        prompt_config.role_strategy_tips.get("default", "结合活动日志和身份目标行动。"),
     )
 
 
