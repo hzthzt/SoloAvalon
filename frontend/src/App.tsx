@@ -2069,7 +2069,8 @@ function roleLabel(role: string) {
     loyal_servant: "忠臣",
     tristan: "崔斯坦",
     isolde: "伊索尔德",
-    unknown_evil: "坏人"
+    unknown_evil: "坏人",
+    unknown_merlin: "梅林候选"
   };
   return labels[role] ?? role;
 }
