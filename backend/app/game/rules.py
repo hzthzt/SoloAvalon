@@ -205,21 +205,24 @@ def create_game(
     roles = list(_role_setup_for_game(player_count, normalized_options))
     rng.shuffle(roles)
     configured_ai_names = list(ai_names or [])
+    ai_original_names = [
+        (
+            configured_ai_names[index].strip()
+            if index < len(configured_ai_names) and configured_ai_names[index].strip()
+            else f"AI {index + 1}"
+        )
+        for index in range(player_count - 1)
+    ]
+    rng.shuffle(ai_original_names)
     players = []
-    ai_number = 1
+    ai_index = 0
     for seat_index, role in enumerate(roles):
         is_human = seat_index == human_seat_index
         if is_human:
             original_name = human_name.strip() or "真人玩家"
         else:
-            default_ai_name = f"AI {ai_number}"
-            original_name = (
-                configured_ai_names[ai_number - 1].strip()
-                if ai_number - 1 < len(configured_ai_names)
-                and configured_ai_names[ai_number - 1].strip()
-                else default_ai_name
-            )
-            ai_number += 1
+            original_name = ai_original_names[ai_index]
+            ai_index += 1
         players.append(
             Player(
                 id=f"player_{seat_index + 1}",

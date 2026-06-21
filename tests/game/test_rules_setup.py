@@ -236,6 +236,10 @@ class RulesSetupTests(unittest.TestCase):
         human = next(player for player in state.players if player.is_human)
         self.assertNotEqual(human.id, "player_1")
         self.assertEqual(human.original_name, "张三")
+        self.assertEqual(
+            [player.original_name for player in state.players if not player.is_human],
+            ["阿尔法", "德尔塔", "伽马", "贝塔"],
+        )
         self.assertCountEqual(
             [player.original_name for player in state.players if not player.is_human],
             ["阿尔法", "贝塔", "伽马", "德尔塔"],
