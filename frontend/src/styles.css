@@ -232,6 +232,13 @@ label {
   justify-content: space-between;
 }
 
+.desk-header-actions {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
 .winner-badge {
   background: #eaf4ff;
   border-radius: 999px;
@@ -1098,6 +1105,11 @@ label {
   .topbar,
   .tabs,
   .desk-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .desk-header-actions {
     align-items: stretch;
     flex-direction: column;
   }

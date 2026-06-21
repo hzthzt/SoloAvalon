@@ -79,6 +79,18 @@ test("creating a game enters the new room without removing other rooms", () => {
   assert.equal(source.includes("setGames(gameList)"), true);
 });
 
+test("active play view can return to room list without stopping the room", () => {
+  assert.equal(source.includes("leaveActiveRoom"), true);
+  assert.equal(source.includes("返回房间"), true);
+  assert.equal(source.includes("onLeaveRoom"), true);
+  assert.equal(source.includes("setGame(null);"), true);
+  assert.equal(source.includes("setActiveGameEvents([]);"), true);
+  assert.equal(source.includes("setActiveRoomDetail(null);"), true);
+  assert.equal(source.includes("await refreshLists();"), true);
+  assert.equal(source.includes("archiveGame(game.id)"), false);
+  assert.equal(source.includes("deleteGame(game.id)"), false);
+});
+
 test("archive view only renders archived rooms as replay records", () => {
   assert.equal(source.includes("archivedRooms.map"), true);
   assert.equal(source.includes("games.map((summary)"), false);

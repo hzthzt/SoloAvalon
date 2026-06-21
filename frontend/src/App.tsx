@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowLeft,
   Bot,
   Check,
   Download,
@@ -404,6 +405,18 @@ export function App() {
     });
   }
 
+  async function leaveActiveRoom() {
+    await run(async () => {
+      setGame(null);
+      setActiveGameEvents([]);
+      setActiveRoomDetail(null);
+      setSpeech("");
+      setAssassinationTarget("");
+      setLadyOfLakeTarget("");
+      await refreshLists();
+    });
+  }
+
   async function archiveRoom(gameId: string) {
     await run(async () => {
       await archiveGame(gameId);
@@ -645,6 +658,7 @@ export function App() {
                 review={activeGameReview}
                 roomDetail={roomDetailForActiveReview}
                 teamAttemptNumber={activeTeamAttemptNumber}
+                onLeaveRoom={leaveActiveRoom}
               />
               <section className="panel action-panel">
                 <div className="section-title">
@@ -1068,13 +1082,15 @@ function GameDesk({
   requiredTeamSize,
   review,
   roomDetail,
-  teamAttemptNumber
+  teamAttemptNumber,
+  onLeaveRoom
 }: {
   game: GameState;
   requiredTeamSize: number;
   review: FlowReview;
   roomDetail: RoomDetail | null;
   teamAttemptNumber: number;
+  onLeaveRoom: () => void;
 }) {
   const leaderName = playerName(game, game.leader_player_id);
   return (
@@ -1086,8 +1102,13 @@ function GameDesk({
             {game.display_name} · 队长 {leaderName} · 需要 {requiredTeamSize} 人
           </p>
         </div>
-        <div className={`winner-badge ${game.winner ?? ""}`}>
-          {game.winner ? `${game.winner} wins` : phaseLabel(game.phase)}
+        <div className="desk-header-actions">
+          <button type="button" onClick={onLeaveRoom}>
+            <ArrowLeft size={18} /> 返回房间
+          </button>
+          <div className={`winner-badge ${game.winner ?? ""}`}>
+            {game.winner ? `${game.winner} wins` : phaseLabel(game.phase)}
+          </div>
         </div>
       </div>
       <div className="quest-track">
