@@ -165,6 +165,10 @@ test("player cards keep legal visible roles before final reveal", () => {
   assert.equal(source.includes("player.revealed_role ?? player.visible_role"), true);
 });
 
+test("player cards label Percival merlin candidates", () => {
+  assert.equal(source.includes('unknown_merlin: "梅林候选"'), true);
+});
+
 test("start game request sends player count and enabled options", () => {
   assert.equal(source.includes("player_count: playerCount"), true);
   assert.equal(source.includes("enabled_options: enabledOptions"), true);
