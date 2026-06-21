@@ -203,6 +203,11 @@ export async function listGameEvents(
   return request(`${gamePath(gameId)}/events${query}`);
 }
 
+export function gameEventsStreamUrl(gameId: string, afterEventIndex = 0): string {
+  const query = afterEventIndex > 0 ? `?after=${afterEventIndex}` : "";
+  return `${gamePath(gameId)}/events/stream${query}`;
+}
+
 export async function listProfiles(): Promise<LlmProfile[]> {
   return request("/api/llm-profiles");
 }

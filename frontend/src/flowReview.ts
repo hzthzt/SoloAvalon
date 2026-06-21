@@ -140,6 +140,22 @@ export function eventsForFlowReview(
   return latestEventIndex(fetchedEvents) > latestEventIndex(stateEvents) ? fetchedEvents : stateEvents;
 }
 
+export function mergeEventsForFlowReview(
+  currentEvents: GameEvent[],
+  incrementalEvents: GameEvent[]
+): GameEvent[] {
+  const eventsByIndex = new Map<number, GameEvent>();
+  for (const event of currentEvents) {
+    eventsByIndex.set(event.event_index, event);
+  }
+  for (const event of incrementalEvents) {
+    if (!eventsByIndex.has(event.event_index)) {
+      eventsByIndex.set(event.event_index, event);
+    }
+  }
+  return [...eventsByIndex.values()].sort((first, second) => first.event_index - second.event_index);
+}
+
 export function feedItemsForDisplay(review: FlowReview): InformationFeedItem[] {
   return [...review.feedItems];
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
   Check,
@@ -27,6 +27,7 @@ import {
   AiDecisionDetail,
   GameEvent,
   GameState,
+  gameEventsStreamUrl,
   GameSummary,
   getRoomDetail,
   getGame,
@@ -46,7 +47,8 @@ import {
   buildFlowReview,
   currentActivityText,
   eventsForFlowReview,
-  feedItemsForDisplay
+  feedItemsForDisplay,
+  mergeEventsForFlowReview
 } from "./flowReview";
 import type { FlowReview, InformationFeedItem, ReviewRound, SummaryCard } from "./flowReview";
 
@@ -144,10 +146,20 @@ export function App() {
     [games]
   );
   const activeTeamAttemptNumber = game ? currentTeamAttemptNumber(game, activeGameReview) : 1;
+  const activeGameId = game?.id ?? "";
 
   useEffect(() => {
     void refreshLists();
   }, []);
+
+  useEffect(() => {
+    if (!activeGameId) {
+      return;
+    }
+    return subscribeGameEvents(activeGameId, latestEventIndex(activeGameEvents), (event) => {
+      setActiveGameEvents((current) => mergeEventsForFlowReview(current, [event]));
+    });
+  }, [activeGameId]);
 
   useEffect(() => {
     const aiCount = playerCount - 1;
@@ -987,6 +999,28 @@ function pauseForFlow() {
   return new Promise<void>((resolve) => window.setTimeout(resolve, 280));
 }
 
+function subscribeGameEvents(
+  activeGameId: string,
+  afterEventIndex: number,
+  onEvent: (event: GameEvent) => void
+) {
+  const eventSource = new EventSource(gameEventsStreamUrl(activeGameId, afterEventIndex));
+  eventSource.addEventListener("game-event", (message) => {
+    try {
+      onEvent(JSON.parse((message as MessageEvent).data) as GameEvent);
+    } catch {
+      // 忽略无法解析的单条事件，浏览器会继续保持 SSE 连接。
+    }
+  });
+  return () => {
+    eventSource.close();
+  };
+}
+
+function latestEventIndex(events: GameEvent[]): number {
+  return events.reduce((latest, event) => Math.max(latest, event.event_index), 0);
+}
+
 function PlayableRoomList({
   rooms,
   enterPlayableRoom,
@@ -1142,6 +1176,17 @@ function InformationFlowPanel({
 }) {
   const items = useMemo(() => feedItemsForDisplay(review), [review]);
   const [visibleItemCount, setVisibleItemCount] = useState(0);
+  const feedListRef = useRef<HTMLDivElement | null>(null);
+  const wasFeedAtBottomRef = useRef(true);
+  const rememberFeedScrollPosition = () => {
+    const element = feedListRef.current;
+    if (!element) {
+      wasFeedAtBottomRef.current = true;
+      return;
+    }
+    wasFeedAtBottomRef.current =
+      element.scrollHeight - element.scrollTop - element.clientHeight <= 8;
+  };
   useEffect(() => {
     setVisibleItemCount((current) => {
       if (items.length <= current) {
@@ -1160,9 +1205,20 @@ function InformationFlowPanel({
     return () => window.clearTimeout(timeout);
   }, [items.length, visibleItemCount]);
   const displayedItems = items.slice(0, visibleItemCount);
+  useEffect(() => {
+    const element = feedListRef.current;
+    if (!element || !wasFeedAtBottomRef.current) {
+      return;
+    }
+    element.scrollTop = element.scrollHeight;
+  }, [displayedItems.length, activityText]);
   return (
     <section className="information-flow-panel">
-      <div className="information-feed-list">
+      <div
+        className="information-feed-list"
+        onScroll={rememberFeedScrollPosition}
+        ref={feedListRef}
+      >
         {displayedItems.length === 0 && <div className="empty-state">暂无信息</div>}
         {displayedItems.map((item) => (
           <InformationFeedItemView

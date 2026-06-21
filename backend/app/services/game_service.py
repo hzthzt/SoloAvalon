@@ -358,6 +358,9 @@ class GameService:
     def list_events(self, game_id: str) -> list[EventRecord]:
         return self._events.list_events(game_id)
 
+    def list_events_after(self, game_id: str, event_index: int) -> list[EventRecord]:
+        return self._events.list_events_after(game_id, event_index)
+
     def export_game_log(self, game_id: str, include_private: bool = False) -> dict[str, Any]:
         return self._events.export_game_log(game_id, include_private=include_private)
 

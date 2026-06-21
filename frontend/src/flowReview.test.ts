@@ -6,7 +6,8 @@ import {
   buildFlowReview,
   currentActivityText,
   eventsForFlowReview,
-  feedItemsForDisplay
+  feedItemsForDisplay,
+  mergeEventsForFlowReview
 } from "./flowReview.js";
 import type { GameState } from "./api.js";
 
@@ -469,6 +470,34 @@ test("uses fetched events when game state events are missing or stale", () => {
   assert.deepEqual(eventsForFlowReview([], fetchedEvents), fetchedEvents);
   assert.deepEqual(eventsForFlowReview([fetchedEvents[0]], fetchedEvents), fetchedEvents);
   assert.deepEqual(eventsForFlowReview(newerStateEvents, fetchedEvents), newerStateEvents);
+});
+
+test("merges incremental sse events without dropping existing history", () => {
+  const currentEvents = [
+    event(1, "speech", {
+      player_id: "player_1",
+      message: "历史发言"
+    }),
+    event(2, "speech", {
+      player_id: "player_2",
+      message: "已有发言"
+    })
+  ];
+  const incrementalEvents = [
+    event(2, "speech", {
+      player_id: "player_2",
+      message: "重复推送的已有发言"
+    }),
+    event(3, "speech", {
+      player_id: "player_3",
+      message: "SSE 新发言"
+    })
+  ];
+
+  assert.deepEqual(
+    mergeEventsForFlowReview(currentEvents, incrementalEvents).map((item) => item.event_index),
+    [1, 2, 3]
+  );
 });
 
 function event(

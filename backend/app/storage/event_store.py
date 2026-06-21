@@ -65,6 +65,17 @@ class EventStore:
         ).fetchall()
         return [_event_from_row(row) for row in rows]
 
+    def list_events_after(self, game_id: str, event_index: int) -> list[EventRecord]:
+        rows = self._connection.execute(
+            """
+            select * from game_events
+            where game_id = ? and event_index > ?
+            order by event_index
+            """,
+            (game_id, event_index),
+        ).fetchall()
+        return [_event_from_row(row) for row in rows]
+
     def export_game_log(
         self,
         game_id: str,

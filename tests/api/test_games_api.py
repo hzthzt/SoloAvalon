@@ -141,6 +141,31 @@ class GamesApiTests(unittest.TestCase):
             self.assertIn("private_payload", private_events[1])
             self.assertIn("roles_by_player_id", private_events[1]["private_payload"])
 
+    def test_list_events_after_hides_private_payload_by_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            api = _api(tmpdir)
+            created = api._service.create_game(seed=2)
+
+            public_events = api.list_events_after(created["id"], 1)
+
+            self.assertTrue(all(event["event_index"] > 1 for event in public_events))
+            self.assertTrue(all("private_payload" not in event for event in public_events))
+
+    def test_sse_event_frame_contains_json_payload_and_event_id(self):
+        frame = games_module.sse_event_frame(
+            {
+                "event_index": 7,
+                "event_type": "speech",
+                "public_payload": {"message": "你好"},
+            }
+        )
+
+        self.assertTrue(frame.startswith("id: 7\n"))
+        self.assertIn("event: game-event\n", frame)
+        self.assertIn('"event_type":"speech"', frame)
+        self.assertIn('"message":"你好"', frame)
+        self.assertTrue(frame.endswith("\n\n"))
+
     def test_public_events_hide_vote_values_until_vote_result_exists(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             connection = connect_sqlite(":memory:")

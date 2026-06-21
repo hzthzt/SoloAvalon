@@ -235,6 +235,26 @@ test("information feed reveals queued items gradually", () => {
   assert.equal(source.includes("setTimeout"), true);
 });
 
+test("active game subscribes to server-sent event updates while the play view is open", () => {
+  assert.equal(source.includes("subscribeGameEvents"), true);
+  assert.equal(source.includes("new EventSource"), true);
+  assert.equal(source.includes("eventSource.addEventListener(\"game-event\""), true);
+  assert.equal(source.includes("eventSource.close()"), true);
+  assert.equal(source.includes("window.setInterval"), false);
+});
+
+test("api exposes an sse event stream url for active game events", () => {
+  assert.equal(apiSource.includes("gameEventsStreamUrl"), true);
+  assert.equal(apiSource.includes("/events/stream"), true);
+});
+
+test("information feed keeps the scroll pinned when already at the bottom", () => {
+  assert.equal(source.includes("feedListRef"), true);
+  assert.equal(source.includes("wasFeedAtBottomRef"), true);
+  assert.equal(source.includes("scrollTop = element.scrollHeight"), true);
+  assert.equal(source.includes("onScroll={rememberFeedScrollPosition}"), true);
+});
+
 test("information feed occupies the full center column", () => {
   assert.equal(styleSource.includes("grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);"), false);
   assert.equal(styleSource.includes(".game-flow-layout {\n  align-items: start;\n  display: grid;\n  gap: 12px;\n  grid-template-columns: minmax(0, 1fr);"), true);

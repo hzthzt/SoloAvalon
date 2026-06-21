@@ -72,3 +72,26 @@ class EventStoreTests(unittest.TestCase):
             finally:
                 connection.close()
 
+    def test_list_events_after_returns_only_newer_events(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
+            try:
+                initialize_database(connection)
+                GameRepository(connection).save_new_game(
+                    create_five_player_game(seed=12),
+                    game_id="game_1",
+                )
+                store = EventStore(connection)
+                store.append_event("game_1", "game_created", public_payload={"game_id": "game_1"})
+                second = store.append_event(
+                    "game_1",
+                    "leader_changed",
+                    public_payload={"leader_player_id": "player_1"},
+                )
+                newer_events = store.list_events_after("game_1", 1)
+
+                self.assertEqual([event.event_index for event in newer_events], [second.event_index])
+                self.assertEqual(newer_events[0].event_type, "leader_changed")
+            finally:
+                connection.close()
+

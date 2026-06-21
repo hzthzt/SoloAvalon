@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from dataclasses import asdict
 from typing import Any
 
@@ -13,10 +15,13 @@ from .errors import error_detail
 from .models import CreateGameRequest, HumanActionRequest
 
 try:
-    from fastapi import APIRouter, HTTPException
+    from fastapi import APIRouter, HTTPException, Request
+    from fastapi.responses import StreamingResponse
 except ImportError:
     APIRouter = None
     HTTPException = None
+    Request = None
+    StreamingResponse = None
 
 
 class GamesApi:
@@ -49,6 +54,17 @@ class GamesApi:
 
     def list_events(self, game_id: str, include_private: bool = False) -> list[dict[str, Any]]:
         events = self._service.list_events(game_id)
+        if include_private:
+            return [asdict(event) for event in events]
+        return public_event_dicts(events)
+
+    def list_events_after(
+        self,
+        game_id: str,
+        event_index: int,
+        include_private: bool = False,
+    ) -> list[dict[str, Any]]:
+        events = self._service.list_events_after(game_id, event_index)
         if include_private:
             return [asdict(event) for event in events]
         return public_event_dicts(events)
@@ -101,6 +117,30 @@ def build_games_router(service: GameService):
     def list_events(game_id: str, include_private: bool = False):
         return _call(lambda: api.list_events(game_id, include_private=include_private))
 
+    @router.get("/{game_id}/events/stream")
+    async def stream_events(game_id: str, request: Request, after: int = 0):
+        _call(lambda: api.get_game(game_id))
+
+        async def event_frames():
+            latest_event_index = after
+            while True:
+                if await request.is_disconnected():
+                    break
+                events = api.list_events_after(game_id, latest_event_index)
+                for event in events:
+                    latest_event_index = max(latest_event_index, int(event["event_index"]))
+                    yield sse_event_frame(event)
+                await asyncio.sleep(0.4)
+
+        return StreamingResponse(
+            event_frames(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     @router.get("/{game_id}/export")
     def export_game(game_id: str, include_private: bool = False):
         return _call(lambda: api.export_game(game_id, include_private=include_private))
@@ -139,6 +179,12 @@ def _call(handler):
         if HTTPException is None:
             raise
         raise HTTPException(status_code=500, detail=error_detail(exc)) from exc
+
+
+def sse_event_frame(event: dict[str, Any]) -> str:
+    event_index = int(event["event_index"])
+    payload = json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return f"id: {event_index}\nevent: game-event\ndata: {payload}\n\n"
 
 
 def _ai_decision_status_code(error: AiDecisionError) -> int:
