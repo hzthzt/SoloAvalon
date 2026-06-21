@@ -74,9 +74,18 @@ export type AiDecisionDetail = {
   player_id: string;
   phase: string;
   decision_type: string;
+  input_summary: string;
+  strategy_summary: string;
   output: Record<string, unknown>;
   model_name: string;
   llm_profile_id: string | null;
+  prompt_template_name: string;
+  prompt_template_version: string;
+  context_builder_version: string;
+  stable_prefix_hash: string;
+  cache_strategy: string;
+  context_summary: string;
+  context_truncated: boolean;
   output_raw: string | null;
   output_parsed: Record<string, unknown> | null;
   validation_status: string;

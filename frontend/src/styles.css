@@ -366,7 +366,7 @@ label {
   align-items: start;
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .flow-subheader {
@@ -446,7 +446,8 @@ label {
 .announcement-bubble {
   background: #eef3f8;
   border: 1px solid #d9e1ea;
-  border-radius: 999px;
+  border-radius: 8px;
+  box-sizing: border-box;
   color: #3c4654;
   display: grid;
   gap: 2px;
@@ -454,6 +455,12 @@ label {
   max-width: min(100%, 520px);
   padding: 7px 12px;
   text-align: center;
+  width: min(100%, 520px);
+}
+
+.announcement-bubble:has(.feed-decision-details[open]) {
+  max-width: min(100%, 760px);
+  width: min(100%, 760px);
 }
 
 .announcement-bubble p {
@@ -907,6 +914,71 @@ label {
   font-weight: 800;
 }
 
+.prompt-details.nested {
+  border-top: 1px solid #d9e1ea;
+  margin-top: 8px;
+}
+
+.feed-decision-details {
+  border-top: 1px solid rgba(25, 50, 77, 0.12);
+  justify-self: stretch;
+  margin-top: 8px;
+  max-width: 100%;
+  min-width: 0;
+  padding-top: 8px;
+  text-align: left;
+  width: 100%;
+}
+
+.feed-decision-details summary {
+  color: #19324d;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.feed-decision-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.feed-decision-card {
+  background: #f8fafc;
+  border: 1px solid #d9e1ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  justify-items: stretch;
+  max-width: 100%;
+  min-width: 0;
+  padding: 10px;
+  text-align: left;
+}
+
+.feed-decision-title {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.feed-decision-title strong,
+.feed-decision-title span {
+  color: #19324d;
+  font-size: 13px;
+}
+
+.decision-summary-text {
+  color: #3c4654;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .prompt-message-list {
   display: grid;
   gap: 8px;
@@ -918,6 +990,11 @@ label {
   gap: 8px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin: 8px 0;
+}
+
+.decision-metrics.compact {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
 }
 
 .decision-metrics div {
@@ -943,6 +1020,22 @@ label {
 .prompt-message {
   display: grid;
   gap: 5px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.prompt-message pre {
+  background: #f3f6fa;
+  border-radius: 8px;
+  color: #3c4654;
+  margin: 0;
+  max-width: 100%;
+  min-width: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: 10px;
+  text-align: left;
+  white-space: pre-wrap;
 }
 
 .prompt-message strong {

@@ -300,6 +300,41 @@ test("displays information feed from oldest to newest", () => {
   assert.equal(eventIndexes[eventIndexes.length - 1], 3);
 });
 
+test("keeps feed event indexes stable when private ai decision events are present", () => {
+  const review = buildFlowReview(
+    [
+      event(1, "ai_decision", {
+        player_id: "player_2",
+        phase: "team_proposal",
+        decision_type: "team_proposal"
+      }),
+      event(2, "team_proposed", {
+        leader_player_id: "player_2",
+        team: ["player_1", "player_2"]
+      }),
+      event(3, "ai_decision", {
+        player_id: "player_3",
+        phase: "voting",
+        decision_type: "vote"
+      }),
+      event(4, "vote_cast", {
+        player_id: "player_3",
+        vote: "approve"
+      }),
+      event(5, "vote_result", {
+        approved: true,
+        failed_team_votes: 0
+      })
+    ],
+    playerNames
+  );
+
+  assert.deepEqual(
+    review.feedItems.map((item) => item.eventIndex),
+    [2, 5]
+  );
+});
+
 test("increments team attempt number within the same quest round", () => {
   const review = buildFlowReview(
     [

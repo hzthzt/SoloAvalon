@@ -52,6 +52,11 @@ import type { FlowReview, InformationFeedItem, ReviewRound, SummaryCard } from "
 
 type Tab = "game" | "profiles" | "rooms";
 
+type AiDecisionPair = {
+  event: GameEvent;
+  decision?: AiDecisionDetail;
+};
+
 const playerCountOptions = [5, 6, 7, 8, 9, 10];
 
 const emptyProfile: LlmProfileInput = {
@@ -91,6 +96,7 @@ export function App() {
   const [selectedLogPlayerNames, setSelectedLogPlayerNames] = useState<Record<string, string>>({});
   const [eventLog, setEventLog] = useState<GameEvent[]>([]);
   const [roomDetail, setRoomDetail] = useState<RoomDetail | null>(null);
+  const [activeRoomDetail, setActiveRoomDetail] = useState<RoomDetail | null>(null);
   const [exportedLog, setExportedLog] = useState("");
   const [notice, setNotice] = useState("");
   const [manualRetryRepeat, setManualRetryRepeat] = useState<boolean | null>(null);
@@ -122,9 +128,12 @@ export function App() {
     () => new Map(game?.players.map((player) => [player.id, player.name]) ?? []),
     [game?.players]
   );
+  const roomDetailForActiveReview =
+    game && isGameComplete(game) && activeRoomDetail?.game.id === game.id ? activeRoomDetail : null;
+  const activeReviewEvents = roomDetailForActiveReview?.events ?? activeGameEvents;
   const activeGameReview = useMemo(
-    () => buildFlowReview(activeGameEvents, activePlayerNames),
-    [activeGameEvents, activePlayerNames]
+    () => buildFlowReview(activeReviewEvents, activePlayerNames),
+    [activeReviewEvents, activePlayerNames]
   );
   const playableRooms = useMemo(
     () => games.filter((summary) => summary.archived_at === null),
@@ -201,6 +210,17 @@ export function App() {
         resetEvents ? stateEvents : eventsForFlowReview(stateEvents, current)
       );
     }
+    await refreshActiveRoomDetailIfComplete(updated);
+  }
+
+  async function refreshActiveRoomDetailIfComplete(updated: GameState) {
+    if (!isGameComplete(updated)) {
+      setActiveRoomDetail(null);
+      return;
+    }
+    const detail = await getRoomDetail(updated.id);
+    setActiveRoomDetail(detail);
+    setActiveGameEvents((current) => eventsForFlowReview(detail.events, current));
   }
 
   async function startGame() {
@@ -208,6 +228,7 @@ export function App() {
       setStartingGame(true);
       setGame(null);
       setActiveGameEvents([]);
+      setActiveRoomDetail(null);
       let created = await createGame({
         player_count: playerCount,
         enabled_options: enabledOptions,
@@ -377,6 +398,7 @@ export function App() {
       if (game?.id === gameId) {
         setGame(null);
         setActiveGameEvents([]);
+        setActiveRoomDetail(null);
       }
       if (selectedRoomGameId === gameId) {
         setSelectedRoomGameId("");
@@ -391,6 +413,7 @@ export function App() {
       if (game?.id === gameId) {
         setGame(null);
         setActiveGameEvents([]);
+        setActiveRoomDetail(null);
       }
       if (selectedRoomGameId === gameId) {
         setSelectedRoomGameId("");
@@ -608,6 +631,7 @@ export function App() {
                 game={game}
                 requiredTeamSize={requiredTeamSize}
                 review={activeGameReview}
+                roomDetail={roomDetailForActiveReview}
                 teamAttemptNumber={activeTeamAttemptNumber}
               />
               <section className="panel action-panel">
@@ -1009,11 +1033,13 @@ function GameDesk({
   game,
   requiredTeamSize,
   review,
+  roomDetail,
   teamAttemptNumber
 }: {
   game: GameState;
   requiredTeamSize: number;
   review: FlowReview;
+  roomDetail: RoomDetail | null;
   teamAttemptNumber: number;
 }) {
   const leaderName = playerName(game, game.leader_player_id);
@@ -1059,17 +1085,19 @@ function GameDesk({
           </article>
         ))}
       </div>
-      <GameFlow game={game} review={review} />
+      <GameFlow game={game} review={review} roomDetail={roomDetail} />
     </section>
   );
 }
 
 function GameFlow({
   game,
-  review
+  review,
+  roomDetail
 }: {
   game: GameState;
   review: FlowReview;
+  roomDetail: RoomDetail | null;
 }) {
   const playerNames = useMemo(
     () => new Map(game.players.map((player) => [player.id, player.name])),
@@ -1079,6 +1107,10 @@ function GameFlow({
     () => currentActivityText(game, playerNames),
     [game, playerNames]
   );
+  const decisionsByFeedItem = useMemo(
+    () => decisionsByFeedItemForReview(review, roomDetail),
+    [review, roomDetail]
+  );
   return (
     <section className="game-flow" aria-live="polite">
       <div className="flow-header">
@@ -1086,7 +1118,12 @@ function GameFlow({
         <h3>信息流</h3>
       </div>
       <div className="game-flow-layout">
-        <InformationFlowPanel review={review} activityText={activityText} />
+        <InformationFlowPanel
+          review={review}
+          activityText={activityText}
+          decisionsByFeedItem={decisionsByFeedItem}
+          playerNames={playerNames}
+        />
       </div>
     </section>
   );
@@ -1094,10 +1131,14 @@ function GameFlow({
 
 function InformationFlowPanel({
   review,
-  activityText
+  activityText,
+  decisionsByFeedItem,
+  playerNames
 }: {
   review: FlowReview;
   activityText: string;
+  decisionsByFeedItem: Map<string, AiDecisionPair[]>;
+  playerNames: ReadonlyMap<string, string>;
 }) {
   const items = useMemo(() => feedItemsForDisplay(review), [review]);
   const [visibleItemCount, setVisibleItemCount] = useState(0);
@@ -1124,7 +1165,12 @@ function InformationFlowPanel({
       <div className="information-feed-list">
         {displayedItems.length === 0 && <div className="empty-state">暂无信息</div>}
         {displayedItems.map((item) => (
-          <InformationFeedItemView key={item.id} item={item} />
+          <InformationFeedItemView
+            key={item.id}
+            item={item}
+            decisions={decisionsByFeedItem.get(item.id) ?? []}
+            playerNames={playerNames}
+          />
         ))}
       </div>
       <div className="current-activity">{activityText}</div>
@@ -1132,7 +1178,15 @@ function InformationFlowPanel({
   );
 }
 
-function InformationFeedItemView({ item }: { item: InformationFeedItem }) {
+function InformationFeedItemView({
+  item,
+  decisions,
+  playerNames
+}: {
+  item: InformationFeedItem;
+  decisions: AiDecisionPair[];
+  playerNames: ReadonlyMap<string, string>;
+}) {
   if (item.type === "chat") {
     return (
       <article className="chat-item">
@@ -1144,6 +1198,7 @@ function InformationFeedItemView({ item }: { item: InformationFeedItem }) {
             <time>{formatDateTime(item.chat.createdAt)}</time>
           </div>
           <p>{item.chat.message}</p>
+          <InformationFeedDecisionDetails decisions={decisions} playerNames={playerNames} />
         </div>
       </article>
     );
@@ -1154,8 +1209,68 @@ function InformationFeedItemView({ item }: { item: InformationFeedItem }) {
       <div className="announcement-bubble">
         <time>{formatDateTime(row.createdAt)}</time>
         <p>{row.text}</p>
+        <InformationFeedDecisionDetails decisions={decisions} playerNames={playerNames} />
       </div>
     </article>
+  );
+}
+
+function InformationFeedDecisionDetails({
+  decisions,
+  playerNames
+}: {
+  decisions: AiDecisionPair[];
+  playerNames: ReadonlyMap<string, string>;
+}) {
+  if (decisions.length === 0) {
+    return null;
+  }
+  return (
+    <details className="feed-decision-details">
+      <summary>AI 决策摘要</summary>
+      <div className="feed-decision-list">
+        {decisions.map((pair, index) => (
+          <section className="feed-decision-card" key={`${pair.event.event_index}-${index}`}>
+            <div className="feed-decision-title">
+              <strong>
+                {playerNames.get(valueAsString(pair.event.public_payload.player_id)) ??
+                  valueAsString(pair.event.public_payload.player_id)}
+              </strong>
+              <span>{decisionTypeLabel(valueAsString(pair.event.public_payload.decision_type))}</span>
+            </div>
+            <dl className="decision-metrics compact">
+              <div>
+                <dt>模型</dt>
+                <dd>{pair.decision?.model_name ?? "暂无数据"}</dd>
+              </div>
+              <div>
+                <dt>状态</dt>
+                <dd>
+                  {pair.decision?.validation_status ??
+                    valueAsString(pair.event.public_payload.validation_status) ??
+                    "暂无数据"}
+                </dd>
+              </div>
+              <div>
+                <dt>Total tokens</dt>
+                <dd>{formatNumber(pair.decision?.total_tokens)}</dd>
+              </div>
+              <div>
+                <dt>缓存命中率</dt>
+                <dd>{formatPercent(pair.decision?.cache_hit_rate ?? null)}</dd>
+              </div>
+            </dl>
+            <p className="decision-summary-text">
+              {decisionSummaryText(pair.decision, pair.event)}
+            </p>
+            <details className="prompt-details nested">
+              <summary>查看完整 Prompt 与回答</summary>
+              <AiDecisionFullDetails event={pair.event} decision={pair.decision} />
+            </details>
+          </section>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -1406,6 +1521,23 @@ function AiPromptDetails({
   return (
     <details className="prompt-details">
       <summary>展开 AI 决策详情</summary>
+      <AiDecisionFullDetails event={event} decision={decision} />
+    </details>
+  );
+}
+
+function AiDecisionFullDetails({
+  event,
+  decision
+}: {
+  event: GameEvent;
+  decision?: AiDecisionDetail;
+}) {
+  const messages = promptMessagesForLog(event);
+  const outputRaw = decisionOutputRaw(event, decision);
+  const outputParsed = decisionOutputParsed(event, decision);
+  return (
+    <>
       <dl className="decision-metrics">
         <div>
           <dt>模型</dt>
@@ -1413,35 +1545,35 @@ function AiPromptDetails({
         </div>
         <div>
           <dt>Prompt tokens</dt>
-          <dd>{formatNumber(decision?.prompt_tokens)}</dd>
+          <dd>{formatNumber(decisionNumberMetric(event, decision, "prompt_tokens"))}</dd>
         </div>
         <div>
           <dt>Completion tokens</dt>
-          <dd>{formatNumber(decision?.completion_tokens)}</dd>
+          <dd>{formatNumber(decisionNumberMetric(event, decision, "completion_tokens"))}</dd>
         </div>
         <div>
           <dt>Total tokens</dt>
-          <dd>{formatNumber(decision?.total_tokens)}</dd>
+          <dd>{formatNumber(decisionNumberMetric(event, decision, "total_tokens"))}</dd>
         </div>
         <div>
           <dt>Cached tokens</dt>
-          <dd>{formatNumber(decision?.cached_tokens)}</dd>
+          <dd>{formatNumber(decisionNumberMetric(event, decision, "cached_tokens"))}</dd>
         </div>
         <div>
           <dt>缓存命中率</dt>
-          <dd>{formatPercent(decision?.cache_hit_rate ?? null)}</dd>
+          <dd>{formatPercent(decisionNumberMetric(event, decision, "cache_hit_rate"))}</dd>
         </div>
       </dl>
-      {decision?.output_raw && (
+      {outputRaw && (
         <section className="prompt-message">
           <strong>AI 回答</strong>
-          <pre>{decision.output_raw}</pre>
+          <pre>{outputRaw}</pre>
         </section>
       )}
-      {decision?.output_parsed && (
+      {outputParsed && (
         <section className="prompt-message">
           <strong>解析结果</strong>
-          <pre>{JSON.stringify(decision.output_parsed, null, 2)}</pre>
+          <pre>{JSON.stringify(outputParsed, null, 2)}</pre>
         </section>
       )}
       <div className="prompt-message-list">
@@ -1452,7 +1584,7 @@ function AiPromptDetails({
           </section>
         ))}
       </div>
-    </details>
+    </>
   );
 }
 
@@ -1567,6 +1699,248 @@ function isRetryableAiDecisionError(error: unknown) {
   );
 }
 
+function decisionsByFeedItemForReview(
+  review: FlowReview,
+  roomDetail: RoomDetail | null
+): Map<string, AiDecisionPair[]> {
+  const result = new Map<string, AiDecisionPair[]>();
+  if (!roomDetail || !isGameComplete(roomDetail.game)) {
+    return result;
+  }
+  const events = [...roomDetail.events].sort((first, second) => first.event_index - second.event_index);
+  const decisionsByAiEventIndex = pairAiDecisionEvents(events, roomDetail.ai_decisions);
+  for (const item of review.feedItems) {
+    const pairs = decisionPairsForFeedItem(item, events, decisionsByAiEventIndex);
+    if (pairs.length > 0) {
+      result.set(item.id, pairs);
+    }
+  }
+  return result;
+}
+
+function pairAiDecisionEvents(
+  events: GameEvent[],
+  decisions: AiDecisionDetail[]
+): Map<number, AiDecisionPair> {
+  const decisionsByKey = new Map<string, AiDecisionDetail[]>();
+  const decisionsByTypeKey = new Map<string, AiDecisionDetail[]>();
+  for (const decision of [...decisions].sort((first, second) => first.id - second.id)) {
+    const key = aiDecisionKey(decision.player_id, decision.phase, decision.decision_type);
+    const typeKey = aiDecisionTypeKey(decision.player_id, decision.decision_type);
+    decisionsByKey.set(key, [...(decisionsByKey.get(key) ?? []), decision]);
+    decisionsByTypeKey.set(typeKey, [...(decisionsByTypeKey.get(typeKey) ?? []), decision]);
+  }
+  const usedByKey = new Map<string, number>();
+  const usedByTypeKey = new Map<string, number>();
+  const paired = new Map<number, AiDecisionPair>();
+  for (const event of events) {
+    if (event.event_type !== "ai_decision") {
+      continue;
+    }
+    const key = aiDecisionKey(
+      valueAsString(event.public_payload.player_id),
+      valueAsString(event.public_payload.phase),
+      valueAsString(event.public_payload.decision_type)
+    );
+    const typeKey = aiDecisionTypeKey(
+      valueAsString(event.public_payload.player_id),
+      valueAsString(event.public_payload.decision_type)
+    );
+    const used = usedByKey.get(key) ?? 0;
+    const typeUsed = usedByTypeKey.get(typeKey) ?? 0;
+    const decision = decisionsByKey.get(key)?.[used] ?? decisionsByTypeKey.get(typeKey)?.[typeUsed];
+    paired.set(event.event_index, {
+      event,
+      decision
+    });
+    usedByKey.set(key, used + 1);
+    usedByTypeKey.set(typeKey, typeUsed + 1);
+  }
+  return paired;
+}
+
+function decisionPairsForFeedItem(
+  item: InformationFeedItem,
+  events: GameEvent[],
+  decisionsByAiEventIndex: Map<number, AiDecisionPair>
+): AiDecisionPair[] {
+  const event = events.find((candidate) => candidate.event_index === item.eventIndex);
+  if (!event) {
+    return [];
+  }
+  if (item.type === "chat") {
+    return compactPairs([
+      latestDecisionBeforeEvent(
+        events,
+        decisionsByAiEventIndex,
+        event.event_index,
+        valueAsString(event.public_payload.player_id),
+        "speech",
+        "speech"
+      )
+    ]);
+  }
+  if (item.broadcast.kind === "team_proposed") {
+    return compactPairs([
+      latestDecisionBeforeEventByType(
+        events,
+        decisionsByAiEventIndex,
+        event.event_index,
+        valueAsString(event.public_payload.leader_player_id),
+        "team_proposal"
+      )
+    ]);
+  }
+  if (item.broadcast.kind === "lady_of_lake_used") {
+    return compactPairs([
+      latestDecisionBeforeEvent(
+        events,
+        decisionsByAiEventIndex,
+        event.event_index,
+        valueAsString(event.public_payload.viewer_player_id),
+        "lady_of_lake",
+        "lady_of_lake"
+      )
+    ]);
+  }
+  if (item.broadcast.kind === "assassination") {
+    return compactPairs([
+      latestDecisionBeforeEvent(
+        events,
+        decisionsByAiEventIndex,
+        event.event_index,
+        valueAsString(event.public_payload.assassin_player_id),
+        "assassination",
+        "assassination"
+      )
+    ]);
+  }
+  if (item.broadcast.kind === "vote_result") {
+    const startIndex = latestEventIndexBefore(events, event.event_index, "team_proposed");
+    return uniquePairs(
+      events
+        .filter(
+          (candidate) =>
+            candidate.event_type === "vote_cast" &&
+            candidate.event_index > startIndex &&
+            candidate.event_index <= event.event_index
+        )
+        .map((candidate) =>
+          latestDecisionBeforeEvent(
+            events,
+            decisionsByAiEventIndex,
+            candidate.event_index,
+            valueAsString(candidate.public_payload.player_id),
+            "voting",
+            "vote"
+          )
+        )
+    );
+  }
+  if (item.broadcast.kind === "quest_result") {
+    const startIndex = latestEventIndexBefore(events, event.event_index, "vote_result");
+    return uniquePairs(
+      events
+        .filter(
+          (candidate) =>
+            candidate.event_type === "quest_action_submitted" &&
+            candidate.event_index > startIndex &&
+            candidate.event_index <= event.event_index
+        )
+        .map((candidate) =>
+          latestDecisionBeforeEvent(
+            events,
+            decisionsByAiEventIndex,
+            candidate.event_index,
+            valueAsString(candidate.public_payload.player_id),
+            "quest",
+            "mission_action"
+          )
+        )
+    );
+  }
+  return [];
+}
+
+function latestDecisionBeforeEvent(
+  events: GameEvent[],
+  decisionsByAiEventIndex: Map<number, AiDecisionPair>,
+  eventIndex: number,
+  playerId: string,
+  phase: string,
+  decisionType: string
+): AiDecisionPair | null {
+  const key = aiDecisionKey(playerId, phase, decisionType);
+  const aiEvent = [...events]
+    .reverse()
+    .find(
+      (event) =>
+        event.event_type === "ai_decision" &&
+        event.event_index < eventIndex &&
+        aiDecisionKey(
+          valueAsString(event.public_payload.player_id),
+          valueAsString(event.public_payload.phase),
+          valueAsString(event.public_payload.decision_type)
+        ) === key
+    );
+  return aiEvent ? decisionsByAiEventIndex.get(aiEvent.event_index) ?? null : null;
+}
+
+function latestDecisionBeforeEventByType(
+  events: GameEvent[],
+  decisionsByAiEventIndex: Map<number, AiDecisionPair>,
+  eventIndex: number,
+  playerId: string,
+  decisionType: string
+): AiDecisionPair | null {
+  const aiEvent = [...events]
+    .reverse()
+    .find(
+      (event) =>
+        event.event_type === "ai_decision" &&
+        event.event_index < eventIndex &&
+        valueAsString(event.public_payload.player_id) === playerId &&
+        valueAsString(event.public_payload.decision_type) === decisionType
+    );
+  return aiEvent ? decisionsByAiEventIndex.get(aiEvent.event_index) ?? null : null;
+}
+
+function latestEventIndexBefore(events: GameEvent[], eventIndex: number, eventType: string) {
+  return Math.max(
+    0,
+    ...events
+      .filter((event) => event.event_type === eventType && event.event_index < eventIndex)
+      .map((event) => event.event_index)
+  );
+}
+
+function compactPairs(pairs: Array<AiDecisionPair | null>) {
+  return pairs.filter((pair): pair is AiDecisionPair => pair !== null);
+}
+
+function uniquePairs(pairs: Array<AiDecisionPair | null>) {
+  const seen = new Set<number>();
+  return compactPairs(pairs).filter((pair) => {
+    if (seen.has(pair.event.event_index)) {
+      return false;
+    }
+    seen.add(pair.event.event_index);
+    return true;
+  });
+}
+
+function aiDecisionKey(playerId: string, phase: string, decisionType: string) {
+  return `${playerId}:${phase}:${decisionType}`;
+}
+
+function aiDecisionTypeKey(playerId: string, decisionType: string) {
+  return `${playerId}:${decisionType}`;
+}
+
+function isGameComplete(game: Pick<GameState, "status" | "phase" | "winner">) {
+  return game.status === "complete" || game.phase === "complete" || Boolean(game.winner);
+}
+
 function playerName(game: GameState, playerId: string) {
   return game.players.find((player) => player.id === playerId)?.name ?? playerId;
 }
@@ -1660,6 +2034,18 @@ function eventLabel(eventType: string) {
   return labels[eventType] ?? eventType;
 }
 
+function decisionTypeLabel(decisionType: string) {
+  const labels: Record<string, string> = {
+    team_proposal: "组队决策",
+    speech: "发言决策",
+    vote: "投票决策",
+    mission_action: "任务行动",
+    assassination: "刺杀决策",
+    lady_of_lake: "湖中仙女"
+  };
+  return labels[decisionType] ?? decisionType;
+}
+
 function eventPayloadForLog(event: GameEvent) {
   if (event.event_type !== "quest_action_submitted") {
     return event.public_payload;
@@ -1668,6 +2054,66 @@ function eventPayloadForLog(event: GameEvent) {
     ...event.public_payload,
     mission_action: event.private_payload?.mission_action
   };
+}
+
+function decisionOutputRaw(event: GameEvent, decision: AiDecisionDetail | undefined) {
+  const outputRaw = event.private_payload?.output_raw;
+  return decision?.output_raw ?? (typeof outputRaw === "string" ? outputRaw : "");
+}
+
+function decisionOutputParsed(event: GameEvent, decision: AiDecisionDetail | undefined) {
+  if (decision?.output_parsed) {
+    return decision.output_parsed;
+  }
+  const parsed = event.private_payload?.output_parsed;
+  return isRecord(parsed) ? parsed : null;
+}
+
+function decisionNumberMetric(
+  event: GameEvent,
+  decision: AiDecisionDetail | undefined,
+  key:
+    | "prompt_tokens"
+    | "completion_tokens"
+    | "total_tokens"
+    | "cached_tokens"
+    | "cache_hit_rate"
+) {
+  const fromDecision = decision?.[key];
+  if (typeof fromDecision === "number") {
+    return fromDecision;
+  }
+  const fromEvent = event.private_payload?.[key];
+  return typeof fromEvent === "number" ? fromEvent : null;
+}
+
+function decisionSummaryText(decision: AiDecisionDetail | undefined, event: GameEvent) {
+  const candidates = [
+    decision?.strategy_summary,
+    textFromRecord(decision?.output_parsed, "private_reason_summary"),
+    textFromRecord(decision?.output_parsed, "public_reason"),
+    textFromRecord(decision?.output_parsed, "public_message"),
+    textFromRecord(decision?.output, "private_reason_summary"),
+    textFromRecord(decision?.output, "public_reason"),
+    textFromRecord(decision?.output, "public_message"),
+    valueAsString(event.public_payload.strategy_summary)
+  ].filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  return candidates[0] ?? "暂无摘要";
+}
+
+function textFromRecord(record: Record<string, unknown> | null | undefined, key: string) {
+  const value = record?.[key];
+  return typeof value === "string" ? value : "";
+}
+
+function valueAsString(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return "";
 }
 
 function promptMessagesForLog(event: GameEvent) {

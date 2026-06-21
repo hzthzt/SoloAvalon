@@ -92,6 +92,32 @@ test("ended rooms show ai usage summaries and missing usage fallback", () => {
   assert.equal(source.includes("暂无数据"), true);
 });
 
+test("ended active game loads room details for private information feed decisions", () => {
+  assert.equal(source.includes("activeRoomDetail"), true);
+  assert.equal(source.includes("refreshActiveRoomDetailIfComplete"), true);
+  assert.equal(source.includes("setActiveRoomDetail(null)"), true);
+  assert.equal(source.includes("roomDetailForActiveReview"), true);
+});
+
+test("active information feed renders expandable ai decision summaries only after completion", () => {
+  assert.equal(source.includes("InformationFeedDecisionDetails"), true);
+  assert.equal(source.includes("decisionsByFeedItem"), true);
+  assert.equal(source.includes("AI 决策摘要"), true);
+  assert.equal(source.includes("查看完整 Prompt 与回答"), true);
+});
+
+test("team proposal feed matches captain decisions even after phase advances", () => {
+  assert.equal(source.includes("latestDecisionBeforeEventByType"), true);
+  assert.equal(source.includes('"team_proposal"'), true);
+});
+
+test("ai decision full details fall back to private event payload fields", () => {
+  assert.equal(source.includes("decisionOutputRaw"), true);
+  assert.equal(source.includes("decisionOutputParsed"), true);
+  assert.equal(source.includes("decisionNumberMetric"), true);
+  assert.equal(source.includes("event.private_payload?.output_raw"), true);
+});
+
 test("start game requires a real model profile instead of fallback", () => {
   assert.equal(source.includes("Fallback"), false);
   assert.equal(source.includes("请选择模型"), true);
@@ -115,6 +141,7 @@ test("ai decision gateway errors offer manual retry", () => {
   assert.equal(source.includes("error.status === 502 || error.status === 504"), true);
   assert.equal(source.includes("手动重试"), true);
 });
+
 
 test("model edit form does not display plain api key from saved profile", () => {
   assert.equal(source.includes("api_key: profile.api_key"), false);
@@ -169,6 +196,25 @@ test("broadcasts render as centered announcement bubbles", () => {
   );
 });
 
+test("announcement bubbles use readable rounded rectangles", () => {
+  assert.equal(styleSource.includes(".announcement-bubble {\n  background: #eef3f8;\n  border: 1px solid #d9e1ea;\n  border-radius: 8px;"), true);
+  assert.equal(styleSource.includes(".announcement-bubble {\n  background: #eef3f8;\n  border: 1px solid #d9e1ea;\n  border-radius: 999px;"), false);
+});
+
+test("announcement ai decision details are left aligned", () => {
+  assert.equal(styleSource.includes(".feed-decision-details {\n  border-top: 1px solid rgba(25, 50, 77, 0.12);\n  justify-self: stretch;"), true);
+  assert.equal(styleSource.includes("  text-align: left;\n  width: 100%;"), true);
+  assert.equal(styleSource.includes(".feed-decision-card {\n  background: #f8fafc;\n  border: 1px solid #d9e1ea;\n  border-radius: 8px;\n  display: grid;\n  gap: 8px;\n  justify-items: stretch;"), true);
+});
+
+test("expanded announcement details can widen without resizing the feed layout", () => {
+  assert.equal(styleSource.includes("  box-sizing: border-box;\n  color: #3c4654;"), true);
+  assert.equal(styleSource.includes("  width: min(100%, 520px);"), true);
+  assert.equal(styleSource.includes(".announcement-bubble:has(.feed-decision-details[open]) {\n  max-width: min(100%, 760px);\n  width: min(100%, 760px);\n}"), true);
+  assert.equal(styleSource.includes(".feed-decision-details {\n  border-top: 1px solid rgba(25, 50, 77, 0.12);\n  justify-self: stretch;\n  margin-top: 8px;\n  max-width: 100%;\n  min-width: 0;"), true);
+  assert.equal(styleSource.includes(".prompt-message pre {\n  background: #f3f6fa;\n  border-radius: 8px;\n  color: #3c4654;\n  margin: 0;\n  max-width: 100%;\n  min-width: 0;\n  overflow: auto;\n  overflow-wrap: anywhere;\n  padding: 10px;\n  text-align: left;\n  white-space: pre-wrap;"), true);
+});
+
 test("game desk title includes current team attempt", () => {
   assert.equal(source.includes("teamAttemptNumber"), true);
   assert.equal(source.includes("第 {game.current_round} 轮任务 · 第 {teamAttemptNumber} 次组队"), true);
@@ -182,4 +228,9 @@ test("start game shows a playing panel before state events arrive", () => {
 test("information feed reveals queued items gradually", () => {
   assert.equal(source.includes("visibleItemCount"), true);
   assert.equal(source.includes("setTimeout"), true);
+});
+
+test("information feed occupies the full center column", () => {
+  assert.equal(styleSource.includes("grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);"), false);
+  assert.equal(styleSource.includes(".game-flow-layout {\n  align-items: start;\n  display: grid;\n  gap: 12px;\n  grid-template-columns: minmax(0, 1fr);"), true);
 });

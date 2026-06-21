@@ -267,6 +267,10 @@ class GameServiceTests(unittest.TestCase):
             self.assertEqual(updated["next_human_action"], "speak")
             self.assertIn("team_proposal", {decision.decision_type for decision in decisions})
             self.assertIn("player_1", {decision.player_id for decision in decisions})
+            team_proposal_decision = next(
+                decision for decision in decisions if decision.decision_type == "team_proposal"
+            )
+            self.assertEqual(team_proposal_decision.phase, Phase.TEAM_PROPOSAL.value)
 
     def test_ai_controlled_state_includes_public_event_flow(self):
         with tempfile.TemporaryDirectory() as tmpdir:
