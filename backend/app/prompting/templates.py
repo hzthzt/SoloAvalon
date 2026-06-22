@@ -126,7 +126,7 @@ def _action_message(
         [
             prompt_config.section_titles["action"],
             f"请求你执行 {action}。",
-            *_action_lines(context.legal_actions, prompt_config),
+            *_action_lines(context, prompt_config),
             prompt_config.labels["json_only"],
             *contract_lines,
             f"当前只执行：{action}。",
@@ -147,9 +147,10 @@ def _temporary_phase_contract(
 
 
 def _action_lines(
-    legal_actions: dict[str, Any],
+    context: AiContext,
     prompt_config: PromptTemplateConfig,
 ) -> list[str]:
+    legal_actions = context.legal_actions
     action = str(legal_actions.get("action", "none"))
     if action == "propose_team":
         return [
@@ -166,6 +167,7 @@ def _action_lines(
     if action == "vote":
         return [
             *prompt_config.action_prompts["vote"]["lines"],
+            *_completed_quest_result_reminder_lines(context, prompt_config),
             f"当前可选：{_join_or_none(legal_actions.get('votes'))}。",
         ]
     if action == "mission_action":
@@ -195,6 +197,23 @@ def _action_lines(
             "本次临时 JSON 格式：",
         ]
     return list(prompt_config.action_prompts["none"]["lines"])
+
+
+def _completed_quest_result_reminder_lines(
+    context: AiContext,
+    prompt_config: PromptTemplateConfig,
+) -> list[str]:
+    results = _payload_list(context.public_state, "quest_results")
+    if not results:
+        return []
+    result_parts = [
+        f"第 {index} 轮{_quest_result_label(result, prompt_config)}"
+        for index, result in enumerate(results, start=1)
+    ]
+    return [
+        f"已完成任务结果：{'；'.join(result_parts)}。"
+        "投票前请再次重点参考这些任务结果。"
+    ]
 
 
 def _player_visible_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:

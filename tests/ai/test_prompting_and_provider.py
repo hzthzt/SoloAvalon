@@ -383,6 +383,30 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertIn('"private_reason_summary"', vote_prompt)
         self.assertNotIn('"public_reason"', vote_prompt)
 
+    def test_vote_prompt_reemphasizes_completed_quest_results_after_first_quest(self):
+        base_state = create_five_player_game(seed=20)
+        first_vote_context = ContextBuilder().build(base_state, base_state.players[1].id, Phase.VOTING)
+        first_vote_action = PromptBuilder().build_messages(first_vote_context, Phase.VOTING)[-1]["content"]
+
+        second_round_state = base_state.__class__(
+            players=base_state.players,
+            missions=base_state.missions,
+            current_round=2,
+            phase=Phase.VOTING,
+            proposed_team=("player_2", "player_3", "player_4"),
+            quest_results=(False,),
+        )
+        second_vote_context = ContextBuilder().build(
+            second_round_state,
+            second_round_state.players[1].id,
+            Phase.VOTING,
+        )
+        second_vote_action = PromptBuilder().build_messages(second_vote_context, Phase.VOTING)[-1]["content"]
+
+        self.assertNotIn("已完成任务结果", first_vote_action)
+        self.assertIn("已完成任务结果：第 1 轮失败。", second_vote_action)
+        self.assertIn("投票前请再次重点参考这些任务结果。", second_vote_action)
+
     def test_speech_prompt_discourages_repeated_stock_phrasing(self):
         state = create_five_player_game(seed=20)
         state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
