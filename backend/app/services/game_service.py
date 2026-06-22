@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from dataclasses import asdict, is_dataclass, replace
 from enum import Enum
 from typing import Any, Callable
@@ -50,8 +51,17 @@ from backend.app.storage.llm_profile_repository import LlmProfileRepository
 from .event_visibility import normalize_public_player_references, public_event_dicts
 
 
+def _synchronized(method: Callable[..., Any]) -> Callable[..., Any]:
+    def wrapper(self: "GameService", *args: Any, **kwargs: Any) -> Any:
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 class GameService:
     def __init__(self, connection: sqlite3.Connection, ai_player: AiPlayer | None = None):
+        self._lock = threading.RLock()
         self._connection = connection
         self._games = GameRepository(connection)
         self._events = EventStore(connection)
@@ -65,6 +75,7 @@ class GameService:
     def connection(self) -> sqlite3.Connection:
         return self._connection
 
+    @_synchronized
     def create_game(
         self,
         *,
@@ -109,6 +120,7 @@ class GameService:
     def get_game_state(self, game_id: str) -> dict[str, Any]:
         return self._public_state(game_id, self._state(game_id))
 
+    @_synchronized
     def submit_human_action(
         self,
         game_id: str,
@@ -188,6 +200,7 @@ class GameService:
         state = self._auto_advance(game_id)
         return self._public_state(game_id, state)
 
+    @_synchronized
     def submit_human_ai_action(self, game_id: str) -> dict[str, Any]:
         self._ensure_playable(game_id)
         state = self._state(game_id)
@@ -345,13 +358,31 @@ class GameService:
         state = self._auto_advance(game_id)
         return self._public_state(game_id, state)
 
+    @_synchronized
+    def retry_paused_game(self, game_id: str) -> dict[str, Any]:
+        self._ensure_playable(game_id)
+        state = self._state(game_id)
+        if state.phase == Phase.COMPLETE:
+            return self._public_state(game_id, state)
+
+        summary = self._games.get_game_summary(game_id)
+        if summary is None:
+            raise ValueError(f"unknown active game id: {game_id}")
+        if summary.status != "error_paused":
+            return self._public_state(game_id, state)
+
+        state = self._auto_advance(game_id)
+        return self._public_state(game_id, state)
+
     def list_games(self) -> list[GameSummary]:
         return self._games.list_games()
 
+    @_synchronized
     def delete_game(self, game_id: str) -> None:
         self._states.pop(game_id, None)
         self._games.delete_game(game_id)
 
+    @_synchronized
     def archive_game(self, game_id: str) -> GameSummary:
         return self._games.archive_game(game_id)
 
@@ -403,7 +434,14 @@ class GameService:
                     ),
                 )
                 state = propose_team(state, leader.id, result.decision.team)
-                self._log_ai_decision(game_id, leader.id, state.phase, "team_proposal", profile, result)
+                self._log_ai_decision(
+                    game_id,
+                    leader.id,
+                    Phase.TEAM_PROPOSAL,
+                    "team_proposal",
+                    profile,
+                    result,
+                )
                 self._events.append_event(
                     game_id,
                     "team_proposed",

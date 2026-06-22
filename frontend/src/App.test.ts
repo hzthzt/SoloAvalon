@@ -154,6 +154,14 @@ test("ai decision gateway errors offer manual retry", () => {
   assert.equal(source.includes("手动重试"), true);
 });
 
+test("error paused games expose a generic retry advance action", () => {
+  assert.equal(apiSource.includes("retryPausedGame"), true);
+  assert.equal(apiSource.includes("/retry"), true);
+  assert.equal(source.includes('game.status === "error_paused"'), true);
+  assert.equal(source.includes("sendPausedGameRetry"), true);
+  assert.equal(source.includes("重试推进"), true);
+});
+
 test("api errors include structured backend error details and tracebacks", () => {
   assert.equal(apiSource.includes("formatErrorDetail"), true);
   assert.equal(apiSource.includes("error_type"), true);

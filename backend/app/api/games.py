@@ -52,6 +52,9 @@ class GamesApi:
     def submit_human_ai_action(self, game_id: str) -> dict[str, Any]:
         return self._service.submit_human_ai_action(game_id)
 
+    def retry_paused_game(self, game_id: str) -> dict[str, Any]:
+        return self._service.retry_paused_game(game_id)
+
     def list_events(self, game_id: str, include_private: bool = False) -> list[dict[str, Any]]:
         events = self._service.list_events(game_id)
         if include_private:
@@ -112,6 +115,10 @@ def build_games_router(service: GameService):
     @router.post("/{game_id}/ai-actions/human")
     def submit_human_ai_action(game_id: str):
         return _call(lambda: api.submit_human_ai_action(game_id))
+
+    @router.post("/{game_id}/retry")
+    def retry_paused_game(game_id: str):
+        return _call(lambda: api.retry_paused_game(game_id))
 
     @router.get("/{game_id}/events")
     def list_events(game_id: str, include_private: bool = False):

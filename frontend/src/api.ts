@@ -174,6 +174,10 @@ export async function submitHumanAiAction(gameId: string): Promise<GameState> {
   return request(`${gamePath(gameId)}/ai-actions/human`, { method: "POST" });
 }
 
+export async function retryPausedGame(gameId: string): Promise<GameState> {
+  return request(`${gamePath(gameId)}/retry`, { method: "POST" });
+}
+
 export async function listGames(): Promise<GameSummary[]> {
   return request("/api/games");
 }

@@ -38,6 +38,7 @@ import {
   LlmProfile,
   LlmProfileInput,
   PlayerView,
+  retryPausedGame,
   RoomDetail,
   submitAction,
   submitHumanAiAction,
@@ -316,6 +317,21 @@ export function App() {
     });
   }
 
+  async function sendPausedGameRetry() {
+    if (!game) {
+      return;
+    }
+    await run(async () => {
+      const updated = await retryPausedGame(game.id);
+      await applyActiveGame(updated);
+      setSelectedTeam([updated.human_player_id]);
+      setSpeech("");
+      setAssassinationTarget("");
+      setLadyOfLakeTarget("");
+      await refreshLists();
+    });
+  }
+
   async function driveHumanWithAi(start: GameState, repeat: boolean) {
     setAutoPlaying(true);
     try {
@@ -480,6 +496,15 @@ export function App() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
       onError?.(error);
+      if (isRetryableAiDecisionError(error) && game) {
+        try {
+          const updated = await getGame(game.id);
+          await applyActiveGame(updated);
+          await refreshLists();
+        } catch {
+          // 保留原始错误提示，刷新失败不覆盖它。
+        }
+      }
     } finally {
       setBusy(false);
     }
@@ -676,6 +701,17 @@ export function App() {
                         湖女：{playerName(game, playerId)} 是{factionLabel(faction)}
                       </span>
                     ))}
+                  </div>
+                )}
+                {game.status === "error_paused" && (
+                  <div className="button-row">
+                    <button
+                      className="primary"
+                      disabled={busy || autoPlaying}
+                      onClick={sendPausedGameRetry}
+                    >
+                      <RefreshCw size={18} /> 重试推进
+                    </button>
                   </div>
                 )}
                 {activeAction && (

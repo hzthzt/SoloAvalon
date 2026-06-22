@@ -1,6 +1,8 @@
 import json
 import re
 import tempfile
+import threading
+import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -308,6 +310,18 @@ class GameServiceTests(unittest.TestCase):
             self.assertIn("speech", {decision.decision_type for decision in decisions})
             self.assertTrue(all(decision.prompt_template_version for decision in decisions))
 
+    def test_auto_team_proposal_decision_keeps_team_proposal_phase(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = _service(tmpdir)
+            state = service.create_game(seed=20260619)
+
+            decisions = AiDecisionRepository(service.connection).list_decisions(state["id"])
+            team_decision = next(
+                decision for decision in decisions if decision.decision_type == "team_proposal"
+            )
+
+            self.assertEqual(team_decision.phase, Phase.TEAM_PROPOSAL.value)
+
     def test_ai_turn_usage_is_persisted_as_ai_decision_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             class UsageProvider(_DeterministicProvider):
@@ -406,6 +420,80 @@ class GameServiceTests(unittest.TestCase):
 
             self.assertEqual(updated["status"], "active")
             self.assertEqual(service.list_games()[0].status, "active")
+
+    def test_retry_paused_game_continues_failed_non_human_ai_turn(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            class FailingProvider:
+                def chat_completion(self, profile, messages):
+                    raise RuntimeError("speaker provider offline")
+
+            service = _service(tmpdir)
+            state = service.create_game(seed=2)
+            state = service.submit_human_action(
+                state["id"],
+                "propose_team",
+                {"team": ["player_1", "player_2"]},
+            )
+
+            service._ai_player = AiPlayer(provider=FailingProvider())
+            with self.assertRaises(AiDecisionError):
+                service.submit_human_action(
+                    state["id"],
+                    "speak",
+                    {"message": "I trust this opening team."},
+                )
+            self.assertEqual(service.list_games()[0].status, "error_paused")
+            self.assertEqual(service.get_game_state(state["id"])["next_human_action"], None)
+
+            service._ai_player = AiPlayer(provider=_DeterministicProvider())
+            updated = service.retry_paused_game(state["id"])
+
+            self.assertEqual(updated["status"], "active")
+            self.assertEqual(updated["phase"], Phase.VOTING.value)
+            self.assertEqual(updated["next_human_action"], "vote")
+            self.assertEqual(service.list_games()[0].status, "active")
+
+    def test_game_state_read_is_available_while_ai_advance_is_waiting(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            started = threading.Event()
+            release = threading.Event()
+
+            class BlockingProvider(_DeterministicProvider):
+                def chat_completion(self, profile, messages):
+                    text = "\n".join(message["content"] for message in messages)
+                    if "请求你执行 speak" in _current_action_text(text):
+                        started.set()
+                        release.wait(timeout=2)
+                    return super().chat_completion(profile, messages)
+
+            service = _service(tmpdir)
+            state = service.create_game(seed=2)
+            state = service.submit_human_action(
+                state["id"],
+                "propose_team",
+                {"team": ["player_1", "player_2"]},
+            )
+            service._ai_player = AiPlayer(provider=BlockingProvider())
+
+            worker = threading.Thread(
+                target=lambda: service.submit_human_action(
+                    state["id"],
+                    "speak",
+                    {"message": "I trust this opening team."},
+                )
+            )
+            worker.start()
+            self.assertTrue(started.wait(timeout=1))
+            try:
+                before = time.monotonic()
+                readable = service.get_game_state(state["id"])
+                elapsed = time.monotonic() - before
+            finally:
+                release.set()
+                worker.join(timeout=2)
+
+            self.assertLess(elapsed, 0.5)
+            self.assertEqual(readable["id"], state["id"])
 
     def test_ai_turns_are_persisted_as_private_memory_snapshots(self):
         with tempfile.TemporaryDirectory() as tmpdir:

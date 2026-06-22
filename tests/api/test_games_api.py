@@ -71,6 +71,23 @@ class GamesApiTests(unittest.TestCase):
             self.assertEqual(updated["phase"], "speech")
             self.assertEqual(updated["next_human_action"], "speak")
 
+    def test_games_api_retries_paused_game(self):
+        class RetryService:
+            def __init__(self):
+                self.game_id = None
+
+            def retry_paused_game(self, game_id):
+                self.game_id = game_id
+                return {"id": game_id, "status": "active"}
+
+        service = RetryService()
+        api = GamesApi(service)
+
+        result = api.retry_paused_game("game_1")
+
+        self.assertEqual(service.game_id, "game_1")
+        self.assertEqual(result, {"id": "game_1", "status": "active"})
+
     def test_route_wrapper_reports_ai_timeout_as_gateway_timeout(self):
         def fail_with_timeout():
             raise _ai_decision_error("TimeoutError", "The read operation timed out")
