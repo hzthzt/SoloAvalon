@@ -95,3 +95,21 @@ class EventStoreTests(unittest.TestCase):
             finally:
                 connection.close()
 
+    def test_append_event_can_defer_commit_to_outer_transaction(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
+            try:
+                initialize_database(connection)
+                GameRepository(connection).save_new_game(
+                    create_five_player_game(seed=13),
+                    game_id="game_1",
+                )
+                store = EventStore(connection, autocommit=False)
+
+                store.append_event("game_1", "game_created", public_payload={"game_id": "game_1"})
+                connection.rollback()
+
+                self.assertEqual(store.list_events("game_1"), [])
+            finally:
+                connection.close()
+

@@ -22,6 +22,7 @@ from backend.app.game.rules import (
     submit_quest_action,
 )
 from backend.app.llm.provider import LlmCompletionResult
+from backend.app.services.game_flow import GameReplayError
 from backend.app.services.game_service import GameService
 from backend.app.storage.ai_decision_repository import AiDecisionRepository
 from backend.app.storage.ai_memory_repository import AiMemoryRepository
@@ -724,6 +725,85 @@ class GameServiceTests(unittest.TestCase):
             finally:
                 restored_connection.close()
 
+    def test_restore_reports_stale_invalid_suffix(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            database_path = Path(tmpdir) / "soloavalon.sqlite3"
+            connection = connect_sqlite(database_path)
+            try:
+                initialize_database(connection)
+                service = GameService(connection, ai_player=AiPlayer(provider=_DeterministicProvider()))
+                state = service.create_game(seed=2)
+                service._events.append_event(
+                    state["id"],
+                    "quest_action_submitted",
+                    {"player_id": "player_1"},
+                    {"mission_action": MissionAction.SUCCESS.value},
+                )
+                event_count = len(service.list_events(state["id"]))
+            finally:
+                connection.close()
+
+            restored_connection = connect_sqlite(database_path)
+            try:
+                initialize_database(restored_connection)
+                restored_service = GameService(restored_connection)
+
+                with self.assertRaises(GameReplayError) as raised:
+                    restored_service.get_game_state(state["id"])
+
+                self.assertEqual(raised.exception.last_replayed_event_index, 0)
+                self.assertEqual(raised.exception.failed_event_index, event_count)
+                self.assertIn(
+                    "quest actions can only be submitted during quest phase",
+                    str(raised.exception),
+                )
+            finally:
+                restored_connection.close()
+
+    def test_auto_advance_persists_progress_before_later_ai_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = _service(
+                tmpdir,
+                ai_player=AiPlayer(provider=_TimeoutTeamProposalProvider()),
+            )
+            state = service.create_game(
+                seed=2,
+                player_count=10,
+                enabled_options={GameOption.LADY_OF_LAKE},
+            )
+            internal_state = service._state(state["id"])
+            internal_state = replace(
+                internal_state,
+                phase=Phase.QUEST,
+                current_round=2,
+                leader_index=1,
+                proposed_team=("player_2", "player_3", "player_4", "player_5"),
+                quest_results=(True,),
+                quest_actions={},
+            )
+            service._set_state(state["id"], internal_state)
+
+            with self.assertRaises(AiDecisionError):
+                service._auto_advance(state["id"])
+            quest_actions_after_error = [
+                event
+                for event in service.list_events(state["id"])
+                if event.event_type == "quest_action_submitted"
+            ]
+
+            with self.assertRaises(AiDecisionError):
+                service._auto_advance(state["id"])
+
+            self.assertEqual(
+                [
+                    event.event_index
+                    for event in service.list_events(state["id"])
+                    if event.event_type == "quest_action_submitted"
+                ],
+                [event.event_index for event in quest_actions_after_error],
+            )
+            self.assertEqual(service._state(state["id"]).phase, Phase.TEAM_PROPOSAL)
+
 
 def _service(tmpdir, ai_player=None):
     connection = connect_sqlite(":memory:")
@@ -798,6 +878,15 @@ class _DeterministicProvider:
                 ensure_ascii=False,
             )
         raise RuntimeError("unhandled test prompt")
+
+
+class _TimeoutTeamProposalProvider(_DeterministicProvider):
+    def chat_completion(self, profile, messages):
+        text = "\n".join(message["content"] for message in messages)
+        action_text = _current_action_text(text)
+        if "请求你执行 propose_team" in action_text:
+            raise TimeoutError("测试组队超时")
+        return super().chat_completion(profile, messages)
 
 
 def _current_action_text(text):

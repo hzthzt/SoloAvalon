@@ -19,8 +19,9 @@ class EventRecord:
 
 
 class EventStore:
-    def __init__(self, connection: sqlite3.Connection):
+    def __init__(self, connection: sqlite3.Connection, *, autocommit: bool = True):
         self._connection = connection
+        self._autocommit = autocommit
 
     def append_event(
         self,
@@ -47,7 +48,7 @@ class EventStore:
                 created_at,
             ),
         )
-        self._connection.commit()
+        self._commit_if_needed()
         return EventRecord(
             id=int(cursor.lastrowid),
             game_id=game_id,
@@ -124,6 +125,10 @@ class EventStore:
             (game_id,),
         ).fetchone()
         return int(row["next_index"])
+
+    def _commit_if_needed(self) -> None:
+        if self._autocommit:
+            self._connection.commit()
 
 
 def _event_from_row(row: sqlite3.Row) -> EventRecord:

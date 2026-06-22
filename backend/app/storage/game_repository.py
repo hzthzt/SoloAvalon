@@ -41,8 +41,9 @@ class StoredPlayer:
 
 
 class GameRepository:
-    def __init__(self, connection: sqlite3.Connection):
+    def __init__(self, connection: sqlite3.Connection, *, autocommit: bool = True):
         self._connection = connection
+        self._autocommit = autocommit
 
     def save_new_game(
         self,
@@ -108,7 +109,7 @@ class GameRepository:
                 for player in state.players
             ],
         )
-        self._connection.commit()
+        self._commit_if_needed()
 
     def get_game_summary(self, game_id: str) -> GameSummary | None:
         row = self._connection.execute(
@@ -162,7 +163,7 @@ class GameRepository:
 
     def delete_game(self, game_id: str) -> None:
         self._connection.execute("delete from games where id = ?", (game_id,))
-        self._connection.commit()
+        self._commit_if_needed()
 
     def update_game_state(self, game_id: str, state: GameState) -> None:
         status = "complete" if state.winner is not None else "active"
@@ -185,7 +186,7 @@ class GameRepository:
                 game_id,
             ),
         )
-        self._connection.commit()
+        self._commit_if_needed()
         if cursor.rowcount == 0:
             raise ValueError(f"unknown game id: {game_id}")
 
@@ -199,7 +200,7 @@ class GameRepository:
             """,
             (status, _utc_now(), game_id),
         )
-        self._connection.commit()
+        self._commit_if_needed()
         if cursor.rowcount == 0:
             raise ValueError(f"unknown game id: {game_id}")
 
@@ -219,7 +220,7 @@ class GameRepository:
             """,
             (archived_at, archived_at, game_id),
         )
-        self._connection.commit()
+        self._commit_if_needed()
         archived = self.get_game_summary(game_id)
         if archived is None:
             raise RuntimeError("failed to archive game")
@@ -239,9 +240,13 @@ class GameRepository:
             """,
             (llm_profile_id, game_id, player_id),
         )
-        self._connection.commit()
+        self._commit_if_needed()
         if cursor.rowcount == 0:
             raise ValueError(f"unknown player id for game: {game_id}/{player_id}")
+
+    def _commit_if_needed(self) -> None:
+        if self._autocommit:
+            self._connection.commit()
 
 
 def _matching_numbers(values: Iterable[str | None], pattern: str) -> list[int]:

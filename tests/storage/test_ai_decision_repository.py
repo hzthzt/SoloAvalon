@@ -67,3 +67,43 @@ class AiDecisionRepositoryTests(unittest.TestCase):
                 self.assertEqual(decisions[0].cache_hit_rate, 0.4)
             finally:
                 connection.close()
+
+    def test_save_decision_can_defer_commit_to_outer_transaction(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
+            try:
+                initialize_database(connection)
+                GameRepository(connection).save_new_game(
+                    create_five_player_game(seed=20260616),
+                    game_id="game_1",
+                )
+                repository = AiDecisionRepository(connection, autocommit=False)
+
+                repository.save_decision(
+                    AiDecisionInput(
+                        game_id="game_1",
+                        player_id="player_2",
+                        phase=Phase.SPEECH.value,
+                        decision_type="speech",
+                        input_summary="phase=speech;round=1;viewer=player_2;events=0",
+                        strategy_summary="model speech",
+                        output={"public_message": "I support this team."},
+                        model_name="test-model",
+                        llm_profile_id=None,
+                        prompt_template_name="speech",
+                        prompt_template_version="prompt.v1",
+                        context_builder_version="context-builder.v1",
+                        stable_prefix_hash="hash",
+                        cache_strategy="stable-prefix-v1",
+                        context_summary="summary",
+                        context_truncated=False,
+                        output_raw=None,
+                        output_parsed=None,
+                        validation_status="valid",
+                    )
+                )
+                connection.rollback()
+
+                self.assertEqual(repository.list_decisions("game_1"), [])
+            finally:
+                connection.close()

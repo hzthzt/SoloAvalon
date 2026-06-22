@@ -66,8 +66,9 @@ class StoredAiDecision:
 
 
 class AiDecisionRepository:
-    def __init__(self, connection: sqlite3.Connection):
+    def __init__(self, connection: sqlite3.Connection, *, autocommit: bool = True):
         self._connection = connection
+        self._autocommit = autocommit
 
     def save_decision(self, decision: AiDecisionInput) -> StoredAiDecision:
         created_at = _utc_now()
@@ -111,7 +112,7 @@ class AiDecisionRepository:
                 created_at,
             ),
         )
-        self._connection.commit()
+        self._commit_if_needed()
         saved = self.get_decision(int(cursor.lastrowid))
         if saved is None:
             raise RuntimeError("failed to save ai decision")
@@ -130,6 +131,10 @@ class AiDecisionRepository:
             (game_id,),
         ).fetchall()
         return [_decision_from_row(row) for row in rows]
+
+    def _commit_if_needed(self) -> None:
+        if self._autocommit:
+            self._connection.commit()
 
 
 def _decision_from_row(row: sqlite3.Row) -> StoredAiDecision:

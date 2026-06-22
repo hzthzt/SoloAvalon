@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from backend.app.game.models import GameOption, Phase
-from backend.app.game.rules import create_five_player_game, create_game
+from backend.app.game.rules import create_five_player_game, create_game, propose_team
 from backend.app.storage.database import connect_sqlite, initialize_database
 from backend.app.storage.game_repository import GameRepository
 
@@ -123,6 +123,25 @@ class GameRepositoryTests(unittest.TestCase):
 
                 self.assertIsNone(repository.get_game_summary("game_1"))
                 self.assertEqual(repository.list_players("game_1"), [])
+            finally:
+                connection.close()
+
+    def test_update_game_state_can_defer_commit_to_outer_transaction(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
+            try:
+                initialize_database(connection)
+                state = create_five_player_game(seed=5)
+                repository = GameRepository(connection)
+                repository.save_new_game(state, game_id="game_1")
+                transactional_repository = GameRepository(connection, autocommit=False)
+                next_state = propose_team(state, "player_1", ("player_1", "player_2"))
+
+                transactional_repository.update_game_state("game_1", next_state)
+                connection.rollback()
+
+                summary = repository.get_game_summary("game_1")
+                self.assertEqual(summary.current_phase, Phase.TEAM_PROPOSAL.value)
             finally:
                 connection.close()
 

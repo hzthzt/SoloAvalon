@@ -24,17 +24,8 @@ from backend.app.game.models import (
     Vote,
 )
 from backend.app.game.rules import (
-    STANDARD_MISSION_CONFIGS,
-    assassinate,
-    cast_vote,
     create_game as create_rules_game,
     eligible_lady_of_lake_target_ids,
-    finalize_quest,
-    finalize_vote,
-    propose_team,
-    record_speech,
-    submit_quest_action,
-    use_lady_of_lake,
 )
 from backend.app.llm.profiles import LlmProfile
 from backend.app.storage.event_store import EventRecord, EventStore
@@ -49,6 +40,16 @@ from backend.app.storage.ai_memory_repository import (
 from backend.app.storage.game_repository import GameRepository, GameSummary
 from backend.app.storage.llm_profile_repository import LlmProfileRepository
 from .event_visibility import normalize_public_player_references, public_event_dicts
+from .game_flow import (
+    GameAdvanceLoop,
+    GameCommitter,
+    GameReplayError,
+    GameStateLoader,
+    GameStepRunner,
+    PendingEvent,
+    StepResult,
+    apply_replay_event,
+)
 
 
 def _synchronized(method: Callable[..., Any]) -> Callable[..., Any]:
@@ -70,6 +71,26 @@ class GameService:
         self._profiles = LlmProfileRepository(connection)
         self._ai_player = ai_player or AiPlayer()
         self._states: dict[str, GameState] = {}
+        self._step_runner = GameStepRunner()
+        self._committer = GameCommitter(
+            connection,
+            self._games,
+            self._events,
+            self._ai_decisions,
+            self._ai_memory,
+            self._states,
+        )
+        self._advance_loop = GameAdvanceLoop(
+            ai_player=lambda: self._ai_player,
+            profile_for_ai=self._profile_for_ai,
+            run_ai_turn=self._run_ai_turn,
+            attach_ai_decision=self._step_with_ai_decision,
+            public_events_for_ai=self._public_events_for_ai,
+            next_human_action=self._next_human_action,
+            set_state=self._set_state,
+            step_runner=self._step_runner,
+            committer=self._committer,
+        )
 
     @property
     def connection(self) -> sqlite3.Connection:
@@ -134,69 +155,14 @@ class GameService:
         if action_type != expected:
             raise ValueError(f"expected human action {expected}, got {action_type}")
 
-        if action_type == "propose_team":
-            state = propose_team(state, human.id, tuple(payload["team"]))
-            self._events.append_event(
-                game_id,
-                "team_proposed",
-                {"leader_player_id": human.id, "team": list(state.proposed_team)},
-            )
-        elif action_type == "speak":
-            message = str(payload["message"])
-            state = record_speech(state, human.id, message)
-            self._events.append_event(
-                game_id,
-                "speech",
-                {"player_id": human.id, "message": message},
-            )
-        elif action_type == "vote":
-            vote = Vote(payload["vote"])
-            state = cast_vote(state, human.id, vote)
-            self._events.append_event(
-                game_id,
-                "vote_cast",
-                {"player_id": human.id, "vote": vote.value},
-            )
-        elif action_type == "mission_action":
-            action = MissionAction(payload["mission_action"])
-            state = submit_quest_action(state, human.id, action)
-            self._events.append_event(
-                game_id,
-                "quest_action_submitted",
-                {"player_id": human.id},
-                {"mission_action": action.value},
-            )
-        elif action_type == "assassinate":
-            target = str(payload["target_player_id"])
-            state = assassinate(state, human.id, target)
-            self._events.append_event(
-                game_id,
-                "assassination",
-                {
-                    "assassin_player_id": human.id,
-                    "target_player_id": target,
-                    "winner": state.winner.value if state.winner else None,
-                },
-            )
-        elif action_type == "use_lady_of_lake":
-            target = str(payload["target_player_id"])
-            state = use_lady_of_lake(state, human.id, target)
-            inspection = state.lady_of_lake_inspections[-1]
-            self._events.append_event(
-                game_id,
-                "lady_of_lake_used",
-                {
-                    "viewer_player_id": human.id,
-                    "target_player_id": target,
-                    "next_holder_player_id": target,
-                    "round_number": inspection.round_number,
-                },
-                {"target_faction": inspection.target_faction.value},
-            )
-        else:
-            raise ValueError(f"unknown action type: {action_type}")
-
-        self._set_state(game_id, state)
+        step_result = self._step_runner.apply_human_action(
+            game_id,
+            state,
+            action_type,
+            payload,
+            human_player_id=human.id,
+        )
+        state = self._committer.commit_step(game_id, state, step_result)
         state = self._auto_advance(game_id)
         return self._public_state(game_id, state)
 
@@ -224,12 +190,20 @@ class GameService:
                     public_events=self._public_events_for_ai(game_id),
                 ),
             )
-            state = propose_team(state, human.id, result.decision.team)
-            self._log_ai_decision(game_id, human.id, Phase.TEAM_PROPOSAL, "team_proposal", profile, result)
-            self._events.append_event(
+            step_result = self._step_runner.apply_player_action(
+                state,
+                human.id,
+                "propose_team",
+                {"team": result.decision.team},
+            )
+            step_result = self._step_with_ai_decision(
+                step_result,
                 game_id,
-                "team_proposed",
-                {"leader_player_id": human.id, "team": list(state.proposed_team)},
+                human.id,
+                Phase.TEAM_PROPOSAL,
+                "team_proposal",
+                profile,
+                result,
             )
         elif action_type == "speak":
             result = self._run_ai_turn(
@@ -245,12 +219,20 @@ class GameService:
                     public_events=self._public_events_for_ai(game_id),
                 ),
             )
-            state = record_speech(state, human.id, result.decision.public_message)
-            self._log_ai_decision(game_id, human.id, Phase.SPEECH, "speech", profile, result)
-            self._events.append_event(
+            step_result = self._step_runner.apply_player_action(
+                state,
+                human.id,
+                "speak",
+                {"message": result.decision.public_message},
+            )
+            step_result = self._step_with_ai_decision(
+                step_result,
                 game_id,
+                human.id,
+                Phase.SPEECH,
                 "speech",
-                {"player_id": human.id, "message": result.decision.public_message},
+                profile,
+                result,
             )
         elif action_type == "vote":
             result = self._run_ai_turn(
@@ -266,16 +248,29 @@ class GameService:
                     public_events=self._public_events_for_ai(game_id),
                 ),
             )
-            state = cast_vote(state, human.id, result.decision.vote)
-            self._log_ai_decision(game_id, human.id, Phase.VOTING, "vote", profile, result)
-            self._events.append_event(
+            step_result = self._step_runner.apply_player_action(
+                state,
+                human.id,
+                "vote",
+                {"vote": result.decision.vote.value},
+            )
+            step_result = self._step_with_ai_decision(
+                step_result,
                 game_id,
-                "vote_cast",
-                {"player_id": human.id, "vote": result.decision.vote.value},
+                human.id,
+                Phase.VOTING,
+                "vote",
+                profile,
+                result,
             )
         elif action_type == "mission_action":
             if human.faction == Faction.GOOD:
-                state = submit_quest_action(state, human.id, MissionAction.SUCCESS)
+                step_result = self._step_runner.apply_player_action(
+                    state,
+                    human.id,
+                    "mission_action",
+                    {"mission_action": MissionAction.SUCCESS.value},
+                )
             else:
                 result = self._run_ai_turn(
                     game_id,
@@ -290,14 +285,21 @@ class GameService:
                         public_events=self._public_events_for_ai(game_id),
                     ),
                 )
-                state = submit_quest_action(state, human.id, result.decision.mission_action)
-                self._log_ai_decision(game_id, human.id, Phase.QUEST, "mission_action", profile, result)
-            self._events.append_event(
-                game_id,
-                "quest_action_submitted",
-                {"player_id": human.id},
-                {"mission_action": state.quest_actions[human.id].value},
-            )
+                step_result = self._step_runner.apply_player_action(
+                    state,
+                    human.id,
+                    "mission_action",
+                    {"mission_action": result.decision.mission_action.value},
+                )
+                step_result = self._step_with_ai_decision(
+                    step_result,
+                    game_id,
+                    human.id,
+                    Phase.QUEST,
+                    "mission_action",
+                    profile,
+                    result,
+                )
         elif action_type == "assassinate":
             result = self._run_ai_turn(
                 game_id,
@@ -312,16 +314,20 @@ class GameService:
                     public_events=self._public_events_for_ai(game_id),
                 ),
             )
-            state = assassinate(state, human.id, result.decision.target_player_id)
-            self._log_ai_decision(game_id, human.id, Phase.ASSASSINATION, "assassination", profile, result)
-            self._events.append_event(
+            step_result = self._step_runner.apply_player_action(
+                state,
+                human.id,
+                "assassinate",
+                {"target_player_id": result.decision.target_player_id},
+            )
+            step_result = self._step_with_ai_decision(
+                step_result,
                 game_id,
+                human.id,
+                Phase.ASSASSINATION,
                 "assassination",
-                {
-                    "assassin_player_id": human.id,
-                    "target_player_id": result.decision.target_player_id,
-                    "winner": state.winner.value if state.winner else None,
-                },
+                profile,
+                result,
             )
         elif action_type == "use_lady_of_lake":
             result = self._run_ai_turn(
@@ -337,31 +343,32 @@ class GameService:
                     public_events=self._public_events_for_ai(game_id),
                 ),
             )
-            state = use_lady_of_lake(state, human.id, result.decision.target_player_id)
-            self._log_ai_decision(game_id, human.id, Phase.LADY_OF_LAKE, "lady_of_lake", profile, result)
-            inspection = state.lady_of_lake_inspections[-1]
-            self._events.append_event(
+            step_result = self._step_runner.apply_player_action(
+                state,
+                human.id,
+                "use_lady_of_lake",
+                {"target_player_id": result.decision.target_player_id},
+            )
+            step_result = self._step_with_ai_decision(
+                step_result,
                 game_id,
-                "lady_of_lake_used",
-                {
-                    "viewer_player_id": human.id,
-                    "target_player_id": result.decision.target_player_id,
-                    "next_holder_player_id": result.decision.target_player_id,
-                    "round_number": inspection.round_number,
-                },
-                {"target_faction": inspection.target_faction.value},
+                human.id,
+                Phase.LADY_OF_LAKE,
+                "lady_of_lake",
+                profile,
+                result,
             )
         else:
             raise ValueError(f"unknown human action type: {action_type}")
 
-        self._set_state(game_id, state)
+        state = self._committer.commit_step(game_id, state, step_result)
         state = self._auto_advance(game_id)
         return self._public_state(game_id, state)
 
     @_synchronized
     def retry_paused_game(self, game_id: str) -> dict[str, Any]:
         self._ensure_playable(game_id)
-        state = self._state(game_id)
+        state = self._reload_state(game_id)
         if state.phase == Phase.COMPLETE:
             return self._public_state(game_id, state)
 
@@ -411,272 +418,28 @@ class GameService:
 
     def _auto_advance(self, game_id: str) -> GameState:
         state = self._state(game_id)
-        for _ in range(100):
-            human_action = self._next_human_action(state)
-            if human_action is not None or state.phase == Phase.COMPLETE:
-                self._set_state(game_id, state)
-                return state
-
-            if state.phase == Phase.TEAM_PROPOSAL:
-                leader = state.players[state.leader_index]
-                profile = self._profile_for_ai(game_id, leader.id)
-                result = self._run_ai_turn(
-                    game_id,
-                    leader.id,
-                    state.phase,
-                    "team_proposal",
-                    profile,
-                    lambda: self._ai_player.propose_team(
-                        state,
-                        leader.id,
-                        profile,
-                        public_events=self._public_events_for_ai(game_id),
-                    ),
-                )
-                state = propose_team(state, leader.id, result.decision.team)
-                self._log_ai_decision(
-                    game_id,
-                    leader.id,
-                    Phase.TEAM_PROPOSAL,
-                    "team_proposal",
-                    profile,
-                    result,
-                )
-                self._events.append_event(
-                    game_id,
-                    "team_proposed",
-                    {"leader_player_id": leader.id, "team": list(state.proposed_team)},
-                )
-            elif state.phase == Phase.SPEECH:
-                next_speaker_id = state.speech_order[len(state.speeches)]
-                profile = self._profile_for_ai(game_id, next_speaker_id)
-                result = self._run_ai_turn(
-                    game_id,
-                    next_speaker_id,
-                    Phase.SPEECH,
-                    "speech",
-                    profile,
-                    lambda: self._ai_player.speak(
-                        state,
-                        next_speaker_id,
-                        profile,
-                        public_events=self._public_events_for_ai(game_id),
-                    ),
-                )
-                state = record_speech(state, next_speaker_id, result.decision.public_message)
-                self._log_ai_decision(game_id, next_speaker_id, Phase.SPEECH, "speech", profile, result)
-                self._events.append_event(
-                    game_id,
-                    "speech",
-                    {"player_id": next_speaker_id, "message": result.decision.public_message},
-                )
-            elif state.phase == Phase.VOTING:
-                human = _human_player(state)
-                for player in state.players:
-                    if player.is_human or player.id in state.votes:
-                        continue
-                    profile = self._profile_for_ai(game_id, player.id)
-                    result = self._run_ai_turn(
-                        game_id,
-                        player.id,
-                        Phase.VOTING,
-                        "vote",
-                        profile,
-                        lambda: self._ai_player.vote(
-                            state,
-                            player.id,
-                            profile,
-                            public_events=self._public_events_for_ai(game_id),
-                        ),
-                    )
-                    state = cast_vote(state, player.id, result.decision.vote)
-                    self._log_ai_decision(game_id, player.id, Phase.VOTING, "vote", profile, result)
-                    self._events.append_event(
-                        game_id,
-                        "vote_cast",
-                        {"player_id": player.id, "vote": result.decision.vote.value},
-                    )
-                if human.id not in state.votes:
-                    self._set_state(game_id, state)
-                    return state
-                state = finalize_vote(state)
-                self._events.append_event(
-                    game_id,
-                    "vote_result",
-                    {
-                        "approved": state.phase == Phase.QUEST,
-                        "failed_team_votes": state.failed_team_votes,
-                    },
-                )
-            elif state.phase == Phase.QUEST:
-                human = _human_player(state)
-                for player_id in state.proposed_team:
-                    if player_id == human.id or player_id in state.quest_actions:
-                        continue
-                    player = next(player for player in state.players if player.id == player_id)
-                    if player.faction == Faction.GOOD:
-                        state = submit_quest_action(state, player_id, MissionAction.SUCCESS)
-                        self._events.append_event(
-                            game_id,
-                            "quest_action_submitted",
-                            {"player_id": player_id},
-                            {"mission_action": MissionAction.SUCCESS.value},
-                        )
-                        continue
-                    profile = self._profile_for_ai(game_id, player_id)
-                    result = self._run_ai_turn(
-                        game_id,
-                        player_id,
-                        Phase.QUEST,
-                        "mission_action",
-                        profile,
-                        lambda: self._ai_player.mission_action(
-                            state,
-                            player_id,
-                            profile,
-                            public_events=self._public_events_for_ai(game_id),
-                        ),
-                    )
-                    state = submit_quest_action(state, player_id, result.decision.mission_action)
-                    self._log_ai_decision(game_id, player_id, Phase.QUEST, "mission_action", profile, result)
-                    self._events.append_event(
-                        game_id,
-                        "quest_action_submitted",
-                        {"player_id": player_id},
-                        {"mission_action": result.decision.mission_action.value},
-                    )
-                if human.id in state.proposed_team and human.id not in state.quest_actions:
-                    self._set_state(game_id, state)
-                    return state
-                success_cards = sum(
-                    1 for action in state.quest_actions.values() if action == MissionAction.SUCCESS
-                )
-                fail_cards = sum(
-                    1 for action in state.quest_actions.values() if action == MissionAction.FAIL
-                )
-                state = finalize_quest(state)
-                self._events.append_event(
-                    game_id,
-                    "quest_result",
-                    {
-                        "quest_results": ["success" if result else "fail" for result in state.quest_results],
-                        "success_cards": success_cards,
-                        "fail_cards": fail_cards,
-                        "phase": state.phase.value,
-                        "winner": state.winner.value if state.winner else None,
-                    },
-                )
-            elif state.phase == Phase.ASSASSINATION:
-                assassin = next(player for player in state.players if player.role.value == "assassin")
-                profile = self._profile_for_ai(game_id, assassin.id)
-                result = self._run_ai_turn(
-                    game_id,
-                    assassin.id,
-                    Phase.ASSASSINATION,
-                    "assassination",
-                    profile,
-                    lambda: self._ai_player.assassinate(
-                        state,
-                        assassin.id,
-                        profile,
-                        public_events=self._public_events_for_ai(game_id),
-                    ),
-                )
-                state = assassinate(state, assassin.id, result.decision.target_player_id)
-                self._log_ai_decision(game_id, assassin.id, Phase.ASSASSINATION, "assassination", profile, result)
-                self._events.append_event(
-                    game_id,
-                    "assassination",
-                    {
-                        "assassin_player_id": assassin.id,
-                        "target_player_id": result.decision.target_player_id,
-                        "winner": state.winner.value if state.winner else None,
-                    },
-                )
-            elif state.phase == Phase.LADY_OF_LAKE:
-                holder_id = state.lady_of_lake_holder_player_id
-                if holder_id is None:
-                    self._set_state(game_id, state)
-                    return state
-                holder = next(player for player in state.players if player.id == holder_id)
-                if holder.is_human:
-                    self._set_state(game_id, state)
-                    return state
-                profile = self._profile_for_ai(game_id, holder.id)
-                result = self._run_ai_turn(
-                    game_id,
-                    holder.id,
-                    Phase.LADY_OF_LAKE,
-                    "lady_of_lake",
-                    profile,
-                    lambda: self._ai_player.use_lady_of_lake(
-                        state,
-                        holder.id,
-                        profile,
-                        public_events=self._public_events_for_ai(game_id),
-                    ),
-                )
-                state = use_lady_of_lake(state, holder.id, result.decision.target_player_id)
-                self._log_ai_decision(game_id, holder.id, Phase.LADY_OF_LAKE, "lady_of_lake", profile, result)
-                inspection = state.lady_of_lake_inspections[-1]
-                self._events.append_event(
-                    game_id,
-                    "lady_of_lake_used",
-                    {
-                        "viewer_player_id": holder.id,
-                        "target_player_id": result.decision.target_player_id,
-                        "next_holder_player_id": result.decision.target_player_id,
-                        "round_number": inspection.round_number,
-                    },
-                    {"target_faction": inspection.target_faction.value},
-                )
-            else:
-                self._set_state(game_id, state)
-                return state
-        raise RuntimeError("AI auto-advance exceeded safety limit")
+        return self._advance_loop.advance_until_blocked(game_id, state)
 
     def _state(self, game_id: str) -> GameState:
         if game_id not in self._states:
             self._states[game_id] = self._restore_state(game_id)
         return self._states[game_id]
 
-    def _restore_state(self, game_id: str) -> GameState:
-        summary = self._games.get_game_summary(game_id)
-        if summary is None:
-            raise ValueError(f"unknown active game id: {game_id}")
-
-        players = tuple(
-            Player(
-                id=player.id,
-                seat_index=player.seat_index,
-                name=player.name,
-                is_human=player.is_human,
-                role=Role(player.role),
-                faction=Faction(player.faction),
-                original_name=player.original_name,
-                llm_profile_id=player.llm_profile_id,
-            )
-            for player in self._games.list_players(game_id)
-        )
-        if not players:
-            raise ValueError(f"game has no persisted players: {game_id}")
-
-        enabled_options = frozenset(GameOption(option) for option in summary.enabled_options)
-        lake_holder = None
-        lake_previous_holders: tuple[str, ...] = ()
-        if GameOption.LADY_OF_LAKE in enabled_options:
-            lake_holder = f"player_{summary.player_count}"
-            lake_previous_holders = (lake_holder,)
-        state = GameState(
-            players=players,
-            missions=STANDARD_MISSION_CONFIGS[summary.player_count],
-            enabled_options=enabled_options,
-            lady_of_lake_holder_player_id=lake_holder,
-            lady_of_lake_previous_holder_ids=lake_previous_holders,
-        )
-        for event in self._events.list_events(game_id):
-            state = _apply_replay_event(state, event)
+    def _reload_state(self, game_id: str) -> GameState:
+        state = self._restore_state(game_id)
+        self._states[game_id] = state
         return state
+
+    def _restore_state(self, game_id: str) -> GameState:
+        loaded = GameStateLoader(self._games, self._events).load(game_id)
+        if loaded.replay_error is not None:
+            raise GameReplayError(
+                game_id,
+                last_replayed_event_index=loaded.last_replayed_event_index,
+                failed_event_index=loaded.failed_event_index or 0,
+                cause=loaded.replay_error,
+            )
+        return loaded.state
 
     def _set_state(self, game_id: str, state: GameState) -> None:
         self._states[game_id] = state
@@ -813,11 +576,18 @@ class GameService:
         try:
             return call()
         except AiDecisionError as exc:
-            self._log_ai_error(game_id, player_id, phase, decision_type, profile, exc)
-            self._games.update_game_status(game_id, "error_paused")
+            ai_decision, audit_event = self._ai_error_audit(
+                game_id,
+                player_id,
+                phase,
+                decision_type,
+                profile,
+                exc,
+            )
+            self._committer.commit_ai_error(game_id, ai_decision, audit_event)
             raise
 
-    def _log_ai_error(
+    def _ai_error_audit(
         self,
         game_id: str,
         player_id: str,
@@ -825,12 +595,12 @@ class GameService:
         decision_type: str,
         profile: LlmProfile,
         error: AiDecisionError,
-    ) -> None:
+    ) -> tuple[AiDecisionInput, PendingEvent]:
         output = {
             "error_type": error.error_type,
             "error_message": error.error_message,
         }
-        self._ai_decisions.save_decision(
+        return (
             AiDecisionInput(
                 game_id=game_id,
                 player_id=player_id,
@@ -856,50 +626,82 @@ class GameService:
                 total_tokens=error.total_tokens,
                 cached_tokens=error.cached_tokens,
                 cache_hit_rate=error.cache_hit_rate,
-            )
-        )
-        self._events.append_event(
-            game_id,
-            "ai_decision",
-            {
-                "player_id": player_id,
-                "phase": phase.value,
-                "decision_type": decision_type,
-                "validation_status": error.validation_status,
-                "strategy_summary": error.strategy_summary,
-            },
-            {
-                "input_summary": error.input_summary,
-                "output_raw": error.output_raw,
-                "output_parsed": error.output_parsed,
-                "error_type": error.error_type,
-                "error_message": error.error_message,
-                "prompt_template_name": error.prompt_template_name,
-                "prompt_template_version": error.prompt_template_version,
-                "prompt_messages": error.prompt_messages,
-                "context_builder_version": error.context_builder_version,
-                "stable_prefix_hash": error.stable_prefix_hash,
-                "context_summary": error.context_summary,
-                "context_truncated": error.context_truncated,
-                "prompt_tokens": error.prompt_tokens,
-                "completion_tokens": error.completion_tokens,
-                "total_tokens": error.total_tokens,
-                "cached_tokens": error.cached_tokens,
-                "cache_hit_rate": error.cache_hit_rate,
-            },
+            ),
+            PendingEvent(
+                "ai_decision",
+                {
+                    "player_id": player_id,
+                    "phase": phase.value,
+                    "decision_type": decision_type,
+                    "validation_status": error.validation_status,
+                    "strategy_summary": error.strategy_summary,
+                },
+                {
+                    "input_summary": error.input_summary,
+                    "output_raw": error.output_raw,
+                    "output_parsed": error.output_parsed,
+                    "error_type": error.error_type,
+                    "error_message": error.error_message,
+                    "prompt_template_name": error.prompt_template_name,
+                    "prompt_template_version": error.prompt_template_version,
+                    "prompt_messages": error.prompt_messages,
+                    "context_builder_version": error.context_builder_version,
+                    "stable_prefix_hash": error.stable_prefix_hash,
+                    "context_summary": error.context_summary,
+                    "context_truncated": error.context_truncated,
+                    "prompt_tokens": error.prompt_tokens,
+                    "completion_tokens": error.completion_tokens,
+                    "total_tokens": error.total_tokens,
+                    "cached_tokens": error.cached_tokens,
+                    "cache_hit_rate": error.cache_hit_rate,
+                },
+            ),
         )
 
-    def _log_ai_decision(
+    def _step_with_ai_decision(
         self,
+        step_result: StepResult,
         game_id: str,
         player_id: str,
         phase: Phase,
         decision_type: str,
         profile: LlmProfile,
         result: AiTurnResult[Any],
-    ) -> None:
-        self._ai_decisions.save_decision(
-            AiDecisionInput(
+    ) -> StepResult:
+        return StepResult(
+            state_after=step_result.state_after,
+            rule_events=step_result.rule_events,
+            audit_events=step_result.audit_events
+            + (
+                PendingEvent(
+                    "ai_decision",
+                    {
+                        "player_id": player_id,
+                        "phase": phase.value,
+                        "decision_type": decision_type,
+                        "validation_status": result.validation_status,
+                        "strategy_summary": result.strategy_summary,
+                    },
+                    {
+                        "input_summary": result.input_summary,
+                        "output_raw": result.output_raw,
+                        "output_parsed": result.output_parsed,
+                        "prompt_template_name": result.prompt_template_name,
+                        "prompt_template_version": result.prompt_template_version,
+                        "prompt_messages": result.prompt_messages,
+                        "context_builder_version": result.context_builder_version,
+                        "stable_prefix_hash": result.stable_prefix_hash,
+                        "context_summary": result.context_summary,
+                        "context_truncated": result.context_truncated,
+                        "prompt_tokens": result.prompt_tokens,
+                        "completion_tokens": result.completion_tokens,
+                        "total_tokens": result.total_tokens,
+                        "cached_tokens": result.cached_tokens,
+                        "cache_hit_rate": result.cache_hit_rate,
+                    },
+                ),
+            ),
+            ai_decision=AiDecisionInput(
                 game_id=game_id,
                 player_id=player_id,
                 phase=phase.value,
@@ -924,108 +726,19 @@ class GameService:
                 total_tokens=result.total_tokens,
                 cached_tokens=result.cached_tokens,
                 cache_hit_rate=result.cache_hit_rate,
-            )
-        )
-        self._ai_memory.save_snapshot(
-            AiMemorySnapshotInput(
+            ),
+            ai_memory=AiMemorySnapshotInput(
                 game_id=game_id,
                 player_id=player_id,
                 round_number=self._state(game_id).current_round,
                 phase=phase.value,
                 memory_payload=_memory_payload_from_decision(player_id, decision_type, result),
-            )
-        )
-        self._events.append_event(
-            game_id,
-            "ai_decision",
-            {
-                "player_id": player_id,
-                "phase": phase.value,
-                "decision_type": decision_type,
-                "validation_status": result.validation_status,
-                "strategy_summary": result.strategy_summary,
-            },
-            {
-                "input_summary": result.input_summary,
-                "output_raw": result.output_raw,
-                "output_parsed": result.output_parsed,
-                "prompt_template_name": result.prompt_template_name,
-                "prompt_template_version": result.prompt_template_version,
-                "prompt_messages": result.prompt_messages,
-                "context_builder_version": result.context_builder_version,
-                "stable_prefix_hash": result.stable_prefix_hash,
-                "context_summary": result.context_summary,
-                "context_truncated": result.context_truncated,
-                "prompt_tokens": result.prompt_tokens,
-                "completion_tokens": result.completion_tokens,
-                "total_tokens": result.total_tokens,
-                "cached_tokens": result.cached_tokens,
-                "cache_hit_rate": result.cache_hit_rate,
-            },
+            ),
         )
 
 
 def _apply_replay_event(state: GameState, event: EventRecord) -> GameState:
-    public_payload = event.public_payload
-    private_payload = event.private_payload or {}
-    if event.event_type in {
-        "game_created",
-        "roles_assigned",
-        "private_view_recorded",
-        "ai_decision",
-    }:
-        return state
-    if event.event_type == "team_proposed":
-        return propose_team(
-            state,
-            str(public_payload["leader_player_id"]),
-            tuple(public_payload["team"]),
-        )
-    if event.event_type == "speech":
-        return record_speech(
-            state,
-            str(public_payload["player_id"]),
-            str(public_payload["message"]),
-        )
-    if event.event_type == "vote_cast":
-        return cast_vote(
-            state,
-            str(public_payload["player_id"]),
-            Vote(public_payload["vote"]),
-        )
-    if event.event_type == "vote_result":
-        return finalize_vote(state)
-    if event.event_type == "quest_action_submitted":
-        mission_action = private_payload.get("mission_action")
-        if mission_action is None:
-            raise ValueError("cannot restore quest action without private mission_action")
-        return submit_quest_action(
-            state,
-            str(public_payload["player_id"]),
-            MissionAction(mission_action),
-        )
-    if event.event_type == "quest_result":
-        return finalize_quest(state)
-    if event.event_type == "lady_of_lake_used":
-        target_faction = private_payload.get("target_faction")
-        if target_faction is None:
-            raise ValueError("cannot restore lady of lake without private target_faction")
-        replayed = use_lady_of_lake(
-            state,
-            str(public_payload["viewer_player_id"]),
-            str(public_payload["target_player_id"]),
-        )
-        inspection = replayed.lady_of_lake_inspections[-1]
-        if inspection.target_faction != Faction(target_faction):
-            raise ValueError("lady of lake private faction does not match restored player faction")
-        return replayed
-    if event.event_type == "assassination":
-        return assassinate(
-            state,
-            str(public_payload["assassin_player_id"]),
-            str(public_payload["target_player_id"]),
-        )
-    return state
+    return apply_replay_event(state, event)
 
 
 def _apply_ai_configuration(

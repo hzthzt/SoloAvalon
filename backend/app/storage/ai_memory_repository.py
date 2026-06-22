@@ -28,8 +28,9 @@ class StoredAiMemorySnapshot:
 
 
 class AiMemoryRepository:
-    def __init__(self, connection: sqlite3.Connection):
+    def __init__(self, connection: sqlite3.Connection, *, autocommit: bool = True):
         self._connection = connection
+        self._autocommit = autocommit
 
     def save_snapshot(self, snapshot: AiMemorySnapshotInput) -> StoredAiMemorySnapshot:
         _validate_memory_payload(snapshot.memory_payload)
@@ -50,7 +51,7 @@ class AiMemoryRepository:
                 created_at,
             ),
         )
-        self._connection.commit()
+        self._commit_if_needed()
         saved = self.get_snapshot(int(cursor.lastrowid))
         if saved is None:
             raise RuntimeError("failed to save ai memory snapshot")
@@ -83,6 +84,10 @@ class AiMemoryRepository:
                 (game_id, player_id),
             ).fetchall()
         return [_snapshot_from_row(row) for row in rows]
+
+    def _commit_if_needed(self) -> None:
+        if self._autocommit:
+            self._connection.commit()
 
 
 def _snapshot_from_row(row: sqlite3.Row) -> StoredAiMemorySnapshot:
