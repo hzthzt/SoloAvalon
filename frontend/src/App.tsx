@@ -511,6 +511,9 @@ export function App() {
   }
 
   const activeAction = game?.next_human_action;
+  const showSetupState = tab === "game" && !game && !startingGame;
+  const showStartingState = tab === "game" && startingGame;
+  const showPlayState = tab === "game" && Boolean(game);
 
   return (
     <main className="app-shell">
@@ -554,8 +557,8 @@ export function App() {
         </div>
       )}
 
-      {tab === "game" && (
-        <section className="game-layout">
+      {showSetupState && (
+        <section className="game-layout setup-layout">
           <section className="panel setup-panel">
             <div className="section-title">
               <Play size={18} />
@@ -668,15 +671,16 @@ export function App() {
             </button>
           </section>
 
-          {!game && !startingGame && (
-            <PlayableRoomList
-              rooms={playableRooms}
-              enterPlayableRoom={enterPlayableRoom}
-              archiveRoom={archiveRoom}
-            />
-          )}
-          {game && (
-            <>
+          <PlayableRoomList
+            rooms={playableRooms}
+            enterPlayableRoom={enterPlayableRoom}
+            archiveRoom={archiveRoom}
+          />
+        </section>
+      )}
+
+      {showPlayState && game && (
+        <section className="play-focus-layout">
               <GameDesk
                 game={game}
                 requiredTeamSize={requiredTeamSize}
@@ -888,9 +892,13 @@ export function App() {
                 {!activeAction && <div className="empty-state">等待 AI 或对局已结算</div>}
                 <ActionRoundSummary summaries={activeGameReview.summaries} />
               </section>
-            </>
-          )}
-          {!game && startingGame && <StartingGameDesk playerCount={playerCount} />}
+        </section>
+      )}
+
+      {showStartingState && (
+        <section className="play-focus-layout">
+          <StartingGameDesk playerCount={playerCount} />
+          <StartingActionPanel />
         </section>
       )}
 
@@ -1723,6 +1731,18 @@ function StartingGameDesk({ playerCount }: { playerCount: number }) {
         <div className="winner-badge">创建中</div>
       </div>
       <div className="empty-state">游玩面板已就绪，等待首批对局信息</div>
+    </section>
+  );
+}
+
+function StartingActionPanel() {
+  return (
+    <section className="panel action-panel starting-action-panel" aria-live="polite">
+      <div className="section-title">
+        <Shield size={18} />
+        <h2>行动</h2>
+      </div>
+      <div className="empty-state">正在创建房间</div>
     </section>
   );
 }
