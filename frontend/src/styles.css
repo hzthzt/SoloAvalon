@@ -137,6 +137,13 @@ label {
   grid-template-columns: 280px minmax(0, 1fr) 320px;
 }
 
+.play-focus-layout {
+  align-items: start;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
+
 .two-column {
   align-items: start;
   display: grid;
@@ -390,7 +397,7 @@ label {
 .information-feed-list {
   display: grid;
   gap: 8px;
-  max-height: 620px;
+  max-height: clamp(520px, calc(100vh - 360px), 760px);
   overflow: auto;
 }
 
@@ -511,6 +518,8 @@ label {
 
 .action-summary-panel {
   margin-top: 12px;
+  max-height: clamp(180px, calc(100vh - 520px), 360px);
+  overflow: auto;
 }
 
 .summary-card {
@@ -1088,6 +1097,7 @@ label {
 
 @media (max-width: 1100px) {
   .game-layout,
+  .play-focus-layout,
   .two-column {
     grid-template-columns: 1fr;
   }
