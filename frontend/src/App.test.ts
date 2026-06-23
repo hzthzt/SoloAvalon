@@ -283,3 +283,47 @@ test("information feed occupies the full center column", () => {
   assert.equal(styleSource.includes("grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);"), false);
   assert.equal(styleSource.includes(".game-flow-layout {\n  align-items: start;\n  display: grid;\n  gap: 12px;\n  grid-template-columns: minmax(0, 1fr);"), true);
 });
+
+test("game tab separates setup, starting, and play states", () => {
+  assert.equal(source.includes("const showSetupState = tab === \"game\" && !game && !startingGame;"), true);
+  assert.equal(source.includes("const showStartingState = tab === \"game\" && startingGame;"), true);
+  assert.equal(source.includes("const showPlayState = tab === \"game\" && Boolean(game);"), true);
+  assert.equal(source.includes("{showSetupState && ("), true);
+  assert.equal(source.includes("{showStartingState && ("), true);
+  assert.equal(source.includes("{showPlayState && game && ("), true);
+});
+
+test("setup controls render only in setup layout", () => {
+  const setupPanelIndex = source.indexOf("<section className=\"panel setup-panel\">");
+  const startingStateIndex = source.indexOf("{showStartingState && (");
+  const playStateIndex = source.indexOf("{showPlayState && game && (");
+
+  assert.equal(source.includes("<section className=\"game-layout setup-layout\">"), true);
+  assert.equal(source.includes("<section className=\"play-focus-layout\">"), true);
+  assert.equal(setupPanelIndex !== -1, true);
+  assert.equal(startingStateIndex !== -1, true);
+  assert.equal(playStateIndex !== -1, true);
+  assert.equal(setupPanelIndex < startingStateIndex, true);
+  assert.equal(setupPanelIndex < playStateIndex, true);
+});
+
+test("starting game uses focused layout with a lightweight action panel", () => {
+  const startingStateIndex = source.indexOf("{showStartingState && (");
+  const startingGameDeskIndex = source.indexOf("<StartingGameDesk playerCount={playerCount} />");
+  const startingActionPanelIndex = source.indexOf("<StartingActionPanel />");
+  const startingTitleIndex = source.indexOf("正在创建房间");
+
+  assert.equal(startingStateIndex !== -1, true);
+  assert.equal(startingGameDeskIndex !== -1, true);
+  assert.equal(startingActionPanelIndex !== -1, true);
+  assert.equal(startingTitleIndex !== -1, true);
+  assert.equal(startingStateIndex < startingGameDeskIndex, true);
+  assert.equal(startingStateIndex < startingActionPanelIndex, true);
+  assert.equal(startingStateIndex < startingTitleIndex, true);
+});
+
+test("focused play layout gives feed and summaries independent scroll areas", () => {
+  assert.equal(styleSource.includes(".play-focus-layout {\n  align-items: start;\n  display: grid;\n  gap: 14px;\n  grid-template-columns: minmax(0, 1fr) 320px;"), true);
+  assert.equal(styleSource.includes(".information-feed-list {\n  display: grid;\n  gap: 8px;\n  max-height: clamp(520px, calc(100vh - 360px), 760px);\n  overflow: auto;"), true);
+  assert.equal(styleSource.includes(".action-summary-panel {\n  margin-top: 12px;\n  max-height: clamp(180px, calc(100vh - 520px), 360px);\n  overflow: auto;"), true);
+});
