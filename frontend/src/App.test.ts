@@ -286,7 +286,7 @@ test("information feed occupies the full center column", () => {
 
 test("game tab separates setup, starting, and play states", () => {
   assert.equal(source.includes("const showSetupState = tab === \"game\" && !game && !startingGame;"), true);
-  assert.equal(source.includes("const showStartingState = tab === \"game\" && startingGame;"), true);
+  assert.equal(source.includes("const showStartingState = tab === \"game\" && !game && startingGame;"), true);
   assert.equal(source.includes("const showPlayState = tab === \"game\" && Boolean(game);"), true);
   assert.equal(source.includes("{showSetupState && ("), true);
   assert.equal(source.includes("{showStartingState && ("), true);

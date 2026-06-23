@@ -512,7 +512,7 @@ export function App() {
 
   const activeAction = game?.next_human_action;
   const showSetupState = tab === "game" && !game && !startingGame;
-  const showStartingState = tab === "game" && startingGame;
+  const showStartingState = tab === "game" && !game && startingGame;
   const showPlayState = tab === "game" && Boolean(game);
 
   return (
@@ -681,217 +681,215 @@ export function App() {
 
       {showPlayState && game && (
         <section className="play-focus-layout">
-              <GameDesk
-                game={game}
-                requiredTeamSize={requiredTeamSize}
-                review={activeGameReview}
-                roomDetail={roomDetailForActiveReview}
-                teamAttemptNumber={activeTeamAttemptNumber}
-                onLeaveRoom={leaveActiveRoom}
-              />
-              <section className="panel action-panel">
-                <div className="section-title">
-                  <Shield size={18} />
-                  <h2>行动</h2>
-                  <button className="icon-button" onClick={refreshGame} title="刷新">
-                    <RefreshCw size={18} />
-                  </button>
+          <GameDesk
+            game={game}
+            requiredTeamSize={requiredTeamSize}
+            review={activeGameReview}
+            roomDetail={roomDetailForActiveReview}
+            teamAttemptNumber={activeTeamAttemptNumber}
+            onLeaveRoom={leaveActiveRoom}
+          />
+          <section className="panel action-panel">
+            <div className="section-title">
+              <Shield size={18} />
+              <h2>行动</h2>
+              <button className="icon-button" onClick={refreshGame} title="刷新">
+                <RefreshCw size={18} />
+              </button>
+            </div>
+            <StatusStrip game={game} />
+            {Object.keys(game.lady_of_lake_known_factions).length > 0 && (
+              <div className="lake-results">
+                {Object.entries(game.lady_of_lake_known_factions).map(([playerId, faction]) => (
+                  <span key={playerId}>
+                    湖女：{playerName(game, playerId)} 是{factionLabel(faction)}
+                  </span>
+                ))}
+              </div>
+            )}
+            {game.status === "error_paused" && (
+              <div className="button-row">
+                <button
+                  className="primary"
+                  disabled={busy || autoPlaying}
+                  onClick={sendPausedGameRetry}
+                >
+                  <RefreshCw size={18} /> 重试推进
+                </button>
+              </div>
+            )}
+            {activeAction && (
+              <div className="button-row">
+                <button disabled={busy || autoPlaying} onClick={() => sendHumanAiAction(false)}>
+                  <Bot size={18} /> AI 代打一步
+                </button>
+                <button
+                  className="primary"
+                  disabled={busy || autoPlaying}
+                  onClick={() => sendHumanAiAction(true)}
+                >
+                  <Bot size={18} /> 连续代打
+                </button>
+              </div>
+            )}
+            {activeAction === "propose_team" && (
+              <div className="action-block">
+                <div className="mini-heading">队伍 {selectedTeam.length}/{requiredTeamSize}</div>
+                <div className="check-grid">
+                  {game.players.map((player) => {
+                    const checked = selectedTeam.includes(player.id);
+                    const disabled = !checked && selectedTeam.length >= requiredTeamSize;
+                    return (
+                      <label key={player.id} className={checked ? "checked" : ""}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={disabled}
+                          onChange={() => {
+                            setSelectedTeam((current) =>
+                              checked
+                                ? current.filter((id) => id !== player.id)
+                                : [...current, player.id]
+                            );
+                          }}
+                        />
+                        {player.name}
+                      </label>
+                    );
+                  })}
                 </div>
-                <StatusStrip game={game} />
-                {Object.keys(game.lady_of_lake_known_factions).length > 0 && (
-                  <div className="lake-results">
-                    {Object.entries(game.lady_of_lake_known_factions).map(([playerId, faction]) => (
-                      <span key={playerId}>
-                        湖女：{playerName(game, playerId)} 是{factionLabel(faction)}
-                      </span>
+                <button
+                  className="primary"
+                  disabled={selectedTeam.length !== requiredTeamSize || busy}
+                  onClick={() => sendAction({ action_type: "propose_team", team: selectedTeam })}
+                >
+                  <Users size={18} /> 提交队伍
+                </button>
+              </div>
+            )}
+
+            {activeAction === "speak" && (
+              <div className="action-block">
+                <textarea
+                  value={speech}
+                  onChange={(event) => setSpeech(event.target.value)}
+                  rows={5}
+                />
+                <button
+                  className="primary"
+                  disabled={!speech.trim() || busy}
+                  onClick={() => sendAction({ action_type: "speak", message: speech })}
+                >
+                  <MessageSquare size={18} /> 发言
+                </button>
+              </div>
+            )}
+
+            {activeAction === "vote" && (
+              <div className="button-row">
+                <button
+                  className="primary"
+                  disabled={busy}
+                  onClick={() => sendAction({ action_type: "vote", vote: "approve" })}
+                >
+                  <Check size={18} /> 赞成
+                </button>
+                <button
+                  className="danger"
+                  disabled={busy}
+                  onClick={() => sendAction({ action_type: "vote", vote: "reject" })}
+                >
+                  <X size={18} /> 反对
+                </button>
+              </div>
+            )}
+
+            {activeAction === "mission_action" && humanOnQuest && (
+              <div className="button-row">
+                <button
+                  className="primary"
+                  disabled={busy}
+                  onClick={() =>
+                    sendAction({ action_type: "mission_action", mission_action: "success" })
+                  }
+                >
+                  <Check size={18} /> 成功
+                </button>
+                {game.human_faction === "evil" && (
+                  <button
+                    className="danger"
+                    disabled={busy}
+                    onClick={() =>
+                      sendAction({ action_type: "mission_action", mission_action: "fail" })
+                    }
+                  >
+                    <X size={18} /> 失败
+                  </button>
+                )}
+              </div>
+            )}
+
+            {activeAction === "assassinate" && (
+              <div className="action-block">
+                <select
+                  value={assassinationTarget}
+                  onChange={(event) => setAssassinationTarget(event.target.value)}
+                >
+                  <option value="">选择目标</option>
+                  {game.players
+                    .filter((player) => player.id !== game.human_player_id)
+                    .map((player) => (
+                      <option key={player.id} value={player.id}>
+                        {player.name}
+                      </option>
                     ))}
-                  </div>
-                )}
-                {game.status === "error_paused" && (
-                  <div className="button-row">
-                    <button
-                      className="primary"
-                      disabled={busy || autoPlaying}
-                      onClick={sendPausedGameRetry}
-                    >
-                      <RefreshCw size={18} /> 重试推进
-                    </button>
-                  </div>
-                )}
-                {activeAction && (
-                  <div className="button-row">
-                    <button disabled={busy || autoPlaying} onClick={() => sendHumanAiAction(false)}>
-                      <Bot size={18} /> AI 代打一步
-                    </button>
-                    <button
-                      className="primary"
-                      disabled={busy || autoPlaying}
-                      onClick={() => sendHumanAiAction(true)}
-                    >
-                      <Bot size={18} /> 连续代打
-                    </button>
-                  </div>
-                )}
-                {activeAction === "propose_team" && (
-                  <div className="action-block">
-                    <div className="mini-heading">队伍 {selectedTeam.length}/{requiredTeamSize}</div>
-                    <div className="check-grid">
-                      {game.players.map((player) => {
-                        const checked = selectedTeam.includes(player.id);
-                        const disabled = !checked && selectedTeam.length >= requiredTeamSize;
-                        return (
-                          <label key={player.id} className={checked ? "checked" : ""}>
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              disabled={disabled}
-                              onChange={() => {
-                                setSelectedTeam((current) =>
-                                  checked
-                                    ? current.filter((id) => id !== player.id)
-                                    : [...current, player.id]
-                                );
-                              }}
-                            />
-                            {player.name}
-                          </label>
-                        );
-                      })}
-                    </div>
-                    <button
-                      className="primary"
-                      disabled={selectedTeam.length !== requiredTeamSize || busy}
-                      onClick={() =>
-                        sendAction({ action_type: "propose_team", team: selectedTeam })
-                      }
-                    >
-                      <Users size={18} /> 提交队伍
-                    </button>
-                  </div>
-                )}
+                </select>
+                <button
+                  className="danger"
+                  disabled={!assassinationTarget || busy}
+                  onClick={() =>
+                    sendAction({
+                      action_type: "assassinate",
+                      target_player_id: assassinationTarget
+                    })
+                  }
+                >
+                  <Swords size={18} /> 刺杀
+                </button>
+              </div>
+            )}
 
-                {activeAction === "speak" && (
-                  <div className="action-block">
-                    <textarea
-                      value={speech}
-                      onChange={(event) => setSpeech(event.target.value)}
-                      rows={5}
-                    />
-                    <button
-                      className="primary"
-                      disabled={!speech.trim() || busy}
-                      onClick={() => sendAction({ action_type: "speak", message: speech })}
-                    >
-                      <MessageSquare size={18} /> 发言
-                    </button>
-                  </div>
-                )}
+            {activeAction === "use_lady_of_lake" && (
+              <div className="action-block">
+                <select
+                  value={ladyOfLakeTarget}
+                  onChange={(event) => setLadyOfLakeTarget(event.target.value)}
+                >
+                  <option value="">选择湖女目标</option>
+                  {game.lady_of_lake_eligible_target_ids.map((playerId) => (
+                    <option key={playerId} value={playerId}>
+                      {playerName(game, playerId)}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="primary"
+                  disabled={!ladyOfLakeTarget || busy}
+                  onClick={() =>
+                    sendAction({
+                      action_type: "use_lady_of_lake",
+                      target_player_id: ladyOfLakeTarget
+                    })
+                  }
+                >
+                  <Shield size={18} /> 使用湖女
+                </button>
+              </div>
+            )}
 
-                {activeAction === "vote" && (
-                  <div className="button-row">
-                    <button
-                      className="primary"
-                      disabled={busy}
-                      onClick={() => sendAction({ action_type: "vote", vote: "approve" })}
-                    >
-                      <Check size={18} /> 赞成
-                    </button>
-                    <button
-                      className="danger"
-                      disabled={busy}
-                      onClick={() => sendAction({ action_type: "vote", vote: "reject" })}
-                    >
-                      <X size={18} /> 反对
-                    </button>
-                  </div>
-                )}
-
-                {activeAction === "mission_action" && humanOnQuest && (
-                  <div className="button-row">
-                    <button
-                      className="primary"
-                      disabled={busy}
-                      onClick={() =>
-                        sendAction({ action_type: "mission_action", mission_action: "success" })
-                      }
-                    >
-                      <Check size={18} /> 成功
-                    </button>
-                    {game.human_faction === "evil" && (
-                      <button
-                        className="danger"
-                        disabled={busy}
-                        onClick={() =>
-                          sendAction({ action_type: "mission_action", mission_action: "fail" })
-                        }
-                      >
-                        <X size={18} /> 失败
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {activeAction === "assassinate" && (
-                  <div className="action-block">
-                    <select
-                      value={assassinationTarget}
-                      onChange={(event) => setAssassinationTarget(event.target.value)}
-                    >
-                      <option value="">选择目标</option>
-                      {game.players
-                        .filter((player) => player.id !== game.human_player_id)
-                        .map((player) => (
-                          <option key={player.id} value={player.id}>
-                            {player.name}
-                          </option>
-                        ))}
-                    </select>
-                    <button
-                      className="danger"
-                      disabled={!assassinationTarget || busy}
-                      onClick={() =>
-                        sendAction({
-                          action_type: "assassinate",
-                          target_player_id: assassinationTarget
-                        })
-                      }
-                    >
-                      <Swords size={18} /> 刺杀
-                    </button>
-                  </div>
-                )}
-
-                {activeAction === "use_lady_of_lake" && (
-                  <div className="action-block">
-                    <select
-                      value={ladyOfLakeTarget}
-                      onChange={(event) => setLadyOfLakeTarget(event.target.value)}
-                    >
-                      <option value="">选择湖女目标</option>
-                      {game.lady_of_lake_eligible_target_ids.map((playerId) => (
-                        <option key={playerId} value={playerId}>
-                          {playerName(game, playerId)}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="primary"
-                      disabled={!ladyOfLakeTarget || busy}
-                      onClick={() =>
-                        sendAction({
-                          action_type: "use_lady_of_lake",
-                          target_player_id: ladyOfLakeTarget
-                        })
-                      }
-                    >
-                      <Shield size={18} /> 使用湖女
-                    </button>
-                  </div>
-                )}
-
-                {!activeAction && <div className="empty-state">等待 AI 或对局已结算</div>}
-                <ActionRoundSummary summaries={activeGameReview.summaries} />
-              </section>
+            {!activeAction && <div className="empty-state">等待 AI 或对局已结算</div>}
+            <ActionRoundSummary summaries={activeGameReview.summaries} />
+          </section>
         </section>
       )}
 
