@@ -15,10 +15,11 @@ from .errors import error_detail
 from .models import CreateGameRequest, HumanActionRequest
 
 try:
-    from fastapi import APIRouter, HTTPException, Request
+    from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
     from fastapi.responses import StreamingResponse
 except ImportError:
     APIRouter = None
+    BackgroundTasks = None
     HTTPException = None
     Request = None
     StreamingResponse = None
@@ -28,16 +29,19 @@ class GamesApi:
     def __init__(self, service: GameService):
         self._service = service
 
-    def create_game(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def create_game(self, payload: dict[str, Any], *, auto_advance: bool = True) -> dict[str, Any]:
         request = CreateGameRequest.from_payload(payload)
-        return self._service.create_game(
-            player_count=request.player_count,
-            enabled_options=request.enabled_options,
-            human_name=request.human_name,
-            ai_names=request.ai_names,
-            default_llm_profile_id=request.default_llm_profile_id,
-            ai_profile_overrides=request.ai_profile_overrides,
-        )
+        kwargs = {
+            "player_count": request.player_count,
+            "enabled_options": request.enabled_options,
+            "human_name": request.human_name,
+            "ai_names": request.ai_names,
+            "default_llm_profile_id": request.default_llm_profile_id,
+            "ai_profile_overrides": request.ai_profile_overrides,
+        }
+        if auto_advance:
+            return self._service.create_game(**kwargs)
+        return self._service.create_game(**kwargs, auto_advance=False)
 
     def list_games(self) -> list[dict[str, Any]]:
         return [asdict(summary) for summary in self._service.list_games()]
@@ -54,6 +58,9 @@ class GamesApi:
 
     def retry_paused_game(self, game_id: str) -> dict[str, Any]:
         return self._service.retry_paused_game(game_id)
+
+    def advance_game(self, game_id: str) -> dict[str, Any]:
+        return self._service.advance_game(game_id)
 
     def list_events(self, game_id: str, include_private: bool = False) -> list[dict[str, Any]]:
         events = self._service.list_events(game_id)
@@ -97,8 +104,10 @@ def build_games_router(service: GameService):
     router = APIRouter(prefix="/api/games", tags=["games"])
 
     @router.post("")
-    def create_game(payload: dict[str, Any]):
-        return _call(lambda: api.create_game(payload))
+    def create_game(payload: dict[str, Any], background_tasks: BackgroundTasks):
+        created = _call(lambda: api.create_game(payload, auto_advance=False))
+        background_tasks.add_task(_advance_game_after_create, api, created["id"])
+        return created
 
     @router.get("")
     def list_games():
@@ -186,6 +195,14 @@ def _call(handler):
         if HTTPException is None:
             raise
         raise HTTPException(status_code=500, detail=error_detail(exc)) from exc
+
+
+def _advance_game_after_create(api: GamesApi, game_id: str) -> None:
+    try:
+        api.advance_game(game_id)
+    except AiDecisionError:
+        # 服务层已经持久化 error_paused 状态和审计事件。
+        return
 
 
 def sse_event_frame(event: dict[str, Any]) -> str:

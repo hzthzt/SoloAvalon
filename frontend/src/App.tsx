@@ -149,18 +149,52 @@ export function App() {
   );
   const activeTeamAttemptNumber = game ? currentTeamAttemptNumber(game, activeGameReview) : 1;
   const activeGameId = game?.id ?? "";
+  const activeGameIdRef = useRef(activeGameId);
 
   useEffect(() => {
     void refreshLists();
   }, []);
 
   useEffect(() => {
+    activeGameIdRef.current = activeGameId;
+  }, [activeGameId]);
+
+  useEffect(() => {
     if (!activeGameId) {
       return;
     }
-    return subscribeGameEvents(activeGameId, latestEventIndex(activeGameEvents), (event) => {
-      setActiveGameEvents((current) => mergeEventsForFlowReview(current, [event]));
-    });
+    let closed = false;
+    let refreshQueued = false;
+    let refreshTimeout: number | null = null;
+    const refreshFromStream = () => {
+      if (refreshQueued) {
+        return;
+      }
+      refreshQueued = true;
+      refreshTimeout = window.setTimeout(() => {
+        refreshQueued = false;
+        refreshTimeout = null;
+        if (closed) {
+          return;
+        }
+        void refreshActiveGameFromStream(activeGameId);
+      }, 120);
+    };
+    const closeStream = subscribeGameEvents(
+      activeGameId,
+      latestEventIndex(activeGameEvents),
+      (event) => {
+        setActiveGameEvents((current) => mergeEventsForFlowReview(current, [event]));
+        refreshFromStream();
+      }
+    );
+    return () => {
+      closed = true;
+      if (refreshTimeout !== null) {
+        window.clearTimeout(refreshTimeout);
+      }
+      closeStream();
+    };
   }, [activeGameId]);
 
   useEffect(() => {
@@ -209,13 +243,14 @@ export function App() {
 
   async function applyActiveGame(updated: GameState, resetEvents = false) {
     const stateEvents = updated.events ?? [];
+    let freshestEvents = stateEvents;
     setGame(updated);
     setActiveGameEvents((current) =>
       resetEvents ? stateEvents : eventsForFlowReview(stateEvents, current)
     );
     try {
       const fetchedEvents = await listGameEvents(updated.id);
-      const freshestEvents = eventsForFlowReview(stateEvents, fetchedEvents);
+      freshestEvents = eventsForFlowReview(stateEvents, fetchedEvents);
       setActiveGameEvents((current) =>
         resetEvents ? freshestEvents : eventsForFlowReview(freshestEvents, current)
       );
@@ -224,7 +259,22 @@ export function App() {
         resetEvents ? stateEvents : eventsForFlowReview(stateEvents, current)
       );
     }
+    if (latestEventIndex(freshestEvents) > latestEventIndex(stateEvents)) {
+      try {
+        const latestState = await getGame(updated.id);
+        const latestEvents = eventsForFlowReview(latestState.events ?? [], freshestEvents);
+        setGame((current) => (current?.id === updated.id ? latestState : current));
+        setActiveGameEvents((current) =>
+          resetEvents ? latestEvents : eventsForFlowReview(latestEvents, current)
+        );
+        await refreshActiveRoomDetailIfComplete(latestState);
+        return latestState;
+      } catch {
+        // 保留已合并事件，后续 SSE 或手动刷新会继续同步状态。
+      }
+    }
     await refreshActiveRoomDetailIfComplete(updated);
+    return updated;
   }
 
   async function refreshActiveRoomDetailIfComplete(updated: GameState) {
@@ -256,8 +306,9 @@ export function App() {
           ])
         )
       });
-      await applyActiveGame(created, true);
+      created = await applyActiveGame(created, true);
       if (autoPlayHuman) {
+        created = await waitForHumanActionOrTerminal(created);
         created = await driveHumanWithAi(created, true);
       }
       setSelectedTeam([created.human_player_id]);
@@ -281,6 +332,42 @@ export function App() {
       const updated = await getGame(game.id);
       await applyActiveGame(updated);
     });
+  }
+
+  async function refreshActiveGameFromStream(gameId: string) {
+    try {
+      const updated = await getGame(gameId);
+      if (activeGameIdRef.current !== gameId) {
+        return;
+      }
+      setGame((current) => {
+        if (!current || current.id !== gameId) {
+          return current;
+        }
+        return updated;
+      });
+      setActiveGameEvents((current) => eventsForFlowReview(updated.events ?? [], current));
+      await refreshActiveRoomDetailIfComplete(updated);
+      void listGames().then(setGames).catch(() => undefined);
+    } catch {
+      // SSE 会继续保持连接，下一条事件或手动刷新可以再次同步状态。
+    }
+  }
+
+  async function waitForHumanActionOrTerminal(current: GameState) {
+    let updated = current;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      if (
+        updated.next_human_action ||
+        updated.phase === "complete" ||
+        updated.status === "error_paused"
+      ) {
+        return updated;
+      }
+      await pauseForFlow();
+      updated = await applyActiveGame(await getGame(current.id));
+    }
+    return updated;
   }
 
   async function sendAction(payload: Record<string, unknown>) {

@@ -267,6 +267,14 @@ test("active game subscribes to server-sent event updates while the play view is
   assert.equal(source.includes("window.setInterval"), false);
 });
 
+test("sse event updates active game state after background auto advance", () => {
+  assert.equal(source.includes("refreshActiveGameFromStream"), true);
+  assert.equal(source.includes("const updated = await getGame(gameId);"), true);
+  assert.equal(source.includes("setGame((current) => {"), true);
+  assert.equal(source.includes("latestEventIndex(freshestEvents) > latestEventIndex(stateEvents)"), true);
+  assert.equal(source.includes("waitForHumanActionOrTerminal"), true);
+});
+
 test("api exposes an sse event stream url for active game events", () => {
   assert.equal(apiSource.includes("gameEventsStreamUrl"), true);
   assert.equal(apiSource.includes("/events/stream"), true);

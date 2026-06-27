@@ -98,6 +98,25 @@ class GameServiceTests(unittest.TestCase):
             self.assertEqual(second["id"], "game_2")
             self.assertEqual(second["display_name"], "游戏#2")
 
+    def test_create_game_can_return_before_ai_auto_advance_for_streaming_room_creation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = _service(tmpdir)
+
+            created = service.create_game(seed=20260619, auto_advance=False)
+            setup_event_types = [event.event_type for event in service.list_events(created["id"])]
+
+            self.assertEqual(created["phase"], Phase.TEAM_PROPOSAL.value)
+            self.assertIsNone(created["next_human_action"])
+            self.assertNotIn("ai_decision", setup_event_types)
+
+            advanced = service.advance_game(created["id"])
+            advanced_event_types = [
+                event.event_type for event in service.list_events(created["id"])
+            ]
+
+            self.assertIsNotNone(advanced["next_human_action"])
+            self.assertIn("ai_decision", advanced_event_types)
+
     def test_create_game_returns_anonymous_names_and_keeps_original_names_out_of_prompt(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             service = _service(tmpdir)

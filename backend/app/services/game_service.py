@@ -107,6 +107,7 @@ class GameService:
         ai_names: list[str] | None = None,
         default_llm_profile_id: str | None = None,
         ai_profile_overrides: dict[str, str | None] | None = None,
+        auto_advance: bool = True,
     ) -> dict[str, Any]:
         game_id = self._games.next_game_id()
         display_name = self._games.next_room_display_name()
@@ -135,7 +136,8 @@ class GameService:
                 public_payload=public_payload,
                 private_payload=private_payload,
             )
-        state = self._auto_advance(game_id)
+        if auto_advance:
+            state = self._auto_advance(game_id)
         return self._public_state(game_id, state)
 
     def get_game_state(self, game_id: str) -> dict[str, Any]:
@@ -378,6 +380,12 @@ class GameService:
         if summary.status != "error_paused":
             return self._public_state(game_id, state)
 
+        state = self._auto_advance(game_id)
+        return self._public_state(game_id, state)
+
+    @_synchronized
+    def advance_game(self, game_id: str) -> dict[str, Any]:
+        self._ensure_playable(game_id)
         state = self._auto_advance(game_id)
         return self._public_state(game_id, state)
 

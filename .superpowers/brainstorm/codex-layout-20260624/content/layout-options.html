@@ -1,0 +1,78 @@
+<h2>游玩界面布局方向</h2>
+<p class="subtitle">重点看游玩期间是否隐藏开局表单，以及信息流和总结栏的空间关系。点击你更喜欢的方向也可以。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A. 游玩中隐藏开局表单</div>
+        <div class="mockup-body">
+          <div style="display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:10px; min-height:260px;">
+            <div style="display:grid; grid-template-rows:auto 1fr; gap:8px;">
+              <div class="placeholder" style="height:74px;">对局桌面：玩家、任务进度、当前阶段</div>
+              <div class="placeholder" style="height:170px;">信息流：获得主要垂直区域，可内部滚动</div>
+            </div>
+            <div style="display:grid; grid-template-rows:auto 1fr; gap:8px;">
+              <div class="placeholder" style="height:92px;">当前行动</div>
+              <div class="placeholder" style="height:152px;">本轮总结：独立滚动</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A：推荐，游玩专注模式</h3>
+      <p>有进行中的对局时，开局表单不占用三栏布局；没有对局时才显示新建房间与可继续房间。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B. 开局表单折叠成小工具条</div>
+        <div class="mockup-body">
+          <div style="display:grid; grid-template-columns:110px minmax(0,1fr) 300px; gap:10px; min-height:260px;">
+            <div class="placeholder" style="height:260px;">折叠<br>新建</div>
+            <div style="display:grid; grid-template-rows:auto 1fr; gap:8px;">
+              <div class="placeholder" style="height:74px;">对局桌面</div>
+              <div class="placeholder" style="height:170px;">信息流</div>
+            </div>
+            <div style="display:grid; grid-template-rows:auto 1fr; gap:8px;">
+              <div class="placeholder" style="height:92px;">当前行动</div>
+              <div class="placeholder" style="height:152px;">总结</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B：保留入口但减少干扰</h3>
+      <p>左侧仍有新建入口，但只显示一个窄面板。适合经常开新局，但仍会占一点宽度。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">C. 左侧改成房间导航</div>
+        <div class="mockup-body">
+          <div style="display:grid; grid-template-columns:220px minmax(0,1fr) 280px; gap:10px; min-height:260px;">
+            <div class="placeholder" style="height:260px;">可继续房间<br>新建按钮</div>
+            <div style="display:grid; grid-template-rows:auto 1fr; gap:8px;">
+              <div class="placeholder" style="height:74px;">对局桌面</div>
+              <div class="placeholder" style="height:170px;">信息流</div>
+            </div>
+            <div style="display:grid; grid-template-rows:auto 1fr; gap:8px;">
+              <div class="placeholder" style="height:92px;">当前行动</div>
+              <div class="placeholder" style="height:152px;">总结</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C：房间管理常驻</h3>
+      <p>把左侧从创建表单改成房间列表。适合多房间切换，但信息流宽度提升有限。</p>
+    </div>
+  </div>
+</div>
