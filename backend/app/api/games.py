@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from dataclasses import asdict
 from typing import Any
@@ -23,6 +22,9 @@ except ImportError:
     HTTPException = None
     Request = None
     StreamingResponse = None
+
+
+SSE_HEARTBEAT_SECONDS = 15.0
 
 
 class GamesApi:
@@ -136,20 +138,17 @@ def build_games_router(service: GameService):
     @router.get("/{game_id}/events/stream")
     async def stream_events(game_id: str, request: Request, after: int = 0):
         _call(lambda: api.get_game(game_id))
-
-        async def event_frames():
-            latest_event_index = after
-            while True:
-                if await request.is_disconnected():
-                    break
-                events = api.list_events_after(game_id, latest_event_index)
-                for event in events:
-                    latest_event_index = max(latest_event_index, int(event["event_index"]))
-                    yield sse_event_frame(event)
-                await asyncio.sleep(0.4)
+        subscription = service.event_notifier.subscribe(game_id)
 
         return StreamingResponse(
-            event_frames(),
+            game_event_stream_frames(
+                api,
+                game_id,
+                request,
+                subscription,
+                after=after,
+                heartbeat_seconds=SSE_HEARTBEAT_SECONDS,
+            ),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -205,10 +204,41 @@ def _advance_game_after_create(api: GamesApi, game_id: str) -> None:
         return
 
 
+async def game_event_stream_frames(
+    api: GamesApi,
+    game_id: str,
+    request: Any,
+    subscription: Any,
+    *,
+    after: int = 0,
+    heartbeat_seconds: float = SSE_HEARTBEAT_SECONDS,
+):
+    latest_event_index = after
+    try:
+        while True:
+            if await request.is_disconnected():
+                break
+            events = api.list_events_after(game_id, latest_event_index)
+            if events:
+                for event in events:
+                    latest_event_index = max(latest_event_index, int(event["event_index"]))
+                    yield sse_event_frame(event)
+                continue
+            notified = await subscription.wait(timeout=heartbeat_seconds)
+            if not notified:
+                yield sse_keep_alive_frame()
+    finally:
+        subscription.close()
+
+
 def sse_event_frame(event: dict[str, Any]) -> str:
     event_index = int(event["event_index"])
     payload = json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return f"id: {event_index}\nevent: game-event\ndata: {payload}\n\n"
+
+
+def sse_keep_alive_frame() -> str:
+    return ": keep-alive\n\n"
 
 
 def _ai_decision_status_code(error: AiDecisionError) -> int:

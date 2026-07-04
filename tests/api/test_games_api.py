@@ -183,6 +183,9 @@ class GamesApiTests(unittest.TestCase):
         self.assertIn('"message":"你好"', frame)
         self.assertTrue(frame.endswith("\n\n"))
 
+    def test_sse_keep_alive_frame_is_a_comment(self):
+        self.assertEqual(games_module.sse_keep_alive_frame(), ": keep-alive\n\n")
+
     def test_public_events_hide_vote_values_until_vote_result_exists(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             connection = connect_sqlite(":memory:")
@@ -276,6 +279,57 @@ class GamesApiTests(unittest.TestCase):
             self.assertEqual(listed["archived_at"], archived["archived_at"])
 
 
+class GamesEventStreamTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stream_waits_for_notification_then_sends_new_events(self):
+        api = _StreamApi([
+            [],
+            [
+                {
+                    "event_index": 2,
+                    "event_type": "speech",
+                    "public_payload": {"message": "收到通知后补齐"},
+                }
+            ],
+        ])
+        subscription = _StreamSubscription([True])
+
+        stream = games_module.game_event_stream_frames(
+            api,
+            "game_1",
+            _OpenRequest(),
+            subscription,
+            after=1,
+            heartbeat_seconds=0.01,
+        )
+
+        frame = await stream.__anext__()
+        await stream.aclose()
+
+        self.assertIn("event: game-event\n", frame)
+        self.assertIn('"message":"收到通知后补齐"', frame)
+        self.assertEqual(subscription.waited_timeouts, [0.01])
+        self.assertTrue(subscription.closed)
+
+    async def test_stream_sends_heartbeat_when_wait_times_out(self):
+        api = _StreamApi([[]])
+        subscription = _StreamSubscription([False])
+
+        stream = games_module.game_event_stream_frames(
+            api,
+            "game_1",
+            _OpenRequest(),
+            subscription,
+            after=0,
+            heartbeat_seconds=0.01,
+        )
+
+        frame = await stream.__anext__()
+        await stream.aclose()
+
+        self.assertEqual(frame, ": keep-alive\n\n")
+        self.assertTrue(subscription.closed)
+
+
 def _api(tmpdir):
     connection = connect_sqlite(":memory:")
     initialize_database(connection)
@@ -343,6 +397,38 @@ class _FakeHTTPException(Exception):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
+
+
+class _OpenRequest:
+    async def is_disconnected(self):
+        return False
+
+
+class _StreamApi:
+    def __init__(self, batches):
+        self._batches = list(batches)
+
+    def list_events_after(self, game_id, latest_event_index):
+        del game_id, latest_event_index
+        if self._batches:
+            return self._batches.pop(0)
+        return []
+
+
+class _StreamSubscription:
+    def __init__(self, wait_results):
+        self._wait_results = list(wait_results)
+        self.waited_timeouts = []
+        self.closed = False
+
+    async def wait(self, timeout):
+        self.waited_timeouts.append(timeout)
+        if self._wait_results:
+            return self._wait_results.pop(0)
+        return False
+
+    def close(self):
+        self.closed = True
 
 
 def _player_ids(text):

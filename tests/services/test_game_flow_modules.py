@@ -106,6 +106,31 @@ class GameFlowModuleTests(unittest.TestCase):
         self.assertEqual(service.list_events(created["id"])[-1].event_type, "team_proposed")
         self.assertEqual(service.list_games()[0].current_phase, Phase.SPEECH.value)
 
+    def test_committer_notifies_game_after_successful_commit(self):
+        service = _service()
+        created = service.create_game(seed=2)
+        state = service._state(created["id"])
+        result = GameStepRunner().apply_human_action(
+            created["id"],
+            state,
+            "propose_team",
+            {"team": ["player_1", "player_2"]},
+            human_player_id="player_1",
+        )
+        notifier = _RecordingNotifier()
+
+        GameCommitter(
+            service.connection,
+            service._games,
+            service._events,
+            service._ai_decisions,
+            service._ai_memory,
+            service._states,
+            event_notifier=notifier,
+        ).commit_step(created["id"], state, result)
+
+        self.assertEqual(notifier.notified_game_ids, [created["id"]])
+
     def test_committer_rolls_back_rule_events_when_summary_update_fails(self):
         service = _service()
         created = service.create_game(seed=2)
@@ -133,6 +158,59 @@ class GameFlowModuleTests(unittest.TestCase):
 
         self.assertEqual(len(service.list_events(created["id"])), event_count)
         self.assertIs(service._states[created["id"]], state)
+
+    def test_committer_does_not_notify_when_commit_rolls_back(self):
+        service = _service()
+        created = service.create_game(seed=2)
+        state = service._state(created["id"])
+        result = GameStepRunner().apply_human_action(
+            created["id"],
+            state,
+            "propose_team",
+            {"team": ["player_1", "player_2"]},
+            human_player_id="player_1",
+        )
+        notifier = _RecordingNotifier()
+        committer = GameCommitter(
+            service.connection,
+            _FailingGameRepository(service._games),
+            service._events,
+            service._ai_decisions,
+            service._ai_memory,
+            service._states,
+            event_notifier=notifier,
+        )
+
+        with self.assertRaises(RuntimeError):
+            committer.commit_step(created["id"], state, result)
+
+        self.assertEqual(notifier.notified_game_ids, [])
+
+    def test_committer_notifies_game_after_ai_error_commit(self):
+        service = _service()
+        created = service.create_game(seed=2)
+        state = service._state(created["id"])
+        result = GameStepRunner().apply_human_action(
+            created["id"],
+            state,
+            "propose_team",
+            {"team": ["player_1", "player_2"]},
+            human_player_id="player_1",
+        )
+        result = _with_ai_audit(created["id"], result)
+        notifier = _RecordingNotifier()
+
+        GameCommitter(
+            service.connection,
+            service._games,
+            service._events,
+            service._ai_decisions,
+            service._ai_memory,
+            service._states,
+            event_notifier=notifier,
+        ).commit_ai_error(created["id"], result.ai_decision, result.audit_events[0])
+
+        self.assertEqual(notifier.notified_game_ids, [created["id"]])
 
     def test_committer_persists_ai_audit_with_rule_step(self):
         service = _service()
@@ -220,6 +298,14 @@ class _FailingRuleEventStore(EventStore):
         if event_type == "team_proposed":
             raise RuntimeError("forced rule event failure")
         return super().append_event(game_id, event_type, public_payload, private_payload)
+
+
+class _RecordingNotifier:
+    def __init__(self):
+        self.notified_game_ids = []
+
+    def notify(self, game_id):
+        self.notified_game_ids.append(game_id)
 
 
 def _with_ai_audit(game_id, result):

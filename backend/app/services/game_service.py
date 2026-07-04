@@ -40,6 +40,7 @@ from backend.app.storage.ai_memory_repository import (
 from backend.app.storage.game_repository import GameRepository, GameSummary
 from backend.app.storage.llm_profile_repository import LlmProfileRepository
 from .event_visibility import normalize_public_player_references, public_event_dicts
+from .event_notifier import GameEventNotifier
 from .game_flow import (
     GameAdvanceLoop,
     GameCommitter,
@@ -61,9 +62,15 @@ def _synchronized(method: Callable[..., Any]) -> Callable[..., Any]:
 
 
 class GameService:
-    def __init__(self, connection: sqlite3.Connection, ai_player: AiPlayer | None = None):
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        ai_player: AiPlayer | None = None,
+        event_notifier: GameEventNotifier | None = None,
+    ):
         self._lock = threading.RLock()
         self._connection = connection
+        self._event_notifier = event_notifier or GameEventNotifier()
         self._games = GameRepository(connection)
         self._events = EventStore(connection)
         self._ai_decisions = AiDecisionRepository(connection)
@@ -79,6 +86,7 @@ class GameService:
             self._ai_decisions,
             self._ai_memory,
             self._states,
+            event_notifier=self._event_notifier,
         )
         self._advance_loop = GameAdvanceLoop(
             ai_player=lambda: self._ai_player,
@@ -95,6 +103,10 @@ class GameService:
     @property
     def connection(self) -> sqlite3.Connection:
         return self._connection
+
+    @property
+    def event_notifier(self) -> GameEventNotifier:
+        return self._event_notifier
 
     @_synchronized
     def create_game(

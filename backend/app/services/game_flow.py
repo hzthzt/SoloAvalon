@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 from backend.app.game.models import (
     Faction,
@@ -30,6 +30,11 @@ from backend.app.storage.ai_decision_repository import AiDecisionInput, AiDecisi
 from backend.app.storage.ai_memory_repository import AiMemoryRepository, AiMemorySnapshotInput
 from backend.app.storage.event_store import EventRecord, EventStore
 from backend.app.storage.game_repository import GameRepository
+
+
+class GameEventNotifierProtocol(Protocol):
+    def notify(self, game_id: str) -> None:
+        ...
 
 
 AUDIT_EVENT_TYPES = {
@@ -301,6 +306,7 @@ class GameCommitter:
         ai_decisions: AiDecisionRepository,
         ai_memory: AiMemoryRepository,
         states: dict[str, GameState],
+        event_notifier: GameEventNotifierProtocol | None = None,
     ):
         self._connection = connection
         self._games = (
@@ -324,6 +330,7 @@ class GameCommitter:
             else ai_memory
         )
         self._states = states
+        self._event_notifier = event_notifier
 
     def commit_step(
         self,
@@ -357,6 +364,7 @@ class GameCommitter:
             self._connection.rollback()
             raise
         self._states[game_id] = step_result.state_after
+        self._notify_game_events(game_id)
         return step_result.state_after
 
     def commit_ai_error(
@@ -378,6 +386,11 @@ class GameCommitter:
         except Exception:
             self._connection.rollback()
             raise
+        self._notify_game_events(game_id)
+
+    def _notify_game_events(self, game_id: str) -> None:
+        if self._event_notifier is not None:
+            self._event_notifier.notify(game_id)
 
 
 class GameAdvanceLoop:
