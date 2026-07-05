@@ -81,7 +81,7 @@ def _action_format_message() -> str:
             "以下格式在整局中固定，后续不重复声明。你每次只返回本次请求对应的 JSON。",
             "",
             "propose_team:",
-            '{"team":["player_id"],"private_reason_summary":"..."}',
+            '{"team":["player_id"],"public_message":"...","private_reason_summary":"..."}',
             "",
             "speak:",
             '{"public_message":"...","private_reason_summary":"..."}',
