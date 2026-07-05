@@ -57,6 +57,54 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertNotIn("若有莫甘娜", config.role_descriptions["percival"])
         self.assertNotIn("可能包含莫甘娜", config.extra_information["percival_merlin_candidates"])
 
+    def test_default_prompt_discourages_safe_opening_template_speech(self):
+        config = load_prompt_template_config()
+
+        prompt_text = "\n".join(config.system_lines + config.action_prompts["speak"]["lines"])
+
+        for phrase in ("信息少", "希望任务顺利", "先观察", "积累信息"):
+            self.assertIn(phrase, prompt_text)
+        self.assertIn("首轮也要点名", prompt_text)
+        self.assertIn("车队中的至少一人", prompt_text)
+        self.assertIn("改成短句", prompt_text)
+
+    def test_default_prompt_requires_role_specific_table_actions(self):
+        config = load_prompt_template_config()
+
+        speak_prompt = "\n".join(config.action_prompts["speak"]["lines"])
+        self.assertIn("前面已有两人以上支持同一车", speak_prompt)
+        self.assertIn("点名追问", speak_prompt)
+        self.assertIn("设置条件票", speak_prompt)
+        self.assertIn("失败后的归责框架", speak_prompt)
+
+        self.assertIn("已知坏人在车上", config.role_gameplay["merlin"])
+        self.assertIn("不能只用“隐藏身份所以支持”", config.role_gameplay["merlin"])
+        self.assertIn("软反对", config.role_gameplay["merlin"])
+        self.assertIn("条件支持", config.role_gameplay["merlin"])
+        self.assertIn("替代车", config.role_gameplay["merlin"])
+
+        self.assertIn("候选关系如何影响本轮态度", config.role_gameplay["percival"])
+        self.assertIn("公开至少体现保护、混淆或观察候选反应", config.role_gameplay["percival"])
+
+        for role in ("assassin", "morgana", "minion"):
+            self.assertIn("预埋后续叙事钩子", config.role_gameplay[role])
+            self.assertIn("失败后优先压谁", config.role_gameplay[role])
+
+    def test_default_prompt_blocks_synonymous_safe_support_phrasing(self):
+        config = load_prompt_template_config()
+
+        prompt_text = "\n".join(
+            config.system_lines
+            + config.action_prompts["propose_team"]["lines"]
+            + config.action_prompts["speak"]["lines"]
+        )
+
+        for phrase in ("先跑一轮", "看看结果", "提供视角", "多一份视角", "投票见分晓"):
+            self.assertIn(phrase, prompt_text)
+        self.assertIn("不要把禁句换成同义安全句", prompt_text)
+        self.assertIn("支持必须带条件、风险或责任顺序", prompt_text)
+        self.assertIn("1 到 3 句", prompt_text)
+
     def test_player_view_includes_basic_role_gameplay_and_hides_advanced_tips_by_default(self):
         state = GameState(
             players=(
