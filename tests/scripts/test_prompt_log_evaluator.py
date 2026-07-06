@@ -659,6 +659,32 @@ class PromptLogEvaluatorTests(unittest.TestCase):
         self.assertEqual(summary["candidate_public_action_count"], 1)
         self.assertEqual(summary["candidate_public_action_gap_count"], 0)
 
+    def test_counts_candidate_exclusion_reaction_question_as_public_action(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_3",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "我是派西维尔，玩家2和玩家4是候选。队长排除了候选玩家4，我追问玩家4对被排除怎么看，观察候选反应。",
+                        "public_message": "玩家1带我和他自己，我先配合一轮。不过我想听玩家4说一下，你被排除在外，对这个车队有什么看法？",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["candidate_relation_pressure_count"], 1)
+        self.assertEqual(summary["candidate_public_action_count"], 1)
+        self.assertEqual(summary["candidate_public_action_gap_count"], 0)
+
     def test_counts_number_suffix_player_mentions_as_candidate_relation_pressure(self):
         sample = {
             "speeches": [
@@ -844,6 +870,32 @@ class PromptLogEvaluatorTests(unittest.TestCase):
             summary = evaluate_prompt_log(path)
 
         self.assertEqual(summary["identity_contest_action_count"], 1)
+        self.assertEqual(summary["candidate_relation_pressure_count"], 1)
+        self.assertEqual(summary["candidate_public_action_count"], 1)
+        self.assertEqual(summary["candidate_public_action_gap_count"], 0)
+
+    def test_counts_candidate_on_team_pressure_and_failure_responsibility_as_public_action(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_5",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "我是派西维尔，玩家4是候选之一。这车让玩家4上车吃压力，我观察他的解释，同时不暴露候选关系。",
+                        "public_message": "玩家2把玩家4拉上车吃压力，这点我能理解。但这车如果炸了，玩家4要先解释上车前后的态度，玩家2也要复盘为什么带他。",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
         self.assertEqual(summary["candidate_relation_pressure_count"], 1)
         self.assertEqual(summary["candidate_public_action_count"], 1)
         self.assertEqual(summary["candidate_public_action_gap_count"], 0)
@@ -1301,6 +1353,106 @@ class PromptLogEvaluatorTests(unittest.TestCase):
             summary = evaluate_prompt_log(path)
 
         self.assertEqual(summary["vote_fact_misread_count"], 0)
+
+    def test_vote_fact_misread_does_not_attach_previous_player_to_unique_claim(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_1",
+                    "decision_type": "vote",
+                    "output": {"vote": "approve", "private_reason_summary": "支持原车。"},
+                },
+                {
+                    "player_id": "player_2",
+                    "decision_type": "vote",
+                    "output": {"vote": "approve", "private_reason_summary": "支持原车。"},
+                },
+                {
+                    "player_id": "player_3",
+                    "decision_type": "vote",
+                    "output": {"vote": "reject", "private_reason_summary": "反对原车。"},
+                },
+                {
+                    "player_id": "player_4",
+                    "decision_type": "vote",
+                    "output": {"vote": "reject", "private_reason_summary": "反对原车。"},
+                },
+                {
+                    "player_id": "player_5",
+                    "decision_type": "vote",
+                    "output": {"vote": "reject", "private_reason_summary": "反对原车。"},
+                },
+                {
+                    "player_id": "player_4",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "复盘上一轮票型。",
+                        "public_message": "玩家2说带唯一反对的玩家5，我可以理解这个逻辑，但我想问为什么不带玩家3？",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["vote_fact_misread_count"], 1)
+        self.assertEqual(summary["vote_fact_misread_examples"][0]["claim"], "player_5唯一反对")
+
+    def test_vote_fact_misread_prefers_player_after_unique_vote_modifier(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_1",
+                    "decision_type": "vote",
+                    "output": {"vote": "approve", "private_reason_summary": "支持原车。"},
+                },
+                {
+                    "player_id": "player_2",
+                    "decision_type": "vote",
+                    "output": {"vote": "approve", "private_reason_summary": "支持原车。"},
+                },
+                {
+                    "player_id": "player_3",
+                    "decision_type": "vote",
+                    "output": {"vote": "reject", "private_reason_summary": "反对原车。"},
+                },
+                {
+                    "player_id": "player_4",
+                    "decision_type": "vote",
+                    "output": {"vote": "reject", "private_reason_summary": "反对原车。"},
+                },
+                {
+                    "player_id": "player_5",
+                    "decision_type": "vote",
+                    "output": {"vote": "reject", "private_reason_summary": "反对原车。"},
+                },
+                {
+                    "player_id": "player_3",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "复盘上一轮票型。",
+                        "public_message": "玩家2把第一轮唯一反对的玩家4拉上车，让他解释立场，这个逻辑我能接受。",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["vote_fact_misread_count"], 1)
+        self.assertEqual(summary["vote_fact_misread_examples"][0]["claim"], "player_4唯一反对")
 
     def test_counts_overconfident_success_certainty_phrasing(self):
         sample = {

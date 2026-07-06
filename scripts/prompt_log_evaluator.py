@@ -40,6 +40,7 @@ IDENTITY_ACTION_PATTERNS = (
     rf"为什么没带{PLAYER_REF}",
     rf"为什么把{PLAYER_REF}(留在外面|排在外面|排除在外)",
     rf"为什么没把{PLAYER_REF}放进",
+    rf"{PLAYER_REF}.*被排除在外.*(怎么看|什么看法|什么想法|意见|态度)",
     rf"{PLAYER_REF}.*跳过{PLAYER_REF}",
     rf"{PLAYER_REF}.*解释压力",
     rf"{PLAYER_REF}.*被排在外.*带.*上车",
@@ -80,6 +81,7 @@ CANDIDATE_RELATION_PRESSURE_PATTERNS = (
     rf"为什么没带{PLAYER_REF}",
     rf"为什么把{PLAYER_REF}(留在外面|排在外面|排除在外)",
     rf"为什么没把{PLAYER_REF}放进",
+    rf"{PLAYER_REF}.*被排除在外.*(怎么看|什么看法|什么想法|意见|态度)",
     rf"{PLAYER_REF}.*被排除在车外.*(认可|换人|组队)",
     rf"{PLAYER_REF}.*被排在外.*带.*上车",
     rf"(带|组).{{0,32}}{PLAYER_REF}.{{0,50}}(失败|炸).{{0,16}}{PLAYER_REF}.{{0,10}}解释",
@@ -134,10 +136,16 @@ VERIFICATION_LIKE_TASK_PHRASE_PATTERNS = (
     r"任务理由",
     r"投出失败",
 )
-VOTE_UNIQUE_CLAIM_PATTERN = re.compile(
-    rf"(?:(?:只有|就|仅有)?{PLAYER_REF}(?:一个人)?投了?(赞成|反对)|"
-    rf"{PLAYER_REF}.{{0,8}}(唯一|孤立).{{0,4}}(赞成|反对)|"
-    rf"(唯一|孤立).{{0,4}}(赞成|反对).{{0,8}}{PLAYER_REF})"
+VOTE_UNIQUE_CLAIM_PATTERNS = (
+    re.compile(
+        rf"(?:唯一|孤立).{{0,4}}(?P<vote>赞成|反对).{{0,8}}(?P<player>{PLAYER_REF})"
+    ),
+    re.compile(
+        rf"(?:只有|就|仅有)?(?P<player>{PLAYER_REF})(?:一个人)?投了?(?P<vote>赞成|反对)"
+    ),
+    re.compile(
+        rf"(?P<player>{PLAYER_REF})(?P<context>.{{0,8}})(?:唯一|孤立).{{0,4}}(?P<vote>赞成|反对)"
+    ),
 )
 SECOND_PERSON_UNIQUE_VOTE_PATTERN = re.compile(r"(?:只有|就|仅有)?你(?:一个人)?投了?(赞成|反对)")
 
@@ -389,20 +397,36 @@ def _vote_group_for_message(
 
 def _unique_vote_claims(message: str) -> list[tuple[str, str]]:
     claims: list[tuple[str, str]] = []
-    for match in VOTE_UNIQUE_CLAIM_PATTERN.finditer(message):
-        player_match = re.search(PLAYER_REF, match.group(0))
-        if not player_match:
-            continue
-        player_id = _normalize_player_ref(player_match.group(0))
-        vote_text = "反对" if "反对" in match.group(0) else "赞成"
-        claims.append((player_id, "reject" if vote_text == "反对" else "approve"))
+    seen: set[tuple[str, str]] = set()
+    claim_spans: list[tuple[int, int]] = []
+    for pattern in VOTE_UNIQUE_CLAIM_PATTERNS:
+        for match in pattern.finditer(message):
+            if any(
+                match.start() >= start and match.end() <= end
+                for start, end in claim_spans
+            ):
+                continue
+            context = match.groupdict().get("context", "")
+            if context and re.search(r"说|表示|认为|提到|理解|问|带", context):
+                continue
+            player_id = _normalize_player_ref(match.group("player"))
+            claimed_vote = "reject" if match.group("vote") == "反对" else "approve"
+            key = (player_id, claimed_vote)
+            if key in seen:
+                continue
+            seen.add(key)
+            claims.append(key)
+            claim_spans.append(match.span())
     addressed_player = _addressed_player_ref(message)
     if addressed_player:
         for match in SECOND_PERSON_UNIQUE_VOTE_PATTERN.finditer(message):
             vote_text = "反对" if "反对" in match.group(0) else "赞成"
-            claims.append((addressed_player, "reject" if vote_text == "反对" else "approve"))
+            key = (addressed_player, "reject" if vote_text == "反对" else "approve")
+            if key in seen:
+                continue
+            seen.add(key)
+            claims.append(key)
     return claims
-
 
 def _normalize_player_ref(player_ref: str) -> str:
     digit_match = re.search(r"\d+", player_ref)
