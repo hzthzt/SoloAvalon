@@ -18,9 +18,31 @@ IDENTITY_ACTION_PATTERNS = (
     rf"{PLAYER_REF}.*急着上车",
     rf"{PLAYER_REF}.*坚持换人",
     rf"{PLAYER_REF}.*往车上推",
+    rf"带上{PLAYER_REF}.*吃压力",
+    rf"{PLAYER_REF}.*被排在外.*带上",
+    rf"给{PLAYER_REF}上车机会",
+    rf"{PLAYER_REF}.*给你机会上车",
+    rf"{PLAYER_REF}.*(唯一反对|反对.*失败车).*给他上车机会",
+    rf"{PLAYER_REF}.*反对.*给他一次上车机会",
+    rf"{PLAYER_REF}.*上车吃压力看看态度",
+    rf"{PLAYER_REF}.*上轮为什么反对车队",
+    rf"问{PLAYER_REF}为什么反对后又失败",
+    rf"问{PLAYER_REF}为什么没能维持成功",
+    rf"{PLAYER_REF}.*被排除在车外.*(认可|换人|组队)",
+    rf"{PLAYER_REF}.*给他上车机会看看表现",
+    rf"{PLAYER_REF}.*给他机会看看表现",
+    rf"{PLAYER_REF}.*解释一下当时为什么反对",
+    rf"{PLAYER_REF}.*这次没带你.*该上.*理由",
+    rf"{PLAYER_REF}.*任务交给你负责",
     rf"{PLAYER_REF}.*把{PLAYER_REF}.*(留在外面|排在外面|排除在外)",
+    rf"{PLAYER_REF}.*排除了{PLAYER_REF}",
+    rf"{PLAYER_REF}.*没带{PLAYER_REF}",
+    rf"为什么没带{PLAYER_REF}",
+    rf"为什么没把{PLAYER_REF}放进",
     rf"{PLAYER_REF}.*跳过{PLAYER_REF}",
     rf"{PLAYER_REF}.*解释压力",
+    rf"问{PLAYER_REF}为什么接受这个组合",
+    rf"{PLAYER_REF}.*对{PLAYER_REF}.*信任程度",
     r"保这条.*线",
     r"拆这条.*线",
     r"关系不自然",
@@ -39,6 +61,28 @@ CANDIDATE_RELATION_PRESSURE_PATTERNS = (
     rf"{PLAYER_REF}.*为什么.*跳过{PLAYER_REF}",
     rf"{PLAYER_REF}.*跳过{PLAYER_REF}.*(理由|解释|为什么)",
     rf"{PLAYER_REF}.*把{PLAYER_REF}.*(留在外面|排在外面|排除在外).*(支持|反对|态度|解释|理由)",
+    rf"带上{PLAYER_REF}.*吃压力",
+    rf"{PLAYER_REF}.*被排在外.*带上",
+    rf"给{PLAYER_REF}上车机会",
+    rf"{PLAYER_REF}.*给你机会上车",
+    rf"{PLAYER_REF}.*(唯一反对|反对.*失败车).*给他上车机会",
+    rf"{PLAYER_REF}.*反对.*给他一次上车机会",
+    rf"{PLAYER_REF}.*上车吃压力看看态度",
+    rf"{PLAYER_REF}.*上轮为什么反对车队",
+    rf"问{PLAYER_REF}为什么反对后又失败",
+    rf"问{PLAYER_REF}为什么没能维持成功",
+    rf"{PLAYER_REF}.*为什么.*排除了{PLAYER_REF}",
+    rf"{PLAYER_REF}.*没带{PLAYER_REF}.*为什么",
+    rf"为什么没带{PLAYER_REF}",
+    rf"为什么没把{PLAYER_REF}放进",
+    rf"{PLAYER_REF}.*被排除在车外.*(认可|换人|组队)",
+    rf"{PLAYER_REF}.*给他上车机会看看表现",
+    rf"{PLAYER_REF}.*给他机会看看表现",
+    rf"{PLAYER_REF}.*解释一下当时为什么反对",
+    rf"{PLAYER_REF}.*这次没带你.*该上.*理由",
+    rf"{PLAYER_REF}.*任务交给你负责",
+    rf"问{PLAYER_REF}为什么接受这个组合",
+    rf"{PLAYER_REF}.*对{PLAYER_REF}.*信任程度",
     rf"{PLAYER_REF}.*替{PLAYER_REF}.*(说话|卸压|挡|保)",
     r"保护线|候选关系|不像普通好人互相评价|关系不自然",
 )
@@ -53,11 +97,18 @@ TEMPLATE_PHRASE_PATTERNS = (
     r"这条线我(?:暂时)?先?(?:保着|认了|认着|记着)",
     r"后续再看",
     r"先跑一轮",
+    r"先走一车",
     r"看看结果",
     r"多一个视角",
     r"多一份视角",
     r"观察一轮",
     r"看看反应",
+)
+PRIVATE_LEAK_CLAIM_PATTERNS = (
+    r"我(?:这边)?没(?:有)?出失败票",
+    r"我(?:投|提交)了成功",
+    r"我(?:是|一定是)?成功票",
+    r"我的票一定是成功票",
 )
 
 DEFAULT_MIN_DECISIONS = 12
@@ -89,6 +140,11 @@ def evaluate_prompt_log(path: Path) -> dict[str, Any]:
         for message in public_messages
         if _has_template_phrase(str(message.get("message", "")))
     ]
+    private_leak_claims = [
+        message
+        for message in public_messages
+        if _has_private_leak_claim(str(message.get("message", "")))
+    ]
     private_candidate_mentions = [
         decision
         for decision in decisions
@@ -110,6 +166,7 @@ def evaluate_prompt_log(path: Path) -> dict[str, Any]:
         "private_candidate_mention_count": len(private_candidate_mentions),
         "public_candidate_binding_count": len(public_candidate_bindings),
         "template_phrase_count": len(template_phrases),
+        "private_leak_claim_count": len(private_leak_claims),
         "private_candidate_decision_count": len(private_candidate_mentions),
         "candidate_public_action_count": len(candidate_public_actions),
         "candidate_public_action_gap_count": len(private_candidate_mentions)
@@ -125,6 +182,9 @@ def evaluate_prompt_log(path: Path) -> dict[str, Any]:
         ],
         "template_phrase_examples": [
             _speech_summary(speech) for speech in template_phrases[:5]
+        ],
+        "private_leak_claim_examples": [
+            _speech_summary(speech) for speech in private_leak_claims[:5]
         ],
         "candidate_public_action_examples": [
             _decision_summary(decision) for decision in candidate_public_actions[:5]
@@ -148,6 +208,8 @@ def evaluate_quality_gate(
         failures.append("private_candidate_without_public_action")
     if int(summary.get("public_candidate_binding_count", 0)) > 0:
         failures.append("public_candidate_binding_risk")
+    if int(summary.get("private_leak_claim_count", 0)) > 0:
+        failures.append("private_leak_claim_present")
     if int(summary.get("template_phrase_count", 0)) > 0:
         failures.append("template_phrase_present")
     return {
@@ -169,6 +231,10 @@ def _has_candidate_relation_pressure(message: str) -> bool:
 
 def _has_template_phrase(message: str) -> bool:
     return any(re.search(pattern, message) for pattern in TEMPLATE_PHRASE_PATTERNS)
+
+
+def _has_private_leak_claim(message: str) -> bool:
+    return any(re.search(pattern, message) for pattern in PRIVATE_LEAK_CLAIM_PATTERNS)
 
 
 def _public_messages(

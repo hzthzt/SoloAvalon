@@ -211,10 +211,35 @@ class PromptingAndProviderTests(unittest.TestCase):
         team_prompt = "\n".join(config.action_prompts["propose_team"]["lines"])
         self.assertIn("组队套话自检", team_prompt)
         self.assertIn("先跑一轮", team_prompt)
+        self.assertIn("先走一车", team_prompt)
         self.assertIn("看看结果", team_prompt)
+        self.assertIn("看看反应", team_prompt)
         self.assertIn("后续再调整", team_prompt)
         self.assertIn("删掉重写", team_prompt)
         self.assertIn("带上谁、为什么带、暂时不带谁、炸了先问谁", team_prompt)
+
+    def test_default_prompt_blocks_vague_opening_team_speech(self):
+        config = load_prompt_template_config()
+
+        speak_prompt = "\n".join(config.system_lines + config.action_prompts["speak"]["lines"])
+        self.assertIn("首轮泛话自检", speak_prompt)
+        self.assertIn("先走一车", speak_prompt)
+        self.assertIn("先走一车试试", speak_prompt)
+        self.assertIn("后续再看", speak_prompt)
+        self.assertIn("希望任务顺利", speak_prompt)
+        self.assertIn("点名被排除者", speak_prompt)
+        self.assertIn("失败责任", speak_prompt)
+
+    def test_default_prompt_blocks_private_mission_card_claims(self):
+        config = load_prompt_template_config()
+
+        prompt_text = "\n".join(config.system_lines + config.action_prompts["speak"]["lines"])
+        self.assertIn("prompt.v30", config.version)
+        self.assertIn("不要在 public_message 中说", prompt_text)
+        self.assertIn("我没出失败票", prompt_text)
+        self.assertIn("我的票一定是成功票", prompt_text)
+        self.assertIn("从我的立场我不认这张锅", prompt_text)
+        self.assertIn("同车其他人需要解释", prompt_text)
 
     def test_default_prompt_reflects_real_percival_table_play_from_research(self):
         config = load_prompt_template_config()

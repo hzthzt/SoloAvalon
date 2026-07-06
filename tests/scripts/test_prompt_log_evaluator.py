@@ -96,6 +96,25 @@ class PromptLogEvaluatorTests(unittest.TestCase):
             ["player_1", "player_2"],
         )
 
+    def test_counts_vague_opening_car_phrasing(self):
+        sample = {
+            "speeches": [
+                {
+                    "player_id": "player_1",
+                    "message": "我组了自己和玩家4，先走一车。",
+                }
+            ],
+            "decisions": [],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["template_phrase_count"], 1)
+
     def test_counts_vague_perspective_and_observation_phrasing(self):
         sample = {
             "speeches": [
@@ -413,6 +432,30 @@ class PromptLogEvaluatorTests(unittest.TestCase):
         self.assertEqual(summary["private_candidate_decision_count"], 0)
         self.assertEqual(summary["candidate_public_action_gap_count"], 0)
 
+    def test_ignores_empty_public_message_on_hidden_action(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "phase": "quest",
+                    "decision_type": "mission_action",
+                    "output": {
+                        "private_reason_summary": "保持自己作为梅林候选的可信度。",
+                        "public_message": "",
+                    },
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["private_candidate_decision_count"], 0)
+        self.assertEqual(summary["candidate_public_action_gap_count"], 0)
+
     def test_plain_attention_to_candidate_is_not_public_identity_action(self):
         sample = {
             "speeches": [],
@@ -600,6 +643,18 @@ class PromptLogEvaluatorTests(unittest.TestCase):
                     "player_id": "player_4",
                     "message": "玩家1之前把5号排在外面，现在这车你支持还是反对？",
                 },
+                {
+                    "player_id": "player_4",
+                    "message": "玩家1作为队长，为什么排除了玩家5或玩家6？",
+                },
+                {
+                    "player_id": "player_4",
+                    "message": "玩家1组了玩家4但没带玩家5，为什么？",
+                },
+                {
+                    "player_id": "player_4",
+                    "message": "玩家1组队时为什么没带玩家4？",
+                },
             ],
             "decisions": [
                 {
@@ -618,10 +673,293 @@ class PromptLogEvaluatorTests(unittest.TestCase):
 
             summary = evaluate_prompt_log(path)
 
-        self.assertEqual(summary["identity_contest_action_count"], 4)
-        self.assertEqual(summary["candidate_relation_pressure_count"], 4)
+        self.assertEqual(summary["identity_contest_action_count"], 7)
+        self.assertEqual(summary["candidate_relation_pressure_count"], 7)
         self.assertEqual(summary["candidate_public_action_count"], 1)
         self.assertEqual(summary["candidate_public_action_gap_count"], 0)
+
+    def test_counts_candidate_first_team_inclusion_question(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_2",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "我是派西维尔，玩家4和5是候选。玩家1没带任何候选，我支持自己上车但需要观察候选反应。",
+                        "public_message": "玩家1这车我暂时没有意见，我自己也在车上。不过我想问一下，为什么没把玩家4放进第一车？之前互动也算积极吧。",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["identity_contest_action_count"], 1)
+        self.assertEqual(summary["candidate_relation_pressure_count"], 1)
+        self.assertEqual(summary["candidate_public_action_count"], 1)
+        self.assertEqual(summary["candidate_public_action_gap_count"], 0)
+
+    def test_counts_team_proposal_candidate_swap_as_public_action(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_2",
+                    "phase": "team_proposal",
+                    "decision_type": "team_proposal",
+                    "output": {
+                        "private_reason_summary": "我是派西维尔，候选是4和5。上一轮1和4失败，这轮我排掉4，带上5让他吃压力。",
+                        "public_message": "上一轮1和4失败，这轮我先不碰他们。5第一轮被排在外，这轮我带上他吃压力；如果这车失败，我先问5和3。",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["identity_contest_action_count"], 1)
+        self.assertEqual(summary["candidate_relation_pressure_count"], 1)
+        self.assertEqual(summary["candidate_public_action_count"], 1)
+        self.assertEqual(summary["candidate_public_action_gap_count"], 0)
+
+    def test_counts_accepting_composition_and_trust_followups(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_4",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "我是派西维尔，需要观察候选5接受车队的理由和候选1对5的信任程度。",
+                        "public_message": "如果这车失败，我会先问玩家5为什么接受这个组合。另外想听玩家1说说对玩家5的信任程度。",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["identity_contest_action_count"], 1)
+        self.assertEqual(summary["candidate_relation_pressure_count"], 1)
+        self.assertEqual(summary["candidate_public_action_count"], 1)
+        self.assertEqual(summary["candidate_public_action_gap_count"], 0)
+
+    def test_counts_public_seat_chance_for_candidate_as_pressure(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_2",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "我是派西维尔，候选5是唯一反对失败车的人，给他上车机会观察。",
+                        "public_message": "5是唯一反对那辆失败车的人，我给他上车机会。这车如果失败，我先问同车的人，再回头追问1和4。",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["identity_contest_action_count"], 1)
+        self.assertEqual(summary["candidate_relation_pressure_count"], 1)
+        self.assertEqual(summary["candidate_public_action_count"], 1)
+        self.assertEqual(summary["candidate_public_action_gap_count"], 0)
+
+    def test_counts_direct_candidate_seat_chance_as_pressure(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_2",
+                    "phase": "team_proposal",
+                    "decision_type": "team_proposal",
+                    "output": {
+                        "private_reason_summary": "我是派西维尔，玩家4和玩家5是候选。排除玩家4，带上玩家5观察。",
+                        "public_message": "玩家5第一轮反对这车，我给你机会上车，如果成功我会更信任你。玩家4你需要解释，这轮先不带你。",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["identity_contest_action_count"], 1)
+        self.assertEqual(summary["candidate_relation_pressure_count"], 1)
+        self.assertEqual(summary["candidate_public_action_count"], 1)
+        self.assertEqual(summary["candidate_public_action_gap_count"], 0)
+
+    def test_counts_excluded_candidate_attitude_and_task_responsibility(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_2",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "我是派西维尔，候选4被排除在车外，需要听他的态度。",
+                        "public_message": "玩家4，你被排除在车外，你认可这个组队吗？还是觉得应该换人？",
+                    },
+                },
+                {
+                    "player_id": "player_2",
+                    "phase": "team_proposal",
+                    "decision_type": "team_proposal",
+                    "output": {
+                        "private_reason_summary": "我是派西维尔，候选4和5。带4、排5，观察双方反应。",
+                        "public_message": "玩家4第一轮没有反对，现在给他上车机会看看表现。玩家5这次没带你，如果你觉得该上可以说理由。玩家4，这轮任务交给你负责了。",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["identity_contest_action_count"], 2)
+        self.assertEqual(summary["candidate_relation_pressure_count"], 2)
+        self.assertEqual(summary["candidate_public_action_count"], 2)
+        self.assertEqual(summary["candidate_public_action_gap_count"], 0)
+
+    def test_counts_candidate_pressure_from_prior_vote_reason(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_2",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "我是派西维尔，候选4和5都在车上，需要压5的反对行为。",
+                        "public_message": "玩家5反对了第一轮车队，让他上车吃压力看看态度。玩家5，你上轮为什么反对车队？这车如果失败，我先问你解释。",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["identity_contest_action_count"], 1)
+        self.assertEqual(summary["candidate_relation_pressure_count"], 1)
+        self.assertEqual(summary["candidate_public_action_count"], 1)
+        self.assertEqual(summary["candidate_public_action_gap_count"], 0)
+
+    def test_counts_candidate_opportunity_and_prior_vote_explanation(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_2",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "我是派西维尔，带上候选4观察反应，排除候选5看后续态度。",
+                        "public_message": "玩家4上一轮明确想上车，我先给他机会看看表现。玩家5第一轮反对了那辆车，我想听玩家5解释一下当时为什么反对？",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["identity_contest_action_count"], 1)
+        self.assertEqual(summary["candidate_relation_pressure_count"], 1)
+        self.assertEqual(summary["candidate_public_action_count"], 1)
+        self.assertEqual(summary["candidate_public_action_gap_count"], 0)
+
+    def test_counts_candidate_same_team_pressure_and_failure_questions(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_2",
+                    "phase": "team_proposal",
+                    "decision_type": "team_proposal",
+                    "output": {
+                        "private_reason_summary": "我是派西维尔，候选是玩家4和玩家5，让两个候选同车施压。",
+                        "public_message": "我组自己、玩家4和玩家5。玩家5第一轮反对，我需要给他一次上车机会来观察他的立场。这车如果失败，我先问玩家5为什么反对后又失败，再问玩家4为什么没能维持成功。",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["identity_contest_action_count"], 1)
+        self.assertEqual(summary["candidate_relation_pressure_count"], 1)
+        self.assertEqual(summary["candidate_public_action_count"], 1)
+        self.assertEqual(summary["candidate_public_action_gap_count"], 0)
+
+    def test_counts_private_mission_card_claims_as_forbidden_private_leak(self):
+        sample = {
+            "speeches": [
+                {
+                    "player_id": "player_2",
+                    "message": "我这边没出失败票，所以失败票来自玩家4。",
+                },
+                {
+                    "player_id": "player_3",
+                    "message": "我的票一定是成功票，这车失败先问玩家5。",
+                },
+                {
+                    "player_id": "player_4",
+                    "message": "从我的立场我不认这张锅，同车其他人需要解释。",
+                },
+            ],
+            "decisions": [],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["private_leak_claim_count"], 2)
+        self.assertEqual(
+            [example["player_id"] for example in summary["private_leak_claim_examples"]],
+            ["player_2", "player_3"],
+        )
 
     def test_private_candidate_requires_candidate_relation_pressure(self):
         sample = {
@@ -671,6 +1009,7 @@ class PromptLogEvaluatorTests(unittest.TestCase):
             "private_candidate_decision_count": 1,
             "candidate_public_action_gap_count": 1,
             "public_candidate_binding_count": 1,
+            "private_leak_claim_count": 1,
             "template_phrase_count": 2,
         }
 
@@ -685,6 +1024,7 @@ class PromptLogEvaluatorTests(unittest.TestCase):
                 "missing_candidate_relation_pressure",
                 "private_candidate_without_public_action",
                 "public_candidate_binding_risk",
+                "private_leak_claim_present",
                 "template_phrase_present",
             ],
         )
