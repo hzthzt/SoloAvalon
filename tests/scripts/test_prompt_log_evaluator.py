@@ -1454,6 +1454,51 @@ class PromptLogEvaluatorTests(unittest.TestCase):
         self.assertEqual(summary["vote_fact_misread_count"], 1)
         self.assertEqual(summary["vote_fact_misread_examples"][0]["claim"], "player_4唯一反对")
 
+    def test_counts_vote_reference_without_private_vote_grounding(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_2",
+                    "phase": "team_proposal",
+                    "decision_type": "team_proposal",
+                    "output": {
+                        "private_reason_summary": "我是莫甘娜，想用玩家4的反对票做公开排除理由。",
+                        "public_message": "玩家4是第一轮唯一反对者，他既然反对第一轮的车，这轮我先看看他的后续发言再考虑。",
+                    },
+                },
+                {
+                    "player_id": "player_3",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "第一轮赞成：玩家1、玩家2、玩家3；反对：玩家4、玩家5。我引用玩家4是反对之一，不说唯一。",
+                        "public_message": "玩家4是第一轮反对之一，我想听他解释为什么不认那辆车。",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["vote_reference_without_grounding_count"], 1)
+        self.assertEqual(
+            summary["vote_reference_without_grounding_examples"],
+            [
+                {
+                    "player_id": "player_2",
+                    "phase": "team_proposal",
+                    "decision_type": "team_proposal",
+                    "public_message": "玩家4是第一轮唯一反对者，他既然反对第一轮的车，这轮我先看看他的后续发言再考虑。",
+                    "private_reason_summary": "我是莫甘娜，想用玩家4的反对票做公开排除理由。",
+                }
+            ],
+        )
+
     def test_counts_overconfident_success_certainty_phrasing(self):
         sample = {
             "speeches": [
@@ -1563,6 +1608,7 @@ class PromptLogEvaluatorTests(unittest.TestCase):
             "pairwise_candidate_trial_risk_count": 0,
             "verification_like_task_phrase_count": 0,
             "vote_fact_misread_count": 0,
+            "vote_reference_without_grounding_count": 0,
             "template_phrase_count": 0,
         }
 
@@ -1584,6 +1630,7 @@ class PromptLogEvaluatorTests(unittest.TestCase):
             "pairwise_candidate_trial_risk_count": 1,
             "verification_like_task_phrase_count": 1,
             "vote_fact_misread_count": 1,
+            "vote_reference_without_grounding_count": 1,
             "template_phrase_count": 2,
         }
 
@@ -1603,6 +1650,7 @@ class PromptLogEvaluatorTests(unittest.TestCase):
                 "pairwise_candidate_trial_risk_present",
                 "verification_like_task_phrase_present",
                 "vote_fact_misread_present",
+                "vote_reference_without_grounding_present",
                 "template_phrase_present",
             ],
         )

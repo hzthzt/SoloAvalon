@@ -148,6 +148,11 @@ VOTE_UNIQUE_CLAIM_PATTERNS = (
     ),
 )
 SECOND_PERSON_UNIQUE_VOTE_PATTERN = re.compile(r"(?:只有|就|仅有)?你(?:一个人)?投了?(赞成|反对)")
+PUBLIC_VOTE_REFERENCE_PATTERN = re.compile(
+    r"(?:第[一二三四五]轮|首轮|上一轮|上轮|第一轮).{0,24}(?:投票|票|赞成|反对|同票|票型)|"
+    r"(?:唯一票|唯一反对|唯一赞成|反对者|赞成者|反对之一|赞成之一|单独反对|单独赞成)"
+)
+PRIVATE_VOTE_GROUNDING_PATTERN = re.compile(r"赞成[：:][^；;。]+[；;，,。]\s*反对[：:][^；;。]+")
 
 DEFAULT_MIN_DECISIONS = 12
 
@@ -199,6 +204,7 @@ def evaluate_prompt_log(path: Path) -> dict[str, Any]:
         if _has_verification_like_task_phrase(str(message.get("message", "")))
     ]
     vote_fact_misreads = _vote_fact_misreads(public_messages, decisions)
+    vote_references_without_grounding = _vote_references_without_grounding(decisions)
     private_candidate_mentions = [
         decision
         for decision in decisions
@@ -226,6 +232,7 @@ def evaluate_prompt_log(path: Path) -> dict[str, Any]:
         "overconfident_success_claim_count": len(overconfident_success_claims),
         "verification_like_task_phrase_count": len(verification_like_task_phrases),
         "vote_fact_misread_count": len(vote_fact_misreads),
+        "vote_reference_without_grounding_count": len(vote_references_without_grounding),
         "private_candidate_decision_count": len(private_candidate_mentions),
         "candidate_public_action_count": len(candidate_public_actions),
         "candidate_public_action_gap_count": len(private_candidate_mentions)
@@ -255,6 +262,9 @@ def evaluate_prompt_log(path: Path) -> dict[str, Any]:
             _speech_summary(speech) for speech in verification_like_task_phrases[:5]
         ],
         "vote_fact_misread_examples": vote_fact_misreads[:5],
+        "vote_reference_without_grounding_examples": [
+            _decision_summary(decision) for decision in vote_references_without_grounding[:5]
+        ],
         "candidate_public_action_examples": [
             _decision_summary(decision) for decision in candidate_public_actions[:5]
         ],
@@ -287,6 +297,8 @@ def evaluate_quality_gate(
         failures.append("verification_like_task_phrase_present")
     if int(summary.get("vote_fact_misread_count", 0)) > 0:
         failures.append("vote_fact_misread_present")
+    if int(summary.get("vote_reference_without_grounding_count", 0)) > 0:
+        failures.append("vote_reference_without_grounding_present")
     if int(summary.get("template_phrase_count", 0)) > 0:
         failures.append("template_phrase_present")
     return {
@@ -355,6 +367,16 @@ def _vote_fact_misreads(
             )
             break
     return misreads
+
+
+def _vote_references_without_grounding(decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        decision
+        for decision in decisions
+        if _public_message(decision)
+        and PUBLIC_VOTE_REFERENCE_PATTERN.search(_public_message(decision))
+        and not PRIVATE_VOTE_GROUNDING_PATTERN.search(_private_reason(decision))
+    ]
 
 
 def _vote_groups(decisions: list[dict[str, Any]]) -> list[tuple[list[str], list[str]]]:
