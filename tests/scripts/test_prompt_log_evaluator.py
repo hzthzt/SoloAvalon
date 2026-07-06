@@ -1098,6 +1098,210 @@ class PromptLogEvaluatorTests(unittest.TestCase):
             ["player_1", "player_2"],
         )
 
+    def test_counts_vote_fact_misreads_against_completed_vote_decisions(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_1",
+                    "decision_type": "vote",
+                    "output": {"vote": "approve", "private_reason_summary": "支持原车。"},
+                },
+                {
+                    "player_id": "player_2",
+                    "decision_type": "vote",
+                    "output": {"vote": "reject", "private_reason_summary": "反对原车。"},
+                },
+                {
+                    "player_id": "player_3",
+                    "decision_type": "vote",
+                    "output": {"vote": "reject", "private_reason_summary": "反对原车。"},
+                },
+                {
+                    "player_id": "player_4",
+                    "decision_type": "vote",
+                    "output": {"vote": "approve", "private_reason_summary": "支持原车。"},
+                },
+                {
+                    "player_id": "player_5",
+                    "decision_type": "vote",
+                    "output": {"vote": "approve", "private_reason_summary": "支持原车。"},
+                },
+                {
+                    "player_id": "player_3",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "复盘上一轮票型。",
+                        "public_message": "首轮投票记录只有玩家5一个人投了赞成，这个孤立赞成票你怎么看？",
+                    },
+                },
+                {
+                    "player_id": "player_4",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "复盘上一轮票型。",
+                        "public_message": "玩家2和玩家3都反对过原车，这点我记着。",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["vote_fact_misread_count"], 1)
+        self.assertEqual(
+            summary["vote_fact_misread_examples"],
+            [
+                {
+                    "player_id": "player_3",
+                    "message": "首轮投票记录只有玩家5一个人投了赞成，这个孤立赞成票你怎么看？",
+                    "claim": "player_5唯一赞成",
+                    "actual_approvals": ["player_1", "player_4", "player_5"],
+                    "actual_rejections": ["player_2", "player_3"],
+                }
+            ],
+        )
+
+    def test_counts_second_person_vote_fact_misread_for_addressed_player(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_1",
+                    "decision_type": "vote",
+                    "output": {"vote": "approve", "private_reason_summary": "支持原车。"},
+                },
+                {
+                    "player_id": "player_2",
+                    "decision_type": "vote",
+                    "output": {"vote": "reject", "private_reason_summary": "反对原车。"},
+                },
+                {
+                    "player_id": "player_3",
+                    "decision_type": "vote",
+                    "output": {"vote": "reject", "private_reason_summary": "反对原车。"},
+                },
+                {
+                    "player_id": "player_4",
+                    "decision_type": "vote",
+                    "output": {"vote": "approve", "private_reason_summary": "支持原车。"},
+                },
+                {
+                    "player_id": "player_5",
+                    "decision_type": "vote",
+                    "output": {"vote": "approve", "private_reason_summary": "支持原车。"},
+                },
+                {
+                    "player_id": "player_3",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "复盘上一轮票型。",
+                        "public_message": "我想先听玩家5解释一件事：首轮投票记录只有你一个人投了赞成，这个孤立的赞成票你怎么看？",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["vote_fact_misread_count"], 1)
+        self.assertEqual(summary["vote_fact_misread_examples"][0]["claim"], "player_5唯一赞成")
+
+    def test_vote_fact_misread_uses_most_recent_completed_vote_group(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_1",
+                    "decision_type": "vote",
+                    "output": {"vote": "reject", "private_reason_summary": "第一轮反对。"},
+                },
+                {
+                    "player_id": "player_2",
+                    "decision_type": "vote",
+                    "output": {"vote": "reject", "private_reason_summary": "第一轮反对。"},
+                },
+                {
+                    "player_id": "player_3",
+                    "decision_type": "vote",
+                    "output": {"vote": "reject", "private_reason_summary": "第一轮反对。"},
+                },
+                {
+                    "player_id": "player_4",
+                    "decision_type": "vote",
+                    "output": {"vote": "reject", "private_reason_summary": "第一轮反对。"},
+                },
+                {
+                    "player_id": "player_5",
+                    "decision_type": "vote",
+                    "output": {"vote": "approve", "private_reason_summary": "第一轮赞成。"},
+                },
+                {
+                    "player_id": "player_2",
+                    "phase": "team_proposal",
+                    "decision_type": "team_proposal",
+                    "output": {
+                        "team": ["player_2", "player_5"],
+                        "public_message": "第二轮我带自己和玩家5。",
+                        "private_reason_summary": "新一轮组队。",
+                    },
+                },
+                {
+                    "player_id": "player_1",
+                    "decision_type": "vote",
+                    "output": {"vote": "approve", "private_reason_summary": "第二轮赞成。"},
+                },
+                {
+                    "player_id": "player_2",
+                    "decision_type": "vote",
+                    "output": {"vote": "approve", "private_reason_summary": "第二轮赞成。"},
+                },
+                {
+                    "player_id": "player_3",
+                    "decision_type": "vote",
+                    "output": {"vote": "reject", "private_reason_summary": "第二轮反对。"},
+                },
+                {
+                    "player_id": "player_4",
+                    "decision_type": "vote",
+                    "output": {"vote": "reject", "private_reason_summary": "第二轮反对。"},
+                },
+                {
+                    "player_id": "player_5",
+                    "decision_type": "vote",
+                    "output": {"vote": "approve", "private_reason_summary": "第二轮赞成。"},
+                },
+                {
+                    "player_id": "player_3",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "复盘第一轮票型。",
+                        "public_message": "第一轮只有玩家5一个人投了赞成，这点我想听他解释。",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["vote_fact_misread_count"], 0)
+
     def test_counts_overconfident_success_certainty_phrasing(self):
         sample = {
             "speeches": [
@@ -1206,6 +1410,7 @@ class PromptLogEvaluatorTests(unittest.TestCase):
             "overconfident_success_claim_count": 0,
             "pairwise_candidate_trial_risk_count": 0,
             "verification_like_task_phrase_count": 0,
+            "vote_fact_misread_count": 0,
             "template_phrase_count": 0,
         }
 
@@ -1226,6 +1431,7 @@ class PromptLogEvaluatorTests(unittest.TestCase):
             "overconfident_success_claim_count": 1,
             "pairwise_candidate_trial_risk_count": 1,
             "verification_like_task_phrase_count": 1,
+            "vote_fact_misread_count": 1,
             "template_phrase_count": 2,
         }
 
@@ -1244,6 +1450,7 @@ class PromptLogEvaluatorTests(unittest.TestCase):
                 "overconfident_success_claim_present",
                 "pairwise_candidate_trial_risk_present",
                 "verification_like_task_phrase_present",
+                "vote_fact_misread_present",
                 "template_phrase_present",
             ],
         )

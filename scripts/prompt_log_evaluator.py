@@ -134,6 +134,12 @@ VERIFICATION_LIKE_TASK_PHRASE_PATTERNS = (
     r"任务理由",
     r"投出失败",
 )
+VOTE_UNIQUE_CLAIM_PATTERN = re.compile(
+    rf"(?:(?:只有|就|仅有)?{PLAYER_REF}(?:一个人)?投了?(赞成|反对)|"
+    rf"{PLAYER_REF}.{{0,8}}(唯一|孤立).{{0,4}}(赞成|反对)|"
+    rf"(唯一|孤立).{{0,4}}(赞成|反对).{{0,8}}{PLAYER_REF})"
+)
+SECOND_PERSON_UNIQUE_VOTE_PATTERN = re.compile(r"(?:只有|就|仅有)?你(?:一个人)?投了?(赞成|反对)")
 
 DEFAULT_MIN_DECISIONS = 12
 
@@ -184,6 +190,7 @@ def evaluate_prompt_log(path: Path) -> dict[str, Any]:
         for message in public_messages
         if _has_verification_like_task_phrase(str(message.get("message", "")))
     ]
+    vote_fact_misreads = _vote_fact_misreads(public_messages, decisions)
     private_candidate_mentions = [
         decision
         for decision in decisions
@@ -210,6 +217,7 @@ def evaluate_prompt_log(path: Path) -> dict[str, Any]:
         "private_leak_claim_count": len(private_leak_claims),
         "overconfident_success_claim_count": len(overconfident_success_claims),
         "verification_like_task_phrase_count": len(verification_like_task_phrases),
+        "vote_fact_misread_count": len(vote_fact_misreads),
         "private_candidate_decision_count": len(private_candidate_mentions),
         "candidate_public_action_count": len(candidate_public_actions),
         "candidate_public_action_gap_count": len(private_candidate_mentions)
@@ -238,6 +246,7 @@ def evaluate_prompt_log(path: Path) -> dict[str, Any]:
         "verification_like_task_phrase_examples": [
             _speech_summary(speech) for speech in verification_like_task_phrases[:5]
         ],
+        "vote_fact_misread_examples": vote_fact_misreads[:5],
         "candidate_public_action_examples": [
             _decision_summary(decision) for decision in candidate_public_actions[:5]
         ],
@@ -268,6 +277,8 @@ def evaluate_quality_gate(
         failures.append("pairwise_candidate_trial_risk_present")
     if int(summary.get("verification_like_task_phrase_count", 0)) > 0:
         failures.append("verification_like_task_phrase_present")
+    if int(summary.get("vote_fact_misread_count", 0)) > 0:
+        failures.append("vote_fact_misread_present")
     if int(summary.get("template_phrase_count", 0)) > 0:
         failures.append("template_phrase_present")
     return {
@@ -306,6 +317,107 @@ def _has_verification_like_task_phrase(message: str) -> bool:
         re.search(pattern, message)
         for pattern in VERIFICATION_LIKE_TASK_PHRASE_PATTERNS
     )
+
+
+def _vote_fact_misreads(
+    public_messages: list[dict[str, str]], decisions: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    vote_groups = _vote_groups(decisions)
+    if not vote_groups:
+        return []
+
+    misreads: list[dict[str, Any]] = []
+    for message in public_messages:
+        text = str(message.get("message", ""))
+        if not ("唯一" in text or "孤立" in text or "只有" in text or "就" in text or "仅有" in text):
+            continue
+        approvals, rejections = _vote_group_for_message(text, vote_groups)
+        for player_id, claimed_vote in _unique_vote_claims(text):
+            actual_group = approvals if claimed_vote == "approve" else rejections
+            if actual_group == [player_id]:
+                continue
+            misreads.append(
+                {
+                    "player_id": str(message.get("player_id", "")),
+                    "message": text,
+                    "claim": f"{player_id}唯一{'赞成' if claimed_vote == 'approve' else '反对'}",
+                    "actual_approvals": approvals,
+                    "actual_rejections": rejections,
+                }
+            )
+            break
+    return misreads
+
+
+def _vote_groups(decisions: list[dict[str, Any]]) -> list[tuple[list[str], list[str]]]:
+    groups: list[tuple[list[str], list[str]]] = []
+    current_approvals: list[str] = []
+    current_rejections: list[str] = []
+
+    for decision in decisions:
+        if decision.get("decision_type") != "vote":
+            if current_approvals or current_rejections:
+                groups.append((current_approvals, current_rejections))
+                current_approvals = []
+                current_rejections = []
+            continue
+        output = decision.get("output") or {}
+        if not isinstance(output, dict):
+            continue
+        vote = str(output.get("vote", ""))
+        player_id = str(decision.get("player_id", ""))
+        if vote == "approve":
+            current_approvals.append(player_id)
+        elif vote == "reject":
+            current_rejections.append(player_id)
+
+    if current_approvals or current_rejections:
+        groups.append((current_approvals, current_rejections))
+    return groups
+
+
+def _vote_group_for_message(
+    message: str, vote_groups: list[tuple[list[str], list[str]]]
+) -> tuple[list[str], list[str]]:
+    if re.search(r"首轮|第一轮|第一车", message):
+        return vote_groups[0]
+    second_group_match = re.search(r"第二轮|第二车", message)
+    if second_group_match and len(vote_groups) >= 2:
+        return vote_groups[1]
+    return vote_groups[-1]
+
+
+def _unique_vote_claims(message: str) -> list[tuple[str, str]]:
+    claims: list[tuple[str, str]] = []
+    for match in VOTE_UNIQUE_CLAIM_PATTERN.finditer(message):
+        player_match = re.search(PLAYER_REF, match.group(0))
+        if not player_match:
+            continue
+        player_id = _normalize_player_ref(player_match.group(0))
+        vote_text = "反对" if "反对" in match.group(0) else "赞成"
+        claims.append((player_id, "reject" if vote_text == "反对" else "approve"))
+    addressed_player = _addressed_player_ref(message)
+    if addressed_player:
+        for match in SECOND_PERSON_UNIQUE_VOTE_PATTERN.finditer(message):
+            vote_text = "反对" if "反对" in match.group(0) else "赞成"
+            claims.append((addressed_player, "reject" if vote_text == "反对" else "approve"))
+    return claims
+
+
+def _normalize_player_ref(player_ref: str) -> str:
+    digit_match = re.search(r"\d+", player_ref)
+    return f"player_{digit_match.group(0)}" if digit_match else player_ref
+
+
+def _addressed_player_ref(message: str) -> str:
+    match = re.search(
+        rf"(?:听|问|让)?{PLAYER_REF}.{{0,12}}(解释|说|怎么看|什么态度|你)",
+        message,
+    )
+    if not match:
+        return ""
+    player_match = re.search(PLAYER_REF, match.group(0))
+    return _normalize_player_ref(player_match.group(0)) if player_match else ""
 
 
 def _public_messages(
