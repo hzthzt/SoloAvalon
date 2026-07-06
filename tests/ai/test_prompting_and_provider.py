@@ -90,6 +90,89 @@ class PromptingAndProviderTests(unittest.TestCase):
             self.assertIn("预埋后续叙事钩子", config.role_gameplay[role])
             self.assertIn("失败后优先压谁", config.role_gameplay[role])
 
+    def test_default_prompt_requires_contested_percival_identity_narratives(self):
+        config = load_prompt_template_config()
+
+        identity_prompt = "\n".join(
+            config.system_lines
+            + config.action_prompts["propose_team"]["lines"]
+            + config.action_prompts["speak"]["lines"]
+            + config.action_prompts["vote"]["lines"]
+        )
+
+        for phrase in (
+            "身份叙事债",
+            "站哪条候选线",
+            "拆哪条候选线",
+            "反跳谁",
+            "逼问谁在保护谁",
+            "跳派不是目的",
+        ):
+            self.assertIn(phrase, identity_prompt)
+
+        self.assertIn("半藏半露地抢候选解释权", config.role_gameplay["percival"])
+        self.assertIn("点名一条你要保的线", config.role_gameplay["percival"])
+        self.assertIn("点名一条你要拆的线", config.role_gameplay["percival"])
+        self.assertIn("假装懂候选关系", config.role_gameplay["morgana"])
+        self.assertIn("逼真派西维尔或挡刀忠臣表态", config.role_gameplay["assassin"])
+        self.assertIn("反压假派西维尔", config.role_gameplay["loyal_servant"])
+
+    def test_default_prompt_proactively_opens_light_identity_lines(self):
+        config = load_prompt_template_config()
+
+        speak_prompt = "\n".join(config.action_prompts["speak"]["lines"])
+        self.assertIn("无人开身份线时", speak_prompt)
+        self.assertIn("不要硬造身份线", speak_prompt)
+        self.assertIn("只有你是派西维尔/莫甘娜", speak_prompt)
+        self.assertIn("轻开一条身份线", speak_prompt)
+        self.assertIn("已有公开车队、票型、任务结果、保人/排人动作可包装", speak_prompt)
+        self.assertIn("不要直接说候选身份", speak_prompt)
+
+        self.assertIn("第二轮还没人谈候选", config.role_gameplay["percival"])
+        self.assertIn("用公开车队或票型包装", config.role_gameplay["percival"])
+        self.assertIn("不说候选身份", config.role_gameplay["percival"])
+        self.assertIn("主动开一条假的保护线", config.role_gameplay["morgana"])
+        self.assertIn("轻开身份线", config.role_gameplay["loyal_servant"])
+
+    def test_default_prompt_gives_sayable_identity_contest_phrases(self):
+        config = load_prompt_template_config()
+
+        prompt_text = "\n".join(config.system_lines + config.action_prompts["speak"]["lines"])
+
+        for phrase in (
+            "玩家X一直替玩家Y卸压",
+            "玩家X急着排玩家Y",
+            "我先偏保玩家X这轮上车",
+            "这不像普通好人互相评价",
+            "必须用自己的话完成一个动作",
+            "不要整局复读示例句",
+        ):
+            self.assertIn(phrase, prompt_text)
+
+        self.assertIn("公开必须落一句桌面短句", config.role_gameplay["percival"])
+        self.assertIn("不能只写在私下理由", config.role_gameplay["percival"])
+
+    def test_default_prompt_requires_private_candidate_reason_to_public_action(self):
+        config = load_prompt_template_config()
+
+        speak_prompt = "\n".join(config.action_prompts["speak"]["lines"])
+        self.assertIn("private_reason_summary 提到候选关系", speak_prompt)
+        self.assertIn("public_message 必须落一个不泄露的动作", speak_prompt)
+        self.assertIn("不能只公开说车队结构", speak_prompt)
+
+        self.assertIn("私下因为候选关系改变态度", config.role_gameplay["percival"])
+        self.assertIn("公开必须用不泄露身份的动作表达一部分", config.role_gameplay["percival"])
+
+    def test_default_prompt_rejects_vague_identity_line_actions(self):
+        config = load_prompt_template_config()
+
+        prompt_text = "\n".join(config.system_lines + config.action_prompts["speak"]["lines"])
+        self.assertIn("只说“这条线我先保着/认着/记着”不算完成动作", prompt_text)
+        self.assertIn("必须点出至少一名玩家或一个具体行为关系", prompt_text)
+
+        self.assertIn("不能只说“这条线我先保着”", config.role_gameplay["percival"])
+        self.assertIn("点出玩家和公开行为", config.role_gameplay["percival"])
+
     def test_default_prompt_blocks_synonymous_safe_support_phrasing(self):
         config = load_prompt_template_config()
 
@@ -99,11 +182,120 @@ class PromptingAndProviderTests(unittest.TestCase):
             + config.action_prompts["speak"]["lines"]
         )
 
-        for phrase in ("先跑一轮", "看看结果", "提供视角", "多一份视角", "投票见分晓"):
-            self.assertIn(phrase, prompt_text)
+        self.assertNotIn("第一轮先跑一轮看看结果", prompt_text)
+        self.assertNotIn("提供视角", prompt_text)
+        self.assertNotIn("多一份视角", prompt_text)
         self.assertIn("不要把禁句换成同义安全句", prompt_text)
+        self.assertIn("安全套话", prompt_text)
         self.assertIn("支持必须带条件、风险或责任顺序", prompt_text)
+        self.assertIn("必须点名当前车成员、被排除者或失败后先问谁", prompt_text)
         self.assertIn("1 到 3 句", prompt_text)
+
+    def test_default_prompt_gives_positive_table_replacements_for_team_phrasing(self):
+        config = load_prompt_template_config()
+
+        team_prompt = "\n".join(config.action_prompts["propose_team"]["lines"])
+        self.assertIn("别绕成抽象试车", team_prompt)
+        self.assertIn("带上玩家X，是因为", team_prompt)
+        self.assertIn("没带玩家Y，是要他先解释", team_prompt)
+        self.assertIn("这车炸了我先问玩家X", team_prompt)
+        self.assertIn("第一轮也按这个格式说", team_prompt)
+
+        system_prompt = "\n".join(config.system_lines)
+        self.assertIn("少列禁句，多给替代表达", system_prompt)
+        self.assertIn("带谁、暂时不带谁、炸了先问谁、谁这轮别被打死", system_prompt)
+
+    def test_default_prompt_requires_team_template_self_check(self):
+        config = load_prompt_template_config()
+
+        team_prompt = "\n".join(config.action_prompts["propose_team"]["lines"])
+        self.assertIn("组队套话自检", team_prompt)
+        self.assertIn("先跑一轮", team_prompt)
+        self.assertIn("看看结果", team_prompt)
+        self.assertIn("后续再调整", team_prompt)
+        self.assertIn("删掉重写", team_prompt)
+        self.assertIn("带上谁、为什么带、暂时不带谁、炸了先问谁", team_prompt)
+
+    def test_default_prompt_reflects_real_percival_table_play_from_research(self):
+        config = load_prompt_template_config()
+
+        self.assertIn("不要报拇指", config.role_gameplay["percival"])
+        self.assertIn("用逻辑和车位收集信息", config.role_gameplay["percival"])
+        self.assertIn("有人抢跳派西维尔", config.role_gameplay["percival"])
+        self.assertIn("先判断他是不是候选在挡刀", config.role_gameplay["percival"])
+        self.assertIn("不要立刻把候选卖出来", config.role_gameplay["percival"])
+
+    def test_default_prompt_forces_candidate_observation_into_public_pressure(self):
+        config = load_prompt_template_config()
+
+        speak_prompt = "\n".join(config.action_prompts["speak"]["lines"])
+        self.assertIn("观察候选反应不是公开动作", speak_prompt)
+        self.assertIn("我关注玩家X怎么接局势", speak_prompt)
+        self.assertIn("必须改成可被全桌回应的压力", speak_prompt)
+        self.assertIn("让玩家X上车吃压力", speak_prompt)
+        self.assertIn("玩家X这轮先别被打死", speak_prompt)
+        self.assertIn("玩家Y为什么急着排玩家X", speak_prompt)
+
+        self.assertIn("只说关注某个候选怎么接话不够", config.role_gameplay["percival"])
+        self.assertIn("必须把观察改成桌面压力", config.role_gameplay["percival"])
+
+    def test_default_prompt_prioritizes_candidate_relation_pressure(self):
+        config = load_prompt_template_config()
+
+        speak_prompt = "\n".join(config.action_prompts["speak"]["lines"])
+        self.assertIn("优先点候选本人", speak_prompt)
+        self.assertIn("谁在推、保、排、跳过候选", speak_prompt)
+        self.assertIn("只压无候选关系的玩家不算完成", speak_prompt)
+        self.assertIn("玩家X一直把玩家Y往车上推", speak_prompt)
+        self.assertIn("玩家X为什么持续拆玩家Y这条成功线", speak_prompt)
+
+        self.assertIn("公开优先追候选本人", config.role_gameplay["percival"])
+        self.assertIn("追谁在推、保、拆候选", config.role_gameplay["percival"])
+
+    def test_default_prompt_requires_candidate_callback_self_check(self):
+        config = load_prompt_template_config()
+
+        prompt_text = "\n".join(config.system_lines + config.action_prompts["speak"]["lines"])
+        self.assertIn("候选回扣自检", prompt_text)
+        self.assertIn("点到候选本人", prompt_text)
+        self.assertIn("推、保、排、跳过候选的人", prompt_text)
+        self.assertIn("只压一个无候选关系的车位玩家", prompt_text)
+        self.assertIn("重写公开句", prompt_text)
+
+        self.assertIn("每次涉及候选都先做候选回扣自检", config.role_gameplay["percival"])
+        self.assertIn("否则先重写 public_message", config.role_gameplay["percival"])
+
+    def test_default_prompt_requires_opening_candidate_callback(self):
+        config = load_prompt_template_config()
+
+        speak_prompt = "\n".join(config.action_prompts["speak"]["lines"])
+        self.assertIn("首轮候选回扣", speak_prompt)
+        self.assertIn("候选领队带你", speak_prompt)
+        self.assertIn("排掉另一候选", speak_prompt)
+        self.assertIn("公开选择信任某候选", speak_prompt)
+        self.assertIn("至少问一句可公开解释的问题", speak_prompt)
+        self.assertIn("不能只说信任、配合或认真完成任务", speak_prompt)
+
+        self.assertIn("首轮被候选带上车", config.role_gameplay["percival"])
+        self.assertIn("也要用一句可否认问题回扣候选", config.role_gameplay["percival"])
+
+    def test_default_prompt_replaces_vague_perspective_requests(self):
+        config = load_prompt_template_config()
+
+        prompt_text = "\n".join(
+            config.system_lines
+            + config.action_prompts["propose_team"]["lines"]
+            + config.action_prompts["speak"]["lines"]
+        )
+
+        self.assertIn("不要用“多一个视角”", prompt_text)
+        self.assertIn("不要用“观察一轮”", prompt_text)
+        self.assertIn("别说“看看反应”", prompt_text)
+        self.assertIn("玩家X为什么把玩家Y排在外面", prompt_text)
+        self.assertIn("玩家X为什么把玩家Y往车上推", prompt_text)
+
+        self.assertIn("候选领队排掉另一候选", config.role_gameplay["percival"])
+        self.assertIn("优先问领队为什么排他", config.role_gameplay["percival"])
 
     def test_player_view_includes_basic_role_gameplay_and_hides_advanced_tips_by_default(self):
         state = GameState(
