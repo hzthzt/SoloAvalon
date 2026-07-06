@@ -38,9 +38,13 @@ IDENTITY_ACTION_PATTERNS = (
     rf"{PLAYER_REF}.*排除了{PLAYER_REF}",
     rf"{PLAYER_REF}.*没带{PLAYER_REF}",
     rf"为什么没带{PLAYER_REF}",
+    rf"为什么把{PLAYER_REF}(留在外面|排在外面|排除在外)",
     rf"为什么没把{PLAYER_REF}放进",
     rf"{PLAYER_REF}.*跳过{PLAYER_REF}",
     rf"{PLAYER_REF}.*解释压力",
+    rf"{PLAYER_REF}.*被排在外.*带.*上车",
+    rf"(带|组).{{0,32}}{PLAYER_REF}.{{0,50}}(失败|炸).{{0,16}}{PLAYER_REF}.{{0,10}}解释",
+    rf"{PLAYER_REF}.{{0,24}}(失败|炸).{{0,16}}{PLAYER_REF}.{{0,10}}解释",
     rf"问{PLAYER_REF}为什么接受这个组合",
     rf"{PLAYER_REF}.*对{PLAYER_REF}.*信任程度",
     r"保这条.*线",
@@ -74,8 +78,12 @@ CANDIDATE_RELATION_PRESSURE_PATTERNS = (
     rf"{PLAYER_REF}.*为什么.*排除了{PLAYER_REF}",
     rf"{PLAYER_REF}.*没带{PLAYER_REF}.*为什么",
     rf"为什么没带{PLAYER_REF}",
+    rf"为什么把{PLAYER_REF}(留在外面|排在外面|排除在外)",
     rf"为什么没把{PLAYER_REF}放进",
     rf"{PLAYER_REF}.*被排除在车外.*(认可|换人|组队)",
+    rf"{PLAYER_REF}.*被排在外.*带.*上车",
+    rf"(带|组).{{0,32}}{PLAYER_REF}.{{0,50}}(失败|炸).{{0,16}}{PLAYER_REF}.{{0,10}}解释",
+    rf"{PLAYER_REF}.{{0,24}}(失败|炸).{{0,16}}{PLAYER_REF}.{{0,10}}解释",
     rf"{PLAYER_REF}.*给他上车机会看看表现",
     rf"{PLAYER_REF}.*给他机会看看表现",
     rf"{PLAYER_REF}.*解释一下当时为什么反对",
@@ -90,6 +98,9 @@ CANDIDATE_RELATION_PRESSURE_PATTERNS = (
 PRIVATE_CANDIDATE_PATTERN = re.compile(r"候选|保护线|候选关系")
 PUBLIC_CANDIDATE_BINDING_PATTERN = re.compile(
     r"(玩家)?\d+(?:/|、|和)(玩家)?\d+.{0,12}(候选|双候选|候选关系|梅林候选)|两个候选.{0,8}玩家\d+和玩家\d+"
+)
+PAIRWISE_CANDIDATE_TRIAL_PATTERN = re.compile(
+    rf"{PLAYER_REF}和{PLAYER_REF}.{{0,24}}(机会证明|证明自己|同时.*观察|一起.*验证|都.*解释|要解释|责任.*担|一起.*扛)"
 )
 TEMPLATE_PHRASE_PATTERNS = (
     r"责任链清晰",
@@ -109,6 +120,19 @@ PRIVATE_LEAK_CLAIM_PATTERNS = (
     r"我(?:投|提交)了成功",
     r"我(?:是|一定是)?成功票",
     r"我的票一定是成功票",
+    r"(?:我|自己).{0,8}解释(?:自己)?的任务牌",
+    r"(?:我|自己).{0,8}交代(?:我自己的)?票向",
+)
+OVERCONFIDENT_SUCCESS_CLAIM_PATTERNS = (
+    r"任务成功.*认这张底牌",
+    r"成功.*认这张底牌",
+    r"认这张底牌",
+    r"打这张任务牌",
+)
+VERIFICATION_LIKE_TASK_PHRASE_PATTERNS = (
+    r"接受检验",
+    r"任务理由",
+    r"投出失败",
 )
 
 DEFAULT_MIN_DECISIONS = 12
@@ -135,6 +159,11 @@ def evaluate_prompt_log(path: Path) -> dict[str, Any]:
         for message in public_messages
         if PUBLIC_CANDIDATE_BINDING_PATTERN.search(str(message.get("message", "")))
     ]
+    pairwise_candidate_trial_risks = [
+        message
+        for message in public_messages
+        if PAIRWISE_CANDIDATE_TRIAL_PATTERN.search(str(message.get("message", "")))
+    ]
     template_phrases = [
         message
         for message in public_messages
@@ -144,6 +173,16 @@ def evaluate_prompt_log(path: Path) -> dict[str, Any]:
         message
         for message in public_messages
         if _has_private_leak_claim(str(message.get("message", "")))
+    ]
+    overconfident_success_claims = [
+        message
+        for message in public_messages
+        if _has_overconfident_success_claim(str(message.get("message", "")))
+    ]
+    verification_like_task_phrases = [
+        message
+        for message in public_messages
+        if _has_verification_like_task_phrase(str(message.get("message", "")))
     ]
     private_candidate_mentions = [
         decision
@@ -155,6 +194,7 @@ def evaluate_prompt_log(path: Path) -> dict[str, Any]:
         decision
         for decision in private_candidate_mentions
         if _has_candidate_relation_pressure(_public_message(decision))
+        and not PAIRWISE_CANDIDATE_TRIAL_PATTERN.search(_public_message(decision))
     ]
 
     summary = {
@@ -165,8 +205,11 @@ def evaluate_prompt_log(path: Path) -> dict[str, Any]:
         "candidate_relation_pressure_count": len(candidate_relation_pressures),
         "private_candidate_mention_count": len(private_candidate_mentions),
         "public_candidate_binding_count": len(public_candidate_bindings),
+        "pairwise_candidate_trial_risk_count": len(pairwise_candidate_trial_risks),
         "template_phrase_count": len(template_phrases),
         "private_leak_claim_count": len(private_leak_claims),
+        "overconfident_success_claim_count": len(overconfident_success_claims),
+        "verification_like_task_phrase_count": len(verification_like_task_phrases),
         "private_candidate_decision_count": len(private_candidate_mentions),
         "candidate_public_action_count": len(candidate_public_actions),
         "candidate_public_action_gap_count": len(private_candidate_mentions)
@@ -180,11 +223,20 @@ def evaluate_prompt_log(path: Path) -> dict[str, Any]:
         "public_candidate_binding_examples": [
             _speech_summary(speech) for speech in public_candidate_bindings[:5]
         ],
+        "pairwise_candidate_trial_risk_examples": [
+            _speech_summary(speech) for speech in pairwise_candidate_trial_risks[:5]
+        ],
         "template_phrase_examples": [
             _speech_summary(speech) for speech in template_phrases[:5]
         ],
         "private_leak_claim_examples": [
             _speech_summary(speech) for speech in private_leak_claims[:5]
+        ],
+        "overconfident_success_claim_examples": [
+            _speech_summary(speech) for speech in overconfident_success_claims[:5]
+        ],
+        "verification_like_task_phrase_examples": [
+            _speech_summary(speech) for speech in verification_like_task_phrases[:5]
         ],
         "candidate_public_action_examples": [
             _decision_summary(decision) for decision in candidate_public_actions[:5]
@@ -210,6 +262,12 @@ def evaluate_quality_gate(
         failures.append("public_candidate_binding_risk")
     if int(summary.get("private_leak_claim_count", 0)) > 0:
         failures.append("private_leak_claim_present")
+    if int(summary.get("overconfident_success_claim_count", 0)) > 0:
+        failures.append("overconfident_success_claim_present")
+    if int(summary.get("pairwise_candidate_trial_risk_count", 0)) > 0:
+        failures.append("pairwise_candidate_trial_risk_present")
+    if int(summary.get("verification_like_task_phrase_count", 0)) > 0:
+        failures.append("verification_like_task_phrase_present")
     if int(summary.get("template_phrase_count", 0)) > 0:
         failures.append("template_phrase_present")
     return {
@@ -235,6 +293,19 @@ def _has_template_phrase(message: str) -> bool:
 
 def _has_private_leak_claim(message: str) -> bool:
     return any(re.search(pattern, message) for pattern in PRIVATE_LEAK_CLAIM_PATTERNS)
+
+
+def _has_overconfident_success_claim(message: str) -> bool:
+    return any(
+        re.search(pattern, message) for pattern in OVERCONFIDENT_SUCCESS_CLAIM_PATTERNS
+    )
+
+
+def _has_verification_like_task_phrase(message: str) -> bool:
+    return any(
+        re.search(pattern, message)
+        for pattern in VERIFICATION_LIKE_TASK_PHRASE_PATTERNS
+    )
 
 
 def _public_messages(

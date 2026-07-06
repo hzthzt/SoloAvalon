@@ -234,12 +234,69 @@ class PromptingAndProviderTests(unittest.TestCase):
         config = load_prompt_template_config()
 
         prompt_text = "\n".join(config.system_lines + config.action_prompts["speak"]["lines"])
-        self.assertIn("prompt.v30", config.version)
+        self.assertIn("prompt.v34", config.version)
         self.assertIn("不要在 public_message 中说", prompt_text)
         self.assertIn("我没出失败票", prompt_text)
         self.assertIn("我的票一定是成功票", prompt_text)
+        self.assertIn("解释自己的任务牌", prompt_text)
+        self.assertIn("交代自己的票向", prompt_text)
         self.assertIn("从我的立场我不认这张锅", prompt_text)
         self.assertIn("同车其他人需要解释", prompt_text)
+        self.assertIn("我解释车位和公开立场", prompt_text)
+
+    def test_default_prompt_avoids_overconfident_success_certainty(self):
+        config = load_prompt_template_config()
+
+        prompt_text = "\n".join(config.system_lines + config.action_prompts["speak"]["lines"])
+        self.assertIn("prompt.v34", config.version)
+        self.assertIn("成功任务不是验人", prompt_text)
+        self.assertIn("不要说“认这张底牌”", prompt_text)
+        self.assertIn("不要说“打这张任务牌”", prompt_text)
+        self.assertIn("暂时认一轮", prompt_text)
+        self.assertIn("看他怎么接压力", prompt_text)
+
+    def test_default_prompt_avoids_public_pairwise_candidate_trials(self):
+        config = load_prompt_template_config()
+
+        prompt_text = "\n".join(config.system_lines + config.action_prompts["speak"]["lines"])
+        self.assertIn("prompt.v34", config.version)
+        self.assertIn("不要把两名候选同时放进公开试验框架", prompt_text)
+        self.assertIn("玩家X和玩家Y都来证明自己", prompt_text)
+        self.assertIn("玩家X解释一件事", prompt_text)
+        self.assertIn("玩家Y先留到投票或下一轮再压", prompt_text)
+
+    def test_default_prompt_avoids_template_and_verification_like_task_phrasing(self):
+        config = load_prompt_template_config()
+
+        prompt_text = "\n".join(
+            config.system_lines
+            + config.action_prompts["propose_team"]["lines"]
+            + config.action_prompts["speak"]["lines"]
+        )
+        self.assertIn("prompt.v34", config.version)
+        self.assertIn("不要说“看看结果”", prompt_text)
+        self.assertIn("不要说“接受检验”", prompt_text)
+        self.assertIn("不要说“任务理由”", prompt_text)
+        self.assertIn("不要说“投出失败”", prompt_text)
+        self.assertIn("上车吃压力", prompt_text)
+        self.assertIn("这车炸了先解释车位和投票立场", prompt_text)
+
+    def test_default_prompt_requires_action_diversity_after_repeated_pressure(self):
+        config = load_prompt_template_config()
+
+        prompt_text = "\n".join(config.system_lines + config.action_prompts["speak"]["lines"])
+        self.assertIn("prompt.v34", config.version)
+        self.assertIn("同一轮已经有人追问过某个排除点", prompt_text)
+        self.assertIn("不要简单复读同一个问题", prompt_text)
+        self.assertIn("要求换掉一个位置", prompt_text)
+        self.assertIn("给条件票", prompt_text)
+        self.assertIn("失败后第一/第二归责顺序", prompt_text)
+        self.assertIn("谁在借这个排除点带票", prompt_text)
+
+        self.assertIn("不要中立复读", config.role_gameplay["assassin"])
+        self.assertIn("假装保护被排除的人", config.role_gameplay["assassin"])
+        self.assertIn("不要只跟问", config.role_gameplay["morgana"])
+        self.assertIn("反问谁在借这个排除点做身份", config.role_gameplay["morgana"])
 
     def test_default_prompt_reflects_real_percival_table_play_from_research(self):
         config = load_prompt_template_config()

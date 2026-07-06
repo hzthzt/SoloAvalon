@@ -375,6 +375,41 @@ class PromptLogEvaluatorTests(unittest.TestCase):
 
         self.assertEqual(summary["public_candidate_binding_count"], 3)
 
+    def test_detects_pairwise_candidate_trial_risk(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_2",
+                    "phase": "team_proposal",
+                    "decision_type": "team_proposal",
+                    "output": {
+                        "private_reason_summary": "我是派西维尔，候选是玩家4和玩家5，这轮同时带上两个候选观察。",
+                        "public_message": "玩家4和玩家5第一轮都想上车，我给他们机会证明自己。这车如果失败，我第一个找玩家4和玩家5要解释。",
+                    },
+                },
+                {
+                    "player_id": "player_3",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "普通忠臣，质疑车队结构。",
+                        "public_message": "玩家1，你这车直接跳过玩家4和5，总得给个理由吧？",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["public_candidate_binding_count"], 0)
+        self.assertEqual(summary["pairwise_candidate_trial_risk_count"], 1)
+        self.assertEqual(summary["candidate_public_action_gap_count"], 1)
+
     def test_counts_private_candidate_to_public_action_conversion(self):
         sample = {
             "speeches": [],
@@ -930,6 +965,77 @@ class PromptLogEvaluatorTests(unittest.TestCase):
         self.assertEqual(summary["candidate_public_action_count"], 1)
         self.assertEqual(summary["candidate_public_action_gap_count"], 0)
 
+    def test_counts_natural_single_candidate_pressure_from_exclusion_and_failure(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_2",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "作为派西维尔，玩家4和5是候选，我想追玩家5为什么被排。",
+                        "public_message": "队长，我不反对这车先走，但想问一句为什么把玩家5排除在外？如果任务失败，下一轮我建议让玩家5上车试试。",
+                    },
+                },
+                {
+                    "player_id": "player_2",
+                    "phase": "team_proposal",
+                    "decision_type": "team_proposal",
+                    "output": {
+                        "private_reason_summary": "我是派西维尔，两名候选是玩家4和玩家5，这轮只点玩家5上车吃压力。",
+                        "public_message": "这轮我带自己、玩家1和还没上过车的玩家5。玩家4这轮先休息。如果这车失败，玩家5请解释。",
+                    },
+                },
+                {
+                    "player_id": "player_2",
+                    "phase": "team_proposal",
+                    "decision_type": "team_proposal",
+                    "output": {
+                        "private_reason_summary": "我是派西维尔，候选是玩家4和玩家5，玩家5被排过，这轮给单点压力。",
+                        "public_message": "玩家5第一轮被排在外，这轮我带他上车；这车如果失败，玩家5先解释车位和投票立场。",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["identity_contest_action_count"], 3)
+        self.assertEqual(summary["candidate_relation_pressure_count"], 3)
+        self.assertEqual(summary["candidate_public_action_count"], 3)
+        self.assertEqual(summary["candidate_public_action_gap_count"], 0)
+
+    def test_generic_explanation_without_seat_or_failure_context_is_not_candidate_pressure(self):
+        sample = {
+            "speeches": [],
+            "decisions": [
+                {
+                    "player_id": "player_2",
+                    "phase": "speech",
+                    "decision_type": "speech",
+                    "output": {
+                        "private_reason_summary": "我是派西维尔，候选是玩家4和玩家5，但这句公开话还没有转成车位压力。",
+                        "public_message": "玩家5请解释一下刚才那句话，我先听听。",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["candidate_relation_pressure_count"], 0)
+        self.assertEqual(summary["candidate_public_action_count"], 0)
+        self.assertEqual(summary["candidate_public_action_gap_count"], 1)
+
     def test_counts_private_mission_card_claims_as_forbidden_private_leak(self):
         sample = {
             "speeches": [
@@ -959,6 +1065,109 @@ class PromptLogEvaluatorTests(unittest.TestCase):
         self.assertEqual(
             [example["player_id"] for example in summary["private_leak_claim_examples"]],
             ["player_2", "player_3"],
+        )
+
+    def test_counts_public_task_card_or_vote_direction_explanation_as_private_leak_risk(self):
+        sample = {
+            "speeches": [
+                {
+                    "player_id": "player_1",
+                    "message": "如果这车失败，我先解释自己的任务牌，队长也解释组队逻辑。",
+                },
+                {
+                    "player_id": "player_2",
+                    "message": "如果任务失败，我会先交代我自己的票向。",
+                },
+                {
+                    "player_id": "player_3",
+                    "message": "如果这车失败，我先解释车位和公开立场。",
+                },
+            ],
+            "decisions": [],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["private_leak_claim_count"], 2)
+        self.assertEqual(
+            [example["player_id"] for example in summary["private_leak_claim_examples"]],
+            ["player_1", "player_2"],
+        )
+
+    def test_counts_overconfident_success_certainty_phrasing(self):
+        sample = {
+            "speeches": [
+                {
+                    "player_id": "player_2",
+                    "message": "玩家1第一车跟我同车且任务成功，我认这张底牌。",
+                },
+                {
+                    "player_id": "player_4",
+                    "message": "玩家4上轮主动质疑为什么没被带上，我给他上车机会，看他怎么打这张任务牌。",
+                },
+                {
+                    "player_id": "player_5",
+                    "message": "第一车成功，1和2先暂时认一轮，但不当验人。",
+                },
+            ],
+            "decisions": [],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["overconfident_success_claim_count"], 2)
+        self.assertEqual(
+            [
+                example["player_id"]
+                for example in summary["overconfident_success_claim_examples"]
+            ],
+            ["player_2", "player_4"],
+        )
+
+    def test_counts_verification_like_task_phrasing(self):
+        sample = {
+            "speeches": [
+                {
+                    "player_id": "player_2",
+                    "message": "玩家5这回上车接受检验。",
+                },
+                {
+                    "player_id": "player_3",
+                    "message": "如果这车失败，我追玩家5的任务理由。",
+                },
+                {
+                    "player_id": "player_4",
+                    "message": "玩家5需要解释为什么在机会车上投出失败。",
+                },
+                {
+                    "player_id": "player_5",
+                    "message": "玩家5上车吃压力，这车炸了先解释车位和投票立场。",
+                },
+            ],
+            "decisions": [],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_prompt_log(path)
+
+        self.assertEqual(summary["verification_like_task_phrase_count"], 3)
+        self.assertEqual(
+            [
+                example["player_id"]
+                for example in summary["verification_like_task_phrase_examples"]
+            ],
+            ["player_2", "player_3", "player_4"],
         )
 
     def test_private_candidate_requires_candidate_relation_pressure(self):
@@ -993,6 +1202,10 @@ class PromptLogEvaluatorTests(unittest.TestCase):
             "private_candidate_decision_count": 2,
             "candidate_public_action_gap_count": 0,
             "public_candidate_binding_count": 0,
+            "private_leak_claim_count": 0,
+            "overconfident_success_claim_count": 0,
+            "pairwise_candidate_trial_risk_count": 0,
+            "verification_like_task_phrase_count": 0,
             "template_phrase_count": 0,
         }
 
@@ -1010,6 +1223,9 @@ class PromptLogEvaluatorTests(unittest.TestCase):
             "candidate_public_action_gap_count": 1,
             "public_candidate_binding_count": 1,
             "private_leak_claim_count": 1,
+            "overconfident_success_claim_count": 1,
+            "pairwise_candidate_trial_risk_count": 1,
+            "verification_like_task_phrase_count": 1,
             "template_phrase_count": 2,
         }
 
@@ -1025,6 +1241,9 @@ class PromptLogEvaluatorTests(unittest.TestCase):
                 "private_candidate_without_public_action",
                 "public_candidate_binding_risk",
                 "private_leak_claim_present",
+                "overconfident_success_claim_present",
+                "pairwise_candidate_trial_risk_present",
+                "verification_like_task_phrase_present",
                 "template_phrase_present",
             ],
         )
