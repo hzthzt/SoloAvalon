@@ -185,8 +185,9 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertNotIn("第一轮先跑一轮看看结果", prompt_text)
         self.assertNotIn("提供视角", prompt_text)
         self.assertNotIn("多一份视角", prompt_text)
-        self.assertIn("不要把禁句换成同义安全句", prompt_text)
-        self.assertIn("安全套话", prompt_text)
+        self.assertNotIn("禁句", prompt_text)
+        self.assertIn("点一个人、追一个理由、给一个后果动作", prompt_text)
+        self.assertIn("质量判断看结构动作", prompt_text)
         self.assertIn("支持必须带条件、风险或责任顺序", prompt_text)
         self.assertIn("必须点名当前车成员、被排除者或失败后先问谁", prompt_text)
         self.assertIn("1 到 3 句", prompt_text)
@@ -202,20 +203,20 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertIn("第一轮也按这个格式说", team_prompt)
 
         system_prompt = "\n".join(config.system_lines)
-        self.assertIn("少列禁句，多给替代表达", system_prompt)
+        self.assertIn("少背话术，多做桌面动作", system_prompt)
         self.assertIn("带谁、暂时不带谁、炸了先问谁、谁这轮别被打死", system_prompt)
 
     def test_default_prompt_requires_team_template_self_check(self):
         config = load_prompt_template_config()
 
         team_prompt = "\n".join(config.action_prompts["propose_team"]["lines"])
-        self.assertIn("组队套话自检", team_prompt)
+        self.assertIn("组队动作自检", team_prompt)
         self.assertIn("先跑一轮", team_prompt)
         self.assertIn("先走一车", team_prompt)
         self.assertIn("看看结果", team_prompt)
         self.assertIn("看看反应", team_prompt)
         self.assertIn("后续再调整", team_prompt)
-        self.assertIn("删掉重写", team_prompt)
+        self.assertIn("按这个结构改写", team_prompt)
         self.assertIn("带上谁、为什么带、暂时不带谁、炸了先问谁", team_prompt)
 
     def test_default_prompt_blocks_vague_opening_team_speech(self):
@@ -234,7 +235,7 @@ class PromptingAndProviderTests(unittest.TestCase):
         config = load_prompt_template_config()
 
         prompt_text = "\n".join(config.system_lines + config.action_prompts["speak"]["lines"])
-        self.assertIn("prompt.v38", config.version)
+        self.assertIn("prompt.v40", config.version)
         self.assertIn("不要在 public_message 中说", prompt_text)
         self.assertIn("我没出失败票", prompt_text)
         self.assertIn("我的票一定是成功票", prompt_text)
@@ -248,7 +249,7 @@ class PromptingAndProviderTests(unittest.TestCase):
         config = load_prompt_template_config()
 
         prompt_text = "\n".join(config.system_lines + config.action_prompts["speak"]["lines"])
-        self.assertIn("prompt.v38", config.version)
+        self.assertIn("prompt.v40", config.version)
         self.assertIn("成功任务不是验人", prompt_text)
         self.assertIn("不要说“认这张底牌”", prompt_text)
         self.assertIn("不要说“打这张任务牌”", prompt_text)
@@ -259,7 +260,7 @@ class PromptingAndProviderTests(unittest.TestCase):
         config = load_prompt_template_config()
 
         prompt_text = "\n".join(config.system_lines + config.action_prompts["speak"]["lines"])
-        self.assertIn("prompt.v38", config.version)
+        self.assertIn("prompt.v40", config.version)
         self.assertIn("不要把两名候选同时放进公开试验框架", prompt_text)
         self.assertIn("玩家X和玩家Y都来证明自己", prompt_text)
         self.assertIn("玩家X解释一件事", prompt_text)
@@ -273,8 +274,8 @@ class PromptingAndProviderTests(unittest.TestCase):
             + config.action_prompts["propose_team"]["lines"]
             + config.action_prompts["speak"]["lines"]
         )
-        self.assertIn("prompt.v38", config.version)
-        self.assertIn("不要说“看看结果”", prompt_text)
+        self.assertIn("prompt.v40", config.version)
+        self.assertIn("任务话术看结构", prompt_text)
         self.assertIn("不要说“接受检验”", prompt_text)
         self.assertIn("不要说“任务理由”", prompt_text)
         self.assertIn("不要说“投出失败”", prompt_text)
@@ -285,7 +286,7 @@ class PromptingAndProviderTests(unittest.TestCase):
         config = load_prompt_template_config()
 
         prompt_text = "\n".join(config.system_lines + config.action_prompts["speak"]["lines"])
-        self.assertIn("prompt.v38", config.version)
+        self.assertIn("prompt.v40", config.version)
         self.assertIn("同一轮已经有人追问过某个排除点", prompt_text)
         self.assertIn("不要简单复读同一个问题", prompt_text)
         self.assertIn("要求换掉一个位置", prompt_text)
@@ -302,7 +303,7 @@ class PromptingAndProviderTests(unittest.TestCase):
         config = load_prompt_template_config()
 
         prompt_text = "\n".join(config.system_lines + config.action_prompts["speak"]["lines"])
-        self.assertIn("prompt.v38", config.version)
+        self.assertIn("prompt.v40", config.version)
         self.assertIn("唯一票", prompt_text)
         self.assertIn("反对者或赞成者", prompt_text)
         self.assertIn("private_reason_summary 必须先写", prompt_text)
@@ -311,12 +312,15 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertIn("改问组队理由、车位变化或态度前后矛盾", prompt_text)
         self.assertIn("反对之一/赞成之一", prompt_text)
         self.assertIn("改成追问他为什么这么投", prompt_text)
+        self.assertIn("票型 grounding 是生成前动作", prompt_text)
+        self.assertIn("private_reason_summary 第一行", prompt_text)
+        self.assertIn("没写就不要引用票型", prompt_text)
 
     def test_default_prompt_requires_structural_candidate_callback_and_public_failure_responsibility(self):
         config = load_prompt_template_config()
 
         prompt_text = "\n".join(config.system_lines + config.action_prompts["speak"]["lines"])
-        self.assertIn("prompt.v38", config.version)
+        self.assertIn("prompt.v40", config.version)
         self.assertIn("一个玩家、一个公开动作、一个桌面要求", prompt_text)
         self.assertIn("玩家X被排在外面对这车怎么看", prompt_text)
         self.assertIn("玩家X上车吃压力，这车炸了先解释上车前后的态度", prompt_text)
@@ -325,6 +329,10 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertIn("public_message 按三步走", config.role_gameplay["percival"])
         self.assertIn("你被排在外面对这车怎么看", config.role_gameplay["percival"])
         self.assertIn("候选上车不是只为了私下看结果", config.role_gameplay["percival"])
+        self.assertIn("候选单点自检", prompt_text)
+        self.assertIn("不要同时问两名候选", prompt_text)
+        self.assertIn("不要把两名候选一起写进任务观察", prompt_text)
+        self.assertIn("公开本轮单点一名候选", "\n".join(config.system_lines))
 
     def test_default_prompt_reflects_real_percival_table_play_from_research(self):
         config = load_prompt_template_config()
@@ -398,9 +406,8 @@ class PromptingAndProviderTests(unittest.TestCase):
             + config.action_prompts["speak"]["lines"]
         )
 
-        self.assertIn("不要用“多一个视角”", prompt_text)
-        self.assertIn("不要用“观察一轮”", prompt_text)
-        self.assertIn("别说“看看反应”", prompt_text)
+        self.assertIn("抽象理由不够", prompt_text)
+        self.assertIn("换成可回应问题", prompt_text)
         self.assertIn("玩家X为什么把玩家Y排在外面", prompt_text)
         self.assertIn("玩家X为什么把玩家Y往车上推", prompt_text)
 

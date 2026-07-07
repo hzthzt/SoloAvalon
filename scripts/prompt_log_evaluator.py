@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 PLAYER_REF = r"(?:玩家)?\d+号?"
+CLAUSE_GAP = r"[^。！？?；;]*"
 
 IDENTITY_ACTION_PATTERNS = (
     rf"替{PLAYER_REF}卸压",
@@ -34,14 +35,6 @@ IDENTITY_ACTION_PATTERNS = (
     rf"{PLAYER_REF}.*解释一下当时为什么反对",
     rf"{PLAYER_REF}.*这次没带你.*该上.*理由",
     rf"{PLAYER_REF}.*任务交给你负责",
-    rf"{PLAYER_REF}.*把{PLAYER_REF}.*(留在外面|排在外面|排除在外)",
-    rf"{PLAYER_REF}.*排除了{PLAYER_REF}",
-    rf"{PLAYER_REF}.*没带{PLAYER_REF}",
-    rf"为什么没带{PLAYER_REF}",
-    rf"为什么把{PLAYER_REF}(留在外面|排在外面|排除在外)",
-    rf"为什么没把{PLAYER_REF}放进",
-    rf"{PLAYER_REF}.*被排除在外.*(怎么看|什么看法|什么想法|意见|态度)",
-    rf"{PLAYER_REF}.*跳过{PLAYER_REF}",
     rf"{PLAYER_REF}.*解释压力",
     rf"{PLAYER_REF}.*被排在外.*带.*上车",
     rf"(带|组).{{0,32}}{PLAYER_REF}.{{0,50}}(失败|炸).{{0,16}}{PLAYER_REF}.{{0,10}}解释",
@@ -58,14 +51,15 @@ IDENTITY_ACTION_PATTERNS = (
 )
 
 CANDIDATE_RELATION_PRESSURE_PATTERNS = (
-    rf"{PLAYER_REF}.*(一直|持续|急着).*(推|保|排|拆|换|卸压).*{PLAYER_REF}",
-    rf"{PLAYER_REF}.*(一直|持续|急着).*{PLAYER_REF}.*(推|保|排|拆|换|卸压)",
-    rf"{PLAYER_REF}.*(替|帮).+{PLAYER_REF}.*(说话|卸压|挡|保|争)",
-    rf"{PLAYER_REF}.*为什么.*{PLAYER_REF}.*(更该上|上车|下车|被排|被保)",
-    rf"{PLAYER_REF}.*为什么.*把{PLAYER_REF}.*(留在外面|排在外面|排除在外)",
-    rf"{PLAYER_REF}.*为什么.*跳过{PLAYER_REF}",
-    rf"{PLAYER_REF}.*跳过{PLAYER_REF}.*(理由|解释|为什么)",
-    rf"{PLAYER_REF}.*把{PLAYER_REF}.*(留在外面|排在外面|排除在外).*(支持|反对|态度|解释|理由)",
+    rf"{PLAYER_REF}{CLAUSE_GAP}(一直|持续|急着){CLAUSE_GAP}(推|保|排|拆|换|卸压){CLAUSE_GAP}{PLAYER_REF}",
+    rf"{PLAYER_REF}{CLAUSE_GAP}(一直|持续|急着){CLAUSE_GAP}{PLAYER_REF}{CLAUSE_GAP}(推|保|排|拆|换|卸压)",
+    rf"{PLAYER_REF}{CLAUSE_GAP}(替|帮){CLAUSE_GAP}{PLAYER_REF}{CLAUSE_GAP}(说话|卸压|挡|保|争)",
+    rf"{PLAYER_REF}{CLAUSE_GAP}为什么{CLAUSE_GAP}{PLAYER_REF}{CLAUSE_GAP}(更该上|上车|下车|被排|被保)",
+    rf"{PLAYER_REF}{CLAUSE_GAP}为什么{CLAUSE_GAP}把{PLAYER_REF}{CLAUSE_GAP}(留在外面|排在外面|排除在外)",
+    rf"你为什么{CLAUSE_GAP}(排除|跳过){PLAYER_REF}",
+    rf"{PLAYER_REF}{CLAUSE_GAP}为什么{CLAUSE_GAP}跳过{PLAYER_REF}",
+    rf"{PLAYER_REF}{CLAUSE_GAP}跳过{PLAYER_REF}{CLAUSE_GAP}(理由|解释|为什么)",
+    rf"{PLAYER_REF}{CLAUSE_GAP}把{PLAYER_REF}{CLAUSE_GAP}(留在外面|排在外面|排除在外){CLAUSE_GAP}(支持|反对|态度|解释|理由)",
     rf"带上{PLAYER_REF}.*吃压力",
     rf"{PLAYER_REF}.*被排在外.*带上",
     rf"给{PLAYER_REF}上车机会",
@@ -76,24 +70,24 @@ CANDIDATE_RELATION_PRESSURE_PATTERNS = (
     rf"{PLAYER_REF}.*上轮为什么反对车队",
     rf"问{PLAYER_REF}为什么反对后又失败",
     rf"问{PLAYER_REF}为什么没能维持成功",
-    rf"{PLAYER_REF}.*为什么.*排除了{PLAYER_REF}",
-    rf"{PLAYER_REF}.*没带{PLAYER_REF}.*为什么",
-    rf"为什么没带{PLAYER_REF}",
+    rf"{PLAYER_REF}{CLAUSE_GAP}为什么{CLAUSE_GAP}排除了{PLAYER_REF}",
+    rf"{PLAYER_REF}{CLAUSE_GAP}组了{PLAYER_REF}但没带{PLAYER_REF}{CLAUSE_GAP}为什么",
     rf"为什么把{PLAYER_REF}(留在外面|排在外面|排除在外)",
     rf"为什么没把{PLAYER_REF}放进",
-    rf"{PLAYER_REF}.*被排除在外.*(怎么看|什么看法|什么想法|意见|态度)",
-    rf"{PLAYER_REF}.*被排除在车外.*(认可|换人|组队)",
-    rf"{PLAYER_REF}.*被排在外.*带.*上车",
-    rf"(带|组).{{0,32}}{PLAYER_REF}.{{0,50}}(失败|炸).{{0,16}}{PLAYER_REF}.{{0,10}}解释",
-    rf"{PLAYER_REF}.{{0,24}}(失败|炸).{{0,16}}{PLAYER_REF}.{{0,10}}解释",
-    rf"{PLAYER_REF}.*给他上车机会看看表现",
-    rf"{PLAYER_REF}.*给他机会看看表现",
-    rf"{PLAYER_REF}.*解释一下当时为什么反对",
-    rf"{PLAYER_REF}.*这次没带你.*该上.*理由",
-    rf"{PLAYER_REF}.*任务交给你负责",
+    rf"{PLAYER_REF}{CLAUSE_GAP}被排除在外{CLAUSE_GAP}(怎么看|什么看法|什么想法|意见|态度)",
+    rf"{PLAYER_REF}{CLAUSE_GAP}被排除在车外{CLAUSE_GAP}(认可|换人|组队)",
+    rf"{PLAYER_REF}{CLAUSE_GAP}被排在外{CLAUSE_GAP}带{CLAUSE_GAP}上车",
+    rf"(带|组).{{0,32}}{PLAYER_REF}[^。！？?；;]{{0,50}}(失败|炸)[^。！？?；;]{{0,16}}{PLAYER_REF}[^。！？?；;]{{0,10}}解释",
+    rf"{PLAYER_REF}[^。！？?；;]{{0,24}}(失败|炸)[^。！？?；;]{{0,16}}{PLAYER_REF}[^。！？?；;]{{0,10}}解释",
+    rf"这车(如果)?(失败|炸)[^。！？?；;]{{0,16}}{PLAYER_REF}[^。！？?；;]{{0,10}}解释",
+    rf"{PLAYER_REF}{CLAUSE_GAP}给他上车机会看看表现",
+    rf"{PLAYER_REF}{CLAUSE_GAP}给他机会看看表现",
+    rf"{PLAYER_REF}{CLAUSE_GAP}解释一下当时为什么反对",
+    rf"{PLAYER_REF}{CLAUSE_GAP}这次没带你{CLAUSE_GAP}该上{CLAUSE_GAP}理由",
+    rf"{PLAYER_REF}{CLAUSE_GAP}任务交给你负责",
     rf"问{PLAYER_REF}为什么接受这个组合",
-    rf"{PLAYER_REF}.*对{PLAYER_REF}.*信任程度",
-    rf"{PLAYER_REF}.*替{PLAYER_REF}.*(说话|卸压|挡|保)",
+    rf"{PLAYER_REF}{CLAUSE_GAP}对{PLAYER_REF}{CLAUSE_GAP}信任程度",
+    rf"{PLAYER_REF}{CLAUSE_GAP}替{PLAYER_REF}{CLAUSE_GAP}(说话|卸压|挡|保)",
     r"保护线|候选关系|不像普通好人互相评价|关系不自然",
 )
 
@@ -149,7 +143,7 @@ VOTE_UNIQUE_CLAIM_PATTERNS = (
 )
 SECOND_PERSON_UNIQUE_VOTE_PATTERN = re.compile(r"(?:只有|就|仅有)?你(?:一个人)?投了?(赞成|反对)")
 PUBLIC_VOTE_REFERENCE_PATTERN = re.compile(
-    r"(?:第[一二三四五]轮|首轮|上一轮|上轮|第一轮).{0,24}(?:投票|票|赞成|反对|同票|票型)|"
+    r"(?:第[一二三四五]轮|首轮|上一轮|上轮|第一轮).{0,24}(?:投票|赞成|反对|同票|票型)|"
     r"(?:唯一票|唯一反对|唯一赞成|反对者|赞成者|反对之一|赞成之一|单独反对|单独赞成)"
 )
 PRIVATE_VOTE_GROUNDING_PATTERN = re.compile(r"赞成[：:][^；;。]+[；;，,。]\s*反对[：:][^；;。]+")
@@ -163,16 +157,19 @@ def evaluate_prompt_log(path: Path) -> dict[str, Any]:
     decisions = sample.get("decisions", [])
     public_messages = _public_messages(speeches, decisions)
 
-    identity_actions = [
-        message
-        for message in public_messages
-        if _has_identity_contest_action(str(message.get("message", "")))
-    ]
     candidate_relation_pressures = [
         message
         for message in public_messages
         if _has_candidate_relation_pressure(str(message.get("message", "")))
     ]
+    identity_actions = _unique_messages(
+        [
+            message
+            for message in public_messages
+            if _has_identity_contest_action(str(message.get("message", "")))
+        ]
+        + candidate_relation_pressures
+    )
     public_candidate_bindings = [
         message
         for message in public_messages
@@ -299,8 +296,6 @@ def evaluate_quality_gate(
         failures.append("vote_fact_misread_present")
     if int(summary.get("vote_reference_without_grounding_count", 0)) > 0:
         failures.append("vote_reference_without_grounding_present")
-    if int(summary.get("template_phrase_count", 0)) > 0:
-        failures.append("template_phrase_present")
     return {
         "passed": not failures,
         "failures": failures,
@@ -485,6 +480,18 @@ def _public_messages(
         seen.add(key)
         messages.append(row)
     return messages
+
+
+def _unique_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    unique = []
+    seen = set()
+    for message in messages:
+        key = (str(message.get("player_id", "")), str(message.get("message", "")))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(message)
+    return unique
 
 
 def _private_reason(decision: dict[str, Any]) -> str:
