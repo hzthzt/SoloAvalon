@@ -262,6 +262,7 @@ sequenceDiagram
 
 - `SOLOAVALON_LLM_CONFIG` 指定时使用该路径。
 - 否则使用仓库根目录 `config/llm_profiles.json`。
+- 模型推理参数使用 `reasoning_effort`；旧 `temperature` 字段只做兼容读取并按 `medium` 处理，不再写入或发送给模型。
 
 prompt 配置文件默认路径：
 

@@ -37,6 +37,7 @@ import {
   listProfiles,
   LlmProfile,
   LlmProfileInput,
+  ReasoningEffort,
   PlayerView,
   retryPausedGame,
   RoomDetail,
@@ -69,7 +70,7 @@ const emptyProfile: LlmProfileInput = {
   base_url: "https://api.example.com/v1",
   api_key: "",
   model: "",
-  temperature: 0.7,
+  reasoning_effort: "medium",
   timeout: 30,
   timeout_retries: 5
 };
@@ -475,7 +476,7 @@ export function App() {
       base_url: profile.base_url,
       api_key: "",
       model: profile.model,
-      temperature: profile.temperature,
+      reasoning_effort: profile.reasoning_effort,
       timeout: profile.timeout,
       timeout_retries: profile.timeout_retries
     });
@@ -1877,15 +1878,21 @@ function ProfileForm({
         <input value={form.model} onChange={(event) => update({ model: event.target.value })} />
       </label>
       <label>
-        Temperature
-        <input
-          type="number"
-          min="0"
-          max="2"
-          step="0.1"
-          value={form.temperature}
-          onChange={(event) => update({ temperature: Number(event.target.value) })}
-        />
+        思考强度
+        <select
+          value={form.reasoning_effort}
+          onChange={(event) =>
+            update({ reasoning_effort: event.target.value as ReasoningEffort })
+          }
+        >
+          <option value="none">关闭</option>
+          <option value="minimal">极低</option>
+          <option value="low">低</option>
+          <option value="medium">中</option>
+          <option value="high">高</option>
+          <option value="xhigh">极高</option>
+          <option value="max">最大</option>
+        </select>
       </label>
       <label>
         Timeout

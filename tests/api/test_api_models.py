@@ -69,13 +69,14 @@ class ApiModelsTests(unittest.TestCase):
                 "base_url": "https://api.example.com/v1",
                 "api_key": "test-api-key",
                 "model": "deepseek-chat",
-                "temperature": "0.7",
+                "reasoning_effort": " high ",
                 "timeout": "30",
                 "timeout_retries": "3",
             }
         )
 
-        self.assertEqual(request.temperature, 0.7)
+        self.assertEqual(request.reasoning_effort, "high")
+        self.assertFalse(hasattr(request, "temperature"))
         self.assertFalse(hasattr(request, "max_tokens"))
         self.assertEqual(request.timeout, 30.0)
         self.assertEqual(request.timeout_retries, 3)
@@ -87,9 +88,24 @@ class ApiModelsTests(unittest.TestCase):
                 "base_url": "https://api.example.com/v1",
                 "api_key": "test-api-key",
                 "model": "deepseek-chat",
-                "temperature": 0.7,
                 "timeout": 30,
             }
         )
 
+        self.assertEqual(request.reasoning_effort, "medium")
         self.assertEqual(request.timeout_retries, 5)
+
+    def test_llm_profile_request_ignores_legacy_temperature(self):
+        request = LlmProfileRequest.from_payload(
+            {
+                "name": "Legacy",
+                "base_url": "https://api.example.com/v1",
+                "api_key": "test-api-key",
+                "model": "legacy-chat",
+                "temperature": 1.7,
+                "timeout": 30,
+            }
+        )
+
+        self.assertEqual(request.reasoning_effort, "medium")
+        self.assertFalse(hasattr(request, "temperature"))

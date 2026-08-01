@@ -7,7 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from backend.app.llm.profiles import LlmProfile, LlmProfileInput
+from backend.app.llm.profiles import (
+    LlmProfile,
+    LlmProfileInput,
+    normalize_reasoning_effort,
+)
 
 
 class LlmProfileRepository:
@@ -30,7 +34,7 @@ class LlmProfileRepository:
             base_url=profile_input.base_url,
             api_key=profile_input.api_key,
             model=profile_input.model,
-            temperature=profile_input.temperature,
+            reasoning_effort=profile_input.reasoning_effort,
             timeout=profile_input.timeout,
             timeout_retries=profile_input.timeout_retries,
             created_at=now,
@@ -71,7 +75,7 @@ class LlmProfileRepository:
                 base_url=profile_input.base_url,
                 api_key=profile_input.api_key,
                 model=profile_input.model,
-                temperature=profile_input.temperature,
+                reasoning_effort=profile_input.reasoning_effort,
                 timeout=profile_input.timeout,
                 timeout_retries=profile_input.timeout_retries,
                 created_at=profile.created_at,
@@ -151,7 +155,9 @@ def _profile_from_payload(payload: Any) -> LlmProfile:
         base_url=_required_string(payload, "base_url"),
         api_key=_required_string(payload, "api_key"),
         model=_required_string(payload, "model"),
-        temperature=float(payload["temperature"]),
+        reasoning_effort=normalize_reasoning_effort(
+            payload.get("reasoning_effort", "medium")
+        ),
         timeout=float(payload["timeout"]),
         timeout_retries=int(payload.get("timeout_retries", 5)),
         created_at=_required_string(payload, "created_at"),
@@ -166,7 +172,7 @@ def _profile_to_payload(profile: LlmProfile) -> dict[str, Any]:
         "base_url": profile.base_url,
         "api_key": profile.api_key,
         "model": profile.model,
-        "temperature": profile.temperature,
+        "reasoning_effort": profile.reasoning_effort,
         "timeout": profile.timeout,
         "timeout_retries": profile.timeout_retries,
         "created_at": profile.created_at,

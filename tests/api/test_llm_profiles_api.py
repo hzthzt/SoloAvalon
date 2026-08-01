@@ -20,7 +20,7 @@ class LlmProfilesApiTests(unittest.TestCase):
                     "base_url": "https://api.example.com/v1",
                     "api_key": "test-key-1234567890abcdef",
                     "model": "deepseek-chat",
-                    "temperature": 0.7,
+                    "reasoning_effort": "high",
                     "timeout": 30.0,
                 }
             )
@@ -30,6 +30,8 @@ class LlmProfilesApiTests(unittest.TestCase):
             self.assertEqual(created["api_key_masked"], "test...cdef")
             self.assertNotIn("api_key", listed[0])
             self.assertEqual(listed[0]["api_key_masked"], "test...cdef")
+            self.assertEqual(listed[0]["reasoning_effort"], "high")
+            self.assertNotIn("temperature", listed[0])
             self.assertEqual([profile["id"] for profile in listed], ["profile_1"])
 
     def test_profile_api_test_is_structural_without_live_call(self):
@@ -46,7 +48,7 @@ class LlmProfilesApiTests(unittest.TestCase):
                     "base_url": "https://api.example.com/v1",
                     "api_key": "test-key-1234567890abcdef",
                     "model": "deepseek-chat",
-                    "temperature": 0.7,
+                    "reasoning_effort": "medium",
                     "timeout": 30.0,
                 }
             )
@@ -71,7 +73,7 @@ class LlmProfilesApiTests(unittest.TestCase):
                     "base_url": "https://api.example.com/v1",
                     "api_key": "test-key-1234567890abcdef",
                     "model": "deepseek-chat",
-                    "temperature": 0.7,
+                    "reasoning_effort": "medium",
                     "timeout": 30.0,
                 }
             )
@@ -98,7 +100,7 @@ class LlmProfilesApiTests(unittest.TestCase):
                         "base_url": "https://api.example.com/v1",
                         "api_key": "test-key-1234567890abcdef",
                         "model": "deepseek-chat",
-                        "temperature": 0.7,
+                        "reasoning_effort": "medium",
                         "timeout": 30.0,
                     }
                 )
@@ -110,13 +112,14 @@ class LlmProfilesApiTests(unittest.TestCase):
                         "base_url": "https://api.example.com/v1",
                         "api_key": "",
                         "model": "qwen-plus",
-                        "temperature": 0.4,
+                        "reasoning_effort": "high",
                         "timeout": 20.0,
                     },
                 )
 
                 stored = repository.get_profile("profile_1")
                 self.assertEqual(updated["name"], "Qwen")
+                self.assertEqual(updated["reasoning_effort"], "high")
                 self.assertEqual(stored.api_key, "test-key-1234567890abcdef")
             finally:
                 connection.close()

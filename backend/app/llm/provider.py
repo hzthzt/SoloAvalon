@@ -36,7 +36,7 @@ class LlmProvider:
         payload = {
             "model": profile.model,
             "messages": messages,
-            "temperature": profile.temperature,
+            "reasoning_effort": profile.reasoning_effort,
         }
         headers = {
             "Authorization": f"Bearer {profile.api_key}",

@@ -197,10 +197,12 @@ npm run dev
 - `base_url`
 - `api_key`
 - `model`
-- `temperature`
+- `reasoning_effort`
 - `timeout`
 
 编辑已有配置时，如果 `api_key` 留空，会保留原密钥。公开 API 响应和前端只展示脱敏后的 key。
+
+`reasoning_effort` 可选值为 `none`、`minimal`、`low`、`medium`、`high`、`xhigh` 和 `max`，具体支持范围取决于模型。旧配置中的 `temperature` 会被忽略，并按 `medium` 兼容读取；再次保存配置后只保留 `reasoning_effort`。
 
 配置文件格式可参考 `config.example/llm_profiles.json`。真实 API Key 应放入 `config/llm_profiles.json` 或 `SOLOAVALON_LLM_CONFIG` 指向的本地文件，不要放入仓库跟踪文件。
 

@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from backend.app.game.models import GameOption
-from backend.app.llm.profiles import LlmProfileInput
+from backend.app.llm.profiles import (
+    LlmProfileInput,
+    ReasoningEffort,
+    normalize_reasoning_effort,
+)
 
 
 @dataclass(frozen=True)
@@ -55,7 +59,7 @@ class LlmProfileRequest:
     base_url: str
     api_key: str
     model: str
-    temperature: float
+    reasoning_effort: ReasoningEffort
     timeout: float
     timeout_retries: int = 5
 
@@ -66,7 +70,9 @@ class LlmProfileRequest:
             base_url=_required_string(payload, "base_url"),
             api_key=str(payload.get("api_key", "")),
             model=_required_string(payload, "model"),
-            temperature=float(payload["temperature"]),
+            reasoning_effort=normalize_reasoning_effort(
+                payload.get("reasoning_effort", "medium")
+            ),
             timeout=float(payload["timeout"]),
             timeout_retries=int(payload.get("timeout_retries", 5)),
         )
@@ -77,7 +83,7 @@ class LlmProfileRequest:
             base_url=self.base_url,
             api_key=self.api_key,
             model=self.model,
-            temperature=self.temperature,
+            reasoning_effort=self.reasoning_effort,
             timeout=self.timeout,
             timeout_retries=self.timeout_retries,
         )

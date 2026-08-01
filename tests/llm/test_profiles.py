@@ -11,7 +11,7 @@ def _profile_kwargs() -> dict[str, object]:
         "base_url": "https://api.example.com/v1",
         "api_key": "test-key-1234567890abcdef",
         "model": "deepseek-chat",
-        "temperature": 0.7,
+        "reasoning_effort": "high",
         "timeout": 30.0,
         "created_at": "2026-06-15T00:00:00Z",
         "updated_at": "2026-06-15T00:00:00Z",
@@ -27,7 +27,7 @@ def _profile_input_kwargs(**overrides: object) -> dict[str, object]:
         "base_url": "https://api.example.com/v1",
         "api_key": "secret",
         "model": "model",
-        "temperature": 0.5,
+        "reasoning_effort": "medium",
         "timeout": 30.0,
     }
     if "max_tokens" in {field.name for field in fields(LlmProfileInput)}:
@@ -42,9 +42,11 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(mask_api_key("short"), "*****")
         self.assertEqual(mask_api_key(""), "")
 
-    def test_profile_types_do_not_include_user_configured_max_tokens(self):
+    def test_profile_types_exclude_removed_runtime_fields(self):
         self.assertNotIn("max_tokens", {field.name for field in fields(LlmProfileInput)})
         self.assertNotIn("max_tokens", {field.name for field in fields(LlmProfile)})
+        self.assertNotIn("temperature", {field.name for field in fields(LlmProfileInput)})
+        self.assertNotIn("temperature", {field.name for field in fields(LlmProfile)})
 
     def test_public_dict_excludes_plain_api_key(self):
         profile = LlmProfile(**_profile_kwargs())
@@ -53,6 +55,8 @@ class LlmProfileTests(unittest.TestCase):
 
         self.assertNotIn("api_key", public_dict)
         self.assertEqual(public_dict["api_key_masked"], "test...cdef")
+        self.assertEqual(public_dict["reasoning_effort"], "high")
+        self.assertNotIn("temperature", public_dict)
         self.assertEqual(public_dict["timeout_retries"], 5)
         self.assertNotIn("max_tokens", public_dict)
 
@@ -65,7 +69,7 @@ class LlmProfileTests(unittest.TestCase):
 
     def test_input_validation_rejects_invalid_runtime_values(self):
         with self.assertRaises(ValueError):
-            LlmProfileInput(**_profile_input_kwargs(temperature=-0.1))
+            LlmProfileInput(**_profile_input_kwargs(reasoning_effort="extreme"))
         with self.assertRaises(ValueError):
             LlmProfileInput(**_profile_input_kwargs(timeout_retries=-1))
 
@@ -86,7 +90,7 @@ class LlmProfileTests(unittest.TestCase):
             base_url="",
             api_key="",
             model="unconfigured",
-            temperature=0.0,
+            reasoning_effort="none",
             timeout=1.0,
             created_at="",
             updated_at="",

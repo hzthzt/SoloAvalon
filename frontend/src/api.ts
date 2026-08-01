@@ -114,13 +114,22 @@ export type RoomDetail = {
   usage_by_model: AiUsageSummary[];
 };
 
+export type ReasoningEffort =
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max";
+
 export type LlmProfile = {
   id: string;
   name: string;
   base_url: string;
   api_key_masked: string;
   model: string;
-  temperature: number;
+  reasoning_effort: ReasoningEffort;
   timeout: number;
   timeout_retries: number;
   created_at: string;
@@ -133,7 +142,7 @@ export type LlmProfileInput = {
   base_url: string;
   api_key: string;
   model: string;
-  temperature: number;
+  reasoning_effort: ReasoningEffort;
   timeout: number;
   timeout_retries: number;
 };

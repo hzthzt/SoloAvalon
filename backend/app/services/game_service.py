@@ -482,7 +482,7 @@ class GameService:
                 base_url="",
                 api_key="",
                 model="unconfigured",
-                temperature=0.0,
+                reasoning_effort="none",
                 timeout=1.0,
                 created_at="",
                 updated_at="",

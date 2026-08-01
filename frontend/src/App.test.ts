@@ -142,6 +142,15 @@ test("profile list shows runtime configuration fields", () => {
   assert.equal(source.includes("profile.model"), true);
 });
 
+test("model profile form uses reasoning effort instead of temperature", () => {
+  assert.equal(source.includes("思考强度"), true);
+  assert.equal(source.includes('reasoning_effort: "medium"'), true);
+  assert.equal(source.includes('option value="high"'), true);
+  assert.equal(apiSource.includes("reasoning_effort: ReasoningEffort"), true);
+  assert.equal(source.includes("Temperature"), false);
+  assert.equal(apiSource.includes("temperature: number"), false);
+});
+
 test("model profile form exposes timeout retry configuration", () => {
   assert.equal(source.includes("timeout_retries: 5"), true);
   assert.equal(source.includes("profile.timeout_retries"), true);

@@ -25,7 +25,7 @@ def test_profile() -> LlmProfile:
         "base_url": "https://api.example.com/v1",
         "api_key": "test-api-key",
         "model": "model",
-        "temperature": 0.3,
+        "reasoning_effort": "high",
         "timeout": 5.0,
         "created_at": "2026-06-15T00:00:00Z",
         "updated_at": "2026-06-15T00:00:00Z",
@@ -1067,6 +1067,8 @@ class PromptingAndProviderTests(unittest.TestCase):
         self.assertEqual(captured["url"], "https://api.example.com/v1/chat/completions")
         self.assertEqual(captured["headers"]["Authorization"], "Bearer test-api-key")
         self.assertEqual(captured["payload"]["model"], "model")
+        self.assertEqual(captured["payload"]["reasoning_effort"], "high")
+        self.assertNotIn("temperature", captured["payload"])
         self.assertNotIn("max_tokens", captured["payload"])
 
     def test_llm_provider_returns_openai_usage_when_available(self):
@@ -1124,7 +1126,7 @@ class PromptingAndProviderTests(unittest.TestCase):
         object.__setattr__(profile, "base_url", "file:///v1")
         object.__setattr__(profile, "api_key", "test-api-key")
         object.__setattr__(profile, "model", "model")
-        object.__setattr__(profile, "temperature", 0.3)
+        object.__setattr__(profile, "reasoning_effort", "high")
         object.__setattr__(profile, "timeout", 5.0)
         object.__setattr__(profile, "timeout_retries", 0)
         object.__setattr__(profile, "created_at", "2026-06-15T00:00:00Z")

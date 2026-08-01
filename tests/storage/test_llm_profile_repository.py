@@ -20,7 +20,7 @@ def profile_input(
         base_url="https://api.example.com/v1",
         api_key=api_key,
         model=model,
-        temperature=0.7,
+        reasoning_effort="high",
         timeout=30.0,
     )
 
@@ -54,8 +54,12 @@ class LlmProfileRepositoryTests(unittest.TestCase):
                 self.assertEqual(created.api_key, "test-key-1234567890abcdef")
                 self.assertEqual([profile.id for profile in listed], ["profile_1"])
                 self.assertEqual(loaded.model, "deepseek-chat")
+                self.assertEqual(loaded.reasoning_effort, "high")
                 self.assertTrue(config_path.exists())
-                self.assertIn("test-key-1234567890abcdef", config_path.read_text(encoding="utf-8"))
+                config_text = config_path.read_text(encoding="utf-8")
+                self.assertIn("test-key-1234567890abcdef", config_text)
+                self.assertIn('"reasoning_effort": "high"', config_text)
+                self.assertNotIn('"temperature"', config_text)
                 self.assertNotIn("test-key-1234567890abcdef", _sqlite_text(connection))
             finally:
                 connection.close()
@@ -75,7 +79,7 @@ class LlmProfileRepositoryTests(unittest.TestCase):
             finally:
                 connection.close()
 
-    def test_legacy_profile_config_defaults_timeout_retries(self):
+    def test_legacy_profile_config_defaults_runtime_options(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = _config_path(tmpdir)
             config_path.parent.mkdir(parents=True)
@@ -105,8 +109,17 @@ class LlmProfileRepositoryTests(unittest.TestCase):
                 repository = _repository(connection, tmpdir)
 
                 loaded = repository.get_profile("legacy_profile")
+                repository.update_profile(
+                    "legacy_profile",
+                    profile_input(name="Migrated", model="migrated-chat"),
+                )
+                migrated_payload = json.loads(config_path.read_text(encoding="utf-8"))
+                migrated_profile = migrated_payload["profiles"][0]
 
+                self.assertEqual(loaded.reasoning_effort, "medium")
                 self.assertEqual(loaded.timeout_retries, 5)
+                self.assertEqual(migrated_profile["reasoning_effort"], "high")
+                self.assertNotIn("temperature", migrated_profile)
             finally:
                 connection.close()
 
