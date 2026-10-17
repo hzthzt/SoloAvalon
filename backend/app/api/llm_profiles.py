@@ -62,7 +62,7 @@ class LlmProfilesApi:
             },
         ]
         try:
-            content = self._provider.chat_completion(profile, messages)
+            content = self._provider.chat_completion(profile, messages).content
         except Exception as exc:
             detail = error_detail(exc)
             return {

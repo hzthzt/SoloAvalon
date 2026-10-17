@@ -111,7 +111,7 @@ function Test-PythonDependencies {
     param([string]$PythonPath)
 
     try {
-        & $PythonPath -c "import fastapi, uvicorn" *> $null
+        & $PythonPath -c "import fastapi, openai, uvicorn; from pydantic import BaseModel, field_validator" *> $null
         return $LASTEXITCODE -eq 0
     }
     catch {
@@ -450,7 +450,7 @@ if (-not $SkipInstall) {
             $BackendPython = $python
         }
         else {
-            throw "Backend dependencies are unavailable in .venv and system Python. Install fastapi and uvicorn, then retry."
+            throw "Backend dependencies are unavailable in .venv and system Python. Install the dependencies from pyproject.toml, then retry."
         }
     }
 

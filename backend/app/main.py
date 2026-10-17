@@ -44,7 +44,7 @@ def _frontend_origins() -> list[str]:
 connection = connect_sqlite(_database_path())
 initialize_database(connection)
 game_service = GameService(connection)
-llm_profile_repository = LlmProfileRepository(connection)
+llm_profile_repository = LlmProfileRepository()
 
 app = FastAPI(title="SoloAvalon")
 

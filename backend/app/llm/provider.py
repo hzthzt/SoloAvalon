@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-import json
-import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import TYPE_CHECKING
+
+from openai import DefaultHttpxClient, OpenAI
+from openai.types.chat import ChatCompletion
 
 from .profiles import LlmProfile, validate_base_url
 
-
-Transport = Callable[[str, dict[str, str], dict[str, Any], float], dict[str, Any]]
+if TYPE_CHECKING:
+    from httpx import BaseTransport
 
 
 @dataclass(frozen=True)
@@ -25,74 +23,53 @@ class LlmCompletionResult:
 
 
 class LlmProvider:
-    def __init__(self, transport: Transport | None = None):
-        self._transport = transport or _urllib_transport
+    def __init__(self, transport: BaseTransport | None = None):
+        self._transport = transport
 
     def chat_completion(
         self,
         profile: LlmProfile,
         messages: list[dict[str, str]],
     ) -> LlmCompletionResult:
-        payload = {
-            "model": profile.model,
-            "messages": messages,
-            "reasoning_effort": profile.reasoning_effort,
-        }
-        headers = {
-            "Authorization": f"Bearer {profile.api_key}",
-            "Content-Type": "application/json",
-        }
-        return self._send_with_retries(
-            profile,
-            _completion_url(profile.base_url),
-            headers,
-            payload,
+        base_url = _client_base_url(profile.base_url)
+        http_client = (
+            DefaultHttpxClient(transport=self._transport)
+            if self._transport is not None
+            else None
         )
-
-    def _send_with_retries(
-        self,
-        profile: LlmProfile,
-        url: str,
-        headers: dict[str, str],
-        payload: dict[str, Any],
-    ) -> str:
-        for retry_index in range(profile.timeout_retries + 1):
-            try:
-                response = self._transport(url, headers, payload, profile.timeout)
-                return _completion_result(response)
-            except urllib.error.HTTPError as exc:
-                raise ConnectionError(_http_error_message(url, exc)) from exc
-            except urllib.error.URLError as exc:
-                raise ConnectionError(_connection_error_message(url, exc)) from exc
-            except (TimeoutError, EmptyModelOutputError):
-                if retry_index >= profile.timeout_retries:
-                    raise
-        raise RuntimeError("unreachable llm retry state")
+        with OpenAI(
+            base_url=base_url,
+            api_key=profile.api_key,
+            timeout=profile.timeout,
+            max_retries=profile.timeout_retries,
+            http_client=http_client,
+        ) as client:
+            response = client.chat.completions.create(
+                model=profile.model,
+                messages=messages,
+                reasoning_effort=profile.reasoning_effort,
+            )
+        return _completion_result(response)
 
 
 class EmptyModelOutputError(ValueError):
     pass
 
 
-def _completion_result(response: dict[str, Any]) -> LlmCompletionResult:
-    choices = response.get("choices")
-    if not choices:
+def _completion_result(response: ChatCompletion) -> LlmCompletionResult:
+    if not response.choices:
         raise ValueError("llm response did not include choices")
-    content = choices[0].get("message", {}).get("content")
+    content = response.choices[0].message.content
     if not isinstance(content, str):
         raise ValueError("llm response did not include message content")
     if not content.strip():
         raise EmptyModelOutputError("llm response did not include non-empty message content")
-    usage = response.get("usage")
-    prompt_tokens = _int_or_none(usage.get("prompt_tokens")) if isinstance(usage, dict) else None
-    completion_tokens = (
-        _int_or_none(usage.get("completion_tokens")) if isinstance(usage, dict) else None
-    )
-    total_tokens = _int_or_none(usage.get("total_tokens")) if isinstance(usage, dict) else None
-    details = usage.get("prompt_tokens_details") if isinstance(usage, dict) else None
-    cached_tokens = (
-        _int_or_none(details.get("cached_tokens")) if isinstance(details, dict) else None
-    )
+    usage = response.usage
+    prompt_tokens = _int_or_none(usage.prompt_tokens) if usage else None
+    completion_tokens = _int_or_none(usage.completion_tokens) if usage else None
+    total_tokens = _int_or_none(usage.total_tokens) if usage else None
+    details = usage.prompt_tokens_details if usage else None
+    cached_tokens = _int_or_none(details.cached_tokens) if details else None
     cache_hit_rate = (
         cached_tokens / prompt_tokens
         if cached_tokens is not None and prompt_tokens not in (None, 0)
@@ -108,74 +85,13 @@ def _completion_result(response: dict[str, Any]) -> LlmCompletionResult:
     )
 
 
-def _int_or_none(value: Any) -> int | None:
+def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _completion_url(base_url: str) -> str:
+def _client_base_url(base_url: str) -> str:
     validate_base_url(base_url)
     trimmed = base_url.rstrip("/")
-    if trimmed.endswith("/chat/completions"):
-        return trimmed
-    return f"{trimmed}/chat/completions"
-
-
-def _connection_error_message(url: str, exc: urllib.error.URLError) -> str:
-    reason = getattr(exc, "reason", exc)
-    diagnostics = _connection_diagnostics(reason)
-    if isinstance(reason, FileNotFoundError):
-        return (
-            f"cannot reach llm endpoint {url}: local SSL certificate or proxy path "
-            f"is missing ({reason}). Check SSL_CERT_FILE, SSL_CERT_DIR, "
-            "HTTP_PROXY/HTTPS_PROXY, and the Python interpreter used to start the backend. "
-            f"{diagnostics}"
-        )
-    return f"cannot reach llm endpoint {url}: {reason}. {diagnostics}"
-
-
-def _connection_diagnostics(reason: object) -> str:
-    return (
-        "diagnostics: "
-        f"error_type={type(reason).__name__}; "
-        f"python_executable={sys.executable}; "
-        f"proxies={json.dumps(_masked_proxies(), ensure_ascii=False, sort_keys=True)}"
-    )
-
-
-def _masked_proxies() -> dict[str, str]:
-    return {
-        scheme: _mask_proxy_url(proxy_url)
-        for scheme, proxy_url in urllib.request.getproxies().items()
-    }
-
-
-def _mask_proxy_url(proxy_url: str) -> str:
-    parsed = urllib.parse.urlsplit(proxy_url)
-    if not parsed.username and not parsed.password:
-        return proxy_url
-    hostname = parsed.hostname or ""
-    port = f":{parsed.port}" if parsed.port is not None else ""
-    masked_netloc = f"***@{hostname}{port}"
-    return urllib.parse.urlunsplit(
-        (parsed.scheme, masked_netloc, parsed.path, parsed.query, parsed.fragment)
-    )
-
-
-def _http_error_message(url: str, exc: urllib.error.HTTPError) -> str:
-    return f"llm endpoint returned HTTP {exc.code} for {url}: {exc.reason}"
-
-
-def _urllib_transport(
-    url: str,
-    headers: dict[str, str],
-    payload: dict[str, Any],
-    timeout: float,
-) -> dict[str, Any]:
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers=headers,
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
+    # Existing profiles may store the complete endpoint instead of the API prefix.
+    suffix = "/chat/completions"
+    return trimmed[:-len(suffix)] if trimmed.endswith(suffix) else trimmed

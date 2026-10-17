@@ -89,21 +89,23 @@ class GamesApiTests(unittest.TestCase):
         self.assertEqual(result, {"id": "game_1", "status": "active"})
 
     def test_route_wrapper_reports_ai_timeout_as_gateway_timeout(self):
-        def fail_with_timeout():
-            raise _ai_decision_error("TimeoutError", "The read operation timed out")
+        for error_type in ("TimeoutError", "APITimeoutError"):
+            with self.subTest(error_type=error_type):
+                def fail_with_timeout():
+                    raise _ai_decision_error(error_type, "The read operation timed out")
 
-        original_http_exception = games_module.HTTPException
-        games_module.HTTPException = _FakeHTTPException
-        try:
-            with self.assertRaises(_FakeHTTPException) as captured:
-                games_module._call(fail_with_timeout)
-        finally:
-            games_module.HTTPException = original_http_exception
+                original_http_exception = games_module.HTTPException
+                games_module.HTTPException = _FakeHTTPException
+                try:
+                    with self.assertRaises(_FakeHTTPException) as captured:
+                        games_module._call(fail_with_timeout)
+                finally:
+                    games_module.HTTPException = original_http_exception
 
-        self.assertEqual(captured.exception.status_code, 504)
-        self.assertEqual(captured.exception.detail["message"], "AI 决策失败：The read operation timed out")
-        self.assertIn("AiDecisionError", captured.exception.detail["traceback"])
-        self.assertIn("The read operation timed out", captured.exception.detail["traceback"])
+                self.assertEqual(captured.exception.status_code, 504)
+                self.assertEqual(captured.exception.detail["message"], "AI 决策失败：The read operation timed out")
+                self.assertIn("AiDecisionError", captured.exception.detail["traceback"])
+                self.assertIn("The read operation timed out", captured.exception.detail["traceback"])
 
     def test_route_wrapper_reports_value_errors_with_traceback(self):
         def fail_with_value_error():

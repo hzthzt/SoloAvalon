@@ -1,22 +1,24 @@
 # SoloAvalon 模块与逻辑架构
 
-本文档面向维护者和后续协作 AI，按当前仓库代码整理 SoloAvalon 的模块职责、核心数据流、规则边界和扩展位置。产品设计源文档见 [`docs/superpowers/specs/2026-06-15-avalon-ai-design.md`](./superpowers/specs/2026-06-15-avalon-ai-design.md)。
+核对日期：2026-10-17。本文面向维护者和后续协作 AI，记录当前实现。后端细节见[后端模块与运行机制](./backend-modules.md)，尚未实现的目标与迁移步骤见[后端重设计方案](./game-service-redesign.md)，领域用语见[领域术语](../CONTEXT.md)。[最初产品设计](./superpowers/specs/2026-06-15-avalon-ai-design.md)属于历史规格，不作为当前能力清单。
 
 ## 1. 项目定位
 
 SoloAvalon 是一个本地单人《阿瓦隆》Web 应用。当前运行形态是：
 
 - FastAPI 后端负责规则裁判、状态推进、AI 决策调用、事件日志和持久化。
-- React 前端负责开局配置、真人动作输入、对局桌面、模型配置和日志复盘展示。
+- React 前端负责 5-10 人开局配置、真人动作输入、对局桌面、模型配置和房间复盘展示。
 - SQLite 保存对局、玩家、事件和 AI 审计记录。
 - OpenAI-compatible 模型配置保存到本地 JSON 文件，默认路径是被 git 忽略的 `config/llm_profiles.json`。
 
-核心边界：
+设计边界：
 
 - 后端是唯一规则裁判；前端不自行推断隐藏身份、胜负或任务结果。
 - 公开 API 与 AI prompt 只能使用过滤后的公开事件和合法私有视角。
 - 事件流是复盘、导出和状态恢复的重要来源。
 - 真实 API Key 不进入 SQLite，不进入 git 跟踪文件。
+
+这些是维护约束，不代表所有接口都已经满足。当前对局列表、AI 审计事件和进行中私有审计访问仍有可见性缺口；模型测试和中断续局也有已知问题，见[后端已知缺口](./backend-modules.md#已知缺口)。当前没有确定性 AI fallback。
 
 ## 2. 总体运行架构
 
@@ -27,12 +29,15 @@ flowchart TD
     Service --> Rules["确定性规则层\nbackend/app/game"]
     Service --> Ai["AI 决策链路\nbackend/app/ai + prompting + llm"]
     Service --> Storage["SQLite 与文件仓储\nbackend/app/storage"]
+    Api --> ProfileApi["模型配置 CRUD / 连通性测试"]
+    ProfileApi --> Storage
+    ProfileApi --> Provider
     Ai --> Provider["OpenAI-compatible Chat Completions"]
     Storage --> Sqlite["soloavalon.sqlite3"]
     Storage --> Profiles["config/llm_profiles.json"]
 ```
 
-主要调用方向是单向的：前端调用 API，API 调用服务层，服务层协调规则、AI 和存储。规则层不依赖 API、前端或数据库，因此可以用单元测试直接验证。
+对局请求由 API 调用服务层，服务层协调规则、AI 和存储；模型配置 API 则直接调用配置仓储与 Provider。规则层不依赖 API、前端或数据库，因此可以用单元测试直接验证。SSE 是后端向前端输出增量事件的通道，不负责推进规则。
 
 ## 3. 顶层目录职责
 
@@ -64,17 +69,18 @@ flowchart TD
 - 创建 FastAPI 应用，配置允许本地 Vite 源的 CORS。
 - 挂载 `games` 与 `llm-profiles` 两组路由。
 
-该文件只做装配，不承载业务规则。
+该文件只做装配，不承载业务规则。装配发生在模块导入时，目前使用全局服务和共享连接，尚未通过应用生命周期统一启动、恢复和关闭推进任务。
 
 ### 4.2 API 层：`backend/app/api/`
 
-API 层由三类文件组成：
+API 层由四个功能文件组成：
 
 - `models.py`：请求模型与 payload 规范化，包括 `CreateGameRequest`、`HumanActionRequest`、`LlmProfileRequest`。
-- `games.py`：对局 API，提供创建、查询、动作提交、AI 代打、事件列表、日志导出和删除。
+- `games.py`：对局 API，提供创建、查询、动作提交、AI 代打、错误重试、事件与 SSE、房间详情、归档、导出和删除。
 - `llm_profiles.py`：模型配置 API，提供配置 CRUD 和连通性测试。
+- `errors.py`：将异常整理为消息、类型和 traceback。
 
-API 层的职责是将 HTTP 输入转换为服务层调用，并把 `ValueError` 转换为 HTTP 400。它不直接修改规则状态，也不绕过服务层访问数据库。
+请求模型使用 dataclass 和手动 `from_payload()`，路由请求体与响应主要是字典。API 不直接修改规则状态；对局经过 `GameService`，配置操作直接使用仓储。参数错误映射为 HTTP 400，AI 超时为 504，其他 AI 决策错误为 502，未预期异常为 500。
 
 游戏 API：
 
@@ -83,8 +89,12 @@ API 层的职责是将 HTTP 输入转换为服务层调用，并把 `ValueError`
 - `GET /api/games/{game_id}`
 - `POST /api/games/{game_id}/actions`
 - `POST /api/games/{game_id}/ai-actions/human`
+- `POST /api/games/{game_id}/retry`
 - `GET /api/games/{game_id}/events`
+- `GET /api/games/{game_id}/events/stream`
 - `GET /api/games/{game_id}/export`
+- `GET /api/games/{game_id}/room`
+- `POST /api/games/{game_id}/archive`
 - `DELETE /api/games/{game_id}`
 
 模型配置 API：
@@ -97,7 +107,14 @@ API 层的职责是将 HTTP 输入转换为服务层调用，并把 `ValueError`
 
 ### 4.3 服务层：`backend/app/services/`
 
-`GameService` 是核心运行时编排器。它维护内存态 `GameState` 缓存，并把每次状态变化同步写入仓储和事件流。
+`GameService` 是对局业务门面，维护内存态 `GameState` 缓存，协调规则、AI、查询组装和持久化。单步执行、提交、恢复和循环已经拆入 `game_flow.py`：
+
+| 组件 | 职责 |
+| --- | --- |
+| `GameStepRunner` | 调用规则函数，构造待提交的新状态与规则事件。 |
+| `GameCommitter` | 原子提交一次规则步及 AI 审计，成功后更新缓存并通知订阅。 |
+| `GameStateLoader` | 从建局元数据、玩家真相和规则历史重建状态，保留错误位置。 |
+| `GameAdvanceLoop` | 持续选择 AI 行动或系统结算，直到真人、结束、错误或步数上限。 |
 
 主要职责：
 
@@ -107,7 +124,9 @@ API 层的职责是将 HTTP 输入转换为服务层调用，并把 `ValueError`
 - 自动推进 AI 席位，直到轮到真人、对局结束或达到安全步数上限。
 - 为 AI 决策读取公开事件历史，并保存 AI 决策与记忆快照。
 - 在内存状态缺失时，从玩家表和事件流重放恢复 `GameState`。
-- 导出事件日志、列出对局、删除对局。
+- 导出事件日志、列出对局、归档与删除对局，聚合房间详情和用量。
+
+`PendingEvent` 和 `StepResult` 是未提交结果的数据载体。`GameCommitter` 统一保存规则事件、AI 决策、记忆、审计事件和摘要；建局的多次写入尚未采用同一外层事务。写入口使用一把覆盖模型调用的全局 `RLock`，不同房间也会串行等待。
 
 `event_visibility.py` 是公开事件边界：
 
@@ -115,13 +134,17 @@ API 层的职责是将 HTTP 输入转换为服务层调用，并把 `ValueError`
 - 对尚未出现 `vote_result` 的 `vote_cast` 隐藏具体票值。
 - API 事件列表和 AI 公开历史共用这套过滤逻辑。
 
+这套过滤不会自动识别公开 payload 中误放的私有信息。`event_notifier.py` 只负责提交后的进程内唤醒，SSE 的实际事件从数据库读取；它不是持久化任务队列。
+
 ### 4.4 规则层：`backend/app/game/`
 
 规则层是确定性领域核心，主要文件：
 
 - `models.py`：定义 `Role`、`Faction`、`Phase`、`Vote`、`MissionAction`、`GameOption`、`Player`、`MissionConfig`、`LadyOfLakeInspection`、`GameState`、`PrivateView`。
-- `rules.py`：实现身份阵营映射、建局、私有视角、组队、发言、投票、任务、刺杀和胜负结算。
+- `rules.py`：实现身份阵营映射、建局、私有视角、组队、发言、投票、任务、湖女、刺杀和胜负结算。
 - `events.py`：构建开局、身份分配、私有视角记录的公开/私有事件 payload。
+
+运行中的动作事件主要由 `GameStepRunner` 构造，`game/events.py` 不是所有事件的统一定义中心。
 
 当前规则常量包含：
 
@@ -187,6 +210,7 @@ AI 决策链路：
 ```mermaid
 sequenceDiagram
     participant S as GameService
+    participant A as AiPlayer
     participant C as ContextBuilder
     participant P as PromptBuilder
     participant L as LlmProvider
@@ -194,23 +218,25 @@ sequenceDiagram
     participant R as rules.py
     participant DB as SQLite
 
-    S->>C: 当前 GameState + 玩家 ID + 公开事件
-    C-->>S: AiContext
-    S->>P: 根据阶段构建 messages
-    P-->>S: system/user messages
-    S->>L: chat_completion(profile, messages)
-    L-->>S: 模型原始文本
-    S->>V: 解析并校验 JSON 或可接受文本
-    V-->>S: 决策对象
-    S->>R: 用规则函数执行决策
-    S->>DB: 保存事件、AI 决策、记忆快照
+    S->>A: 当前 GameState + 玩家 ID + 公开事件 + profile
+    A->>C: 构建当前玩家上下文
+    C-->>A: AiContext
+    A->>P: 根据阶段构建 messages
+    P-->>A: system/user messages
+    A->>L: chat_completion(profile, messages)
+    L-->>A: LlmCompletionResult（文本与用量）
+    A->>V: 解析并校验 JSON 或可接受文本
+    V-->>A: 决策对象
+    A-->>S: AiTurnResult
+    S->>R: 经 GameStepRunner 执行决策
+    S->>DB: 经 GameCommitter 提交事件、决策与记忆
 ```
 
 模块职责：
 
 - `ai/context.py`：构建 `AiContext`。内容包括稳定前缀、动态私有后缀、合法私有视角、公开状态、近期公开事件、合法动作和上下文摘要。
 - `ai/player.py`：执行一次 AI 决策，调用 provider，解析输出，返回 `AiTurnResult`；模型调用或输出非法时抛出 `AiDecisionError`。
-- `ai/strategy.py`：定义 AI 决策数据结构，如组队、发言、投票、任务行动、刺杀。
+- `ai/strategy.py`：定义 AI 决策数据结构，如组队、发言、投票、任务行动、刺杀和湖女；不实现独立策略引擎。
 - `prompting/config.py`：从 `SOLOAVALON_PROMPT_CONFIG` 或 `config.example/prompt_templates.json` 加载 prompt 文案和契约。
 - `prompting/templates.py`：把 `AiContext` 转换成 Chat Completions messages。
 - `prompting/schemas.py`：解析模型输出，校验队伍、投票、任务行动、刺杀目标等结构。
@@ -220,10 +246,12 @@ sequenceDiagram
 上下文分层：
 
 - `stable_prefix`：系统规则、人数、阵营数、任务配置、身份配置和可选机制说明，生成 `stable_prefix_hash` 便于审计和缓存策略记录。
-- `dynamic_private_suffix`：当前玩家私有视角、公开状态、近期事件和合法动作。
-- `recent_public_events`：来自 `event_visibility.public_event_dicts()`，不会包含私有 payload。
+- `dynamic_private_suffix`：当前玩家私有视角、公开状态、近期事件和合法动作的结构化快照；不直接作为 JSON 发给模型。
+- `recent_public_events`：来自 `event_visibility.public_event_dicts()`，删除私有 payload 后再由模板渲染活动日志。字段误分类的缺口见后端说明。
 
-当前实现中，AI 决策失败会记录 `ai_decision` 私有事件和 `ai_decisions` 表记录，然后继续抛出异常；文档或历史计划中提到的确定性 fallback 不应视为当前代码已实现能力。
+最终消息为稳定系统前缀，以及玩家视角、动作格式、活动日志、本次行动四条 user 消息。Provider 返回 `LlmCompletionResult`，包含文本与 Token、缓存用量。Provider 对捕获到的超时和空回答重试，`AiPlayer` 还对解析失败重试；二者目前共用 `timeout_retries`。
+
+当前 AI 决策失败会在同一事务中保存失败审计与 `error_paused`，再抛出异常；没有确定性 fallback。记忆快照目前只用于留档，未读入后续决策上下文；稳定前缀哈希与用量记录也不代表后端已有缓存服务。
 
 ## 5. 存储模块：`backend/app/storage/`
 
@@ -235,11 +263,11 @@ sequenceDiagram
 
 | 表 | 内容 |
 | --- | --- |
-| `games` | 对局摘要、状态、当前阶段、胜者、默认模型配置 id。 |
+| `games` | 建局元数据、可选项、对局摘要、运行状态、归档信息和默认模型配置 id。 |
 | `players` | 对局内玩家座位、名称、是否真人、真实身份、阵营、玩家级模型配置覆盖。 |
 | `game_events` | 只追加事件流，拆分 `public_payload` 和 `private_payload`。 |
-| `ai_decisions` | AI 决策审计，包括输入摘要、输出、模型名、prompt 版本、上下文版本、校验状态。 |
-| `ai_memory_snapshots` | AI 私有记忆快照，包含怀疑、信任、观察和梅林候选等结构。 |
+| `ai_decisions` | AI 决策审计，包括输入摘要、输出、模型名、版本、校验状态和 Token 用量；完整 Prompt 保存在对应事件的私有 payload。 |
+| `ai_memory_snapshots` | AI 私有记忆留档，目前主要是决策观察摘要；尚未形成后续决策的记忆来源。 |
 
 `database.py` 负责：
 
@@ -252,17 +280,20 @@ sequenceDiagram
 
 | 文件 | 职责 |
 | --- | --- |
-| `game_repository.py` | 保存新对局、列出摘要、读取玩家、更新对局状态、删除对局、设置玩家模型配置。 |
+| `game_repository.py` | 保存新对局、列出摘要、读取玩家、更新状态、归档、删除、设置玩家模型配置。 |
 | `event_store.py` | 追加事件、按序列出事件、导出对局日志。 |
 | `ai_decision_repository.py` | 保存和读取 AI 决策审计记录。 |
 | `ai_memory_repository.py` | 保存和读取 AI 记忆快照，并校验记忆 payload 结构。 |
 | `llm_profile_repository.py` | 读写 `config/llm_profiles.json`，并按玩家覆盖优先于对局默认配置解析模型。 |
+
+当前文件配置仓储还查询 SQLite 以解析配置 ID，尚未完全隔离文件 I/O 与对局配置选择。普通仓储默认自动提交，推进路径使用 `autocommit=False` 实例由 `GameCommitter` 控制事务。更完整的状态与事务说明见[后端模块文档](./backend-modules.md#状态与事务边界)。
 
 模型配置文件默认路径：
 
 - `SOLOAVALON_LLM_CONFIG` 指定时使用该路径。
 - 否则使用仓库根目录 `config/llm_profiles.json`。
 - 模型推理参数使用 `reasoning_effort`；旧 `temperature` 字段只做兼容读取并按 `medium` 处理，不再写入或发送给模型。
+- `timeout_retries` 默认为 5，同时用于 Provider 的部分失败重试与 AI 输出解析重试。
 
 prompt 配置文件默认路径：
 
@@ -275,9 +306,10 @@ prompt 配置文件默认路径：
 
 | 文件 | 职责 |
 | --- | --- |
-| `App.tsx` | 应用主组件，包含对局、模型、日志三个标签页和所有交互状态。 |
+| `App.tsx` | 应用主组件，包含对局、模型、房间三个标签页和主要交互状态。 |
 | `api.ts` | 后端 API 类型定义与 fetch 封装。 |
 | `flowReview.ts` | 将事件流转换为轮次复盘、广播记录和信息流展示数据。 |
+| `apiKey.ts` | 新输入 API Key 的前端展示脱敏辅助函数。 |
 | `styles.css` | 桌面、面板、座位、动作区、模型表单、日志复盘样式。 |
 | `main.tsx` | React 挂载入口。 |
 
@@ -285,19 +317,19 @@ prompt 配置文件默认路径：
 
 - 对局：创建 5-10 人局、选择默认模型和 AI 覆盖模型、配置可选项、显示座位与任务轨道、提交真人动作、触发 AI 代打。
 - 模型：创建、编辑、删除和测试 OpenAI-compatible 模型配置。
-- 日志：查看历史对局、加载完整事件、按轮次复盘、导出 JSON、展开 AI prompt 私有记录。
+- 房间：查看归档房间、加载详情、按轮次复盘、导出 JSON；完成态展示完整 AI 决策。
 
 前端数据原则：
 
 - `GameState` 中只使用后端返回的 `visible_role`、`human_role`、`known_evil_player_ids`、`lady_of_lake_known_factions` 等过滤字段。
 - 前端根据 `next_human_action` 决定显示哪种动作控件。
 - `flowReview.ts` 只把事件转为展示结构，不裁判规则。
-- 日志页显式请求 `include_private=true` 时可以展示任务行动和 AI prompt；普通游戏态事件仍按公开视角展示。
+- 实时对局使用公开事件；完成态加载房间详情以展示完整决策。房间页直接请求 `/room`，并不是通过 `include_private=true` 才取得全部私有事件。
 
 Vite 配置：
 
 - 开发服务器端口默认 `5173`。
-- `/api` 代理到 `http://127.0.0.1:8000`。
+- `/api` 默认代理到 `http://127.0.0.1:8000`，支持 `SOLOAVALON_BACKEND_URL`。一键启动脚本可选择其他端口，并同步设置代理目标和前端 CORS 源。
 
 ## 7. 详细对局流程
 
@@ -306,13 +338,15 @@ Vite 配置：
 ```text
 POST /api/games
   -> CreateGameRequest.from_payload
-  -> GameService.create_game
+  -> GameService.create_game(auto_advance=False)
   -> create_game
   -> 应用 AI 名称和模型覆盖配置
   -> GameRepository.save_new_game
   -> EventStore 记录 game_created / roles_assigned / private_view_recorded
-  -> GameService._auto_advance
-  -> 返回真人过滤视角 GameState
+  -> 返回初始真人过滤视角 GameState
+响应后的 BackgroundTasks
+  -> GameService.advance_game
+  -> GameAdvanceLoop 推进 AI，提交后唤醒 SSE
 ```
 
 创建对局的关键结果有三类：
@@ -321,7 +355,7 @@ POST /api/games
 - 持久化摘要：`games` 保存当前阶段、轮次、胜者、默认模型配置和每局可选项；`players` 保存真实身份、阵营和每席模型覆盖。
 - 初始事件：`game_created` 记录公开开局信息，`roles_assigned` 把完整身份放入私有 payload，`private_view_recorded` 为每名玩家记录合法私有视角。
 
-`create_game()` 返回前会调用 `_auto_advance()`。如果当前队长、发言者、投票者或任务队员是 AI，服务层会持续推进；如果轮到真人，则停止并把 `next_human_action` 返回给前端。
+HTTP 创建路由不会等待整个 AI 推进链路。直接调用服务方法 `create_game()` 默认 `auto_advance=True`，才会在返回前推进到真人或其他阻塞点；这与 HTTP 创建的行为不同。
 
 ### 7.2 阶段级流程
 
@@ -333,6 +367,7 @@ POST /api/games
 | `SPEECH` | 普通组队完成 | 从队长开始按座位顺序逐个发言 | `message` | 所有人发言后进入 `VOTING` | `speech` |
 | `VOTING` | 发言完成 | 所有玩家 | `approve` 或 `reject` | 全员投票后，多数赞成进入 `QUEST`，否则换队长回到 `TEAM_PROPOSAL` | `vote_cast`、`vote_result` |
 | `QUEST` | 投票通过或强制车队 | 被选入车队的玩家 | `success` 或 `fail` | 全部任务行动提交后结算任务结果 | `quest_action_submitted`、`quest_result` |
+| `LADY_OF_LAKE` | 启用湖女，第 2/3/4 次任务后且未结束 | 当前湖女持有者 | `target_player_id` | 私有查验并转交湖女，进入下一次组队 | `lady_of_lake_used` |
 | `ASSASSINATION` | 任务成功累计 3 次 | 刺客 | `target_player_id` | 刺中梅林恶方胜利，否则善方胜利 | `assassination` |
 | `COMPLETE` | 3 次任务失败或刺杀结算 | 无 | 无 | 对局结束 | 无后续规则事件 |
 
@@ -342,10 +377,9 @@ POST /api/games
 POST /api/games/{id}/actions
   -> HumanActionRequest.from_payload
   -> GameService 校验 action_type 是否等于 next_human_action
-  -> 调用 rules.py 对应函数
-  -> 追加公开/私有事件
-  -> _auto_advance 推进 AI 席位
-  -> 更新 games 摘要
+  -> GameStepRunner 调用规则函数，产出 StepResult
+  -> GameCommitter 原子保存当前步事件和 games 摘要
+  -> GameAdvanceLoop 推进 AI，每一步单独提交
   -> 返回真人过滤视角 GameState
 ```
 
@@ -358,6 +392,7 @@ POST /api/games/{id}/actions
 | `vote` | `cast_vote()`，必要时 `finalize_vote()` | `vote_cast`、`vote_result` |
 | `mission_action` | `submit_quest_action()`，必要时 `finalize_quest()` | `quest_action_submitted`、`quest_result` |
 | `assassinate` | `assassinate()` | `assassination` |
+| `use_lady_of_lake` | `use_lady_of_lake()` | `lady_of_lake_used` |
 
 真人动作入口只接受当前合法动作。`GameService._next_human_action()` 根据阶段和真人所在位置计算下一步：
 
@@ -366,19 +401,20 @@ POST /api/games/{id}/actions
 - 处于 `VOTING` 且真人尚未投票：返回 `vote`。
 - 处于 `QUEST`、真人在车队中且尚未提交任务行动：返回 `mission_action`。
 - 处于 `ASSASSINATION` 且真人身份是刺客：返回 `assassinate`。
+- 处于 `LADY_OF_LAKE` 且真人持有湖女：返回 `use_lady_of_lake`。
 - 其他情况返回 `null`，前端显示等待 AI 或对局已结算。
 
 ### 7.4 AI 自动推进
 
 ```text
-GameService._auto_advance
+GameService._auto_advance -> GameAdvanceLoop.advance_until_blocked
   -> 如果轮到真人或对局结束，停止
   -> 根据当前 phase 选择 AI 玩家和决策类型
   -> 解析该玩家模型配置
   -> AiPlayer 构建上下文并调用模型
   -> schemas 校验模型输出
-  -> rules.py 再次裁判动作
-  -> 保存 ai_decisions、ai_memory_snapshots 和 ai_decision 事件
+  -> GameStepRunner 使用 rules.py 再次裁判动作
+  -> GameCommitter 提交规则事件、决策、记忆、审计和摘要
   -> 继续循环，最多 100 步
 ```
 
@@ -392,7 +428,7 @@ AI 自动推进和真人动作共用同一套规则函数。因此模型输出�
 
 - `ai_decisions` 表：结构化审计记录，便于按对局查询。
 - `ai_memory_snapshots` 表：当前简化的记忆快照。
-- `game_events` 的 `ai_decision` 事件：公开 payload 保存概要，私有 payload 保存 prompt messages、原始输出、解析结果和上下文摘要。
+- `game_events` 的 `ai_decision` 事件：当前公开 payload 包括策略摘要，私有 payload 保存 prompt messages、原始输出、解析结果和上下文摘要。私有理由被放入公开摘要是待修复缺口，不是允许公开的游戏事实。
 
 ### 7.5 轮次结算细节
 
@@ -426,21 +462,24 @@ AI 自动推进和真人动作共用同一套规则函数。因此模型输出�
 
 ```text
 GameService._restore_state
-  -> GameRepository.get_game_summary
-  -> GameRepository.list_players
+  -> GameStateLoader.load
+  -> 读取 games 的人数和可选项、players 的真实玩家
+  -> 使用当前 STANDARD_MISSION_CONFIGS
   -> 以持久化玩家重建初始 GameState
   -> 按 event_index 重放 game_events
   -> 忽略审计型事件：game_created / roles_assigned / private_view_recorded / ai_decision
   -> 对规则事件调用对应 rules.py 函数
 ```
 
-恢复任务行动必须依赖 `quest_action_submitted.private_payload.mission_action`。因此私有 payload 不应从数据库中清理，否则会影响活跃对局恢复。
+恢复任务行动依赖私有 `mission_action`，湖女事件依赖私有 `target_faction`；不能从运行数据库清理这些 payload。已知规则错误会记录最后成功及首个失败序号，并转为 `GameReplayError`，不静默截断后继续。
+
+状态恢复同时依赖建局元数据、玩家真相和规则历史，不是只靠事件表恢复。`status=error_paused`、归档和配置等管理字段不能仅由规则重放重建。当前也没有后台任务恢复：重启后若仍是 `active` 且轮到 AI，GET 不推进，`retry_paused_game()` 又只处理暂停状态，可能停住。
 
 ## 8. 信息流与复盘架构
 
 ### 8.1 信息源
 
-项目里“信息流”不是单独的数据表，而是由 `game_events` 事件流派生出来的展示层结构。后端事件是权威记录，前端信息流是可读化视图。
+项目里“信息流”不是单独的数据表，而是由 `game_events` 派生的展示结构。规则事件配合建局事实是状态恢复依据，前端信息流只是可读化视图。
 
 ```text
 规则/服务层动作
@@ -451,11 +490,12 @@ GameService._restore_state
   -> GameFlow / ReplayDetail 展示信息流
 ```
 
-同一个事件有三种消费方式：
+同一个事件有四种消费方式：
 
 - 实时对局：`GameState.events` 随状态响应返回，前端立即展示。
 - 事件查询：`GET /api/games/{id}/events` 按 `event_index` 返回事件列表，默认公开过滤。
 - 日志导出：`GET /api/games/{id}/export` 返回对局摘要和事件序列，默认不包含私有 payload。
+- SSE：`GET /api/games/{id}/events/stream?after=N` 补发后续事件，再等待提交通知；没有新事件时发送心跳。
 
 ### 8.2 事件可见性
 
@@ -466,7 +506,7 @@ GameService._restore_state
 - 已结算投票在历史事件中可以公开票型，因为 `vote_result` 已经出现。
 - 任务行动的具体 `success` / `fail` 不在公开 `quest_action_submitted` 中；任务结算后通过 `quest_result` 公开成功牌和失败牌数量。
 
-这套过滤同时服务真人前端和 AI 公开事件历史，避免两边看到不同版本的信息。
+这套过滤同时服务真人前端和 AI 公开事件历史，但不保证公开 payload 内的所有字段都适合公开。当前私有策略摘要和审计访问边界问题见[已知缺口](./backend-modules.md#已知缺口)。
 
 ### 8.3 事件目录
 
@@ -481,6 +521,7 @@ GameService._restore_state
 | `vote_result` | 全员投票后 | 是否通过、连续拒绝次数 | 无 | 生成投票复盘，列出赞成/反对阵营。 |
 | `quest_action_submitted` | 任务队员提交行动 | 玩家 id | `mission_action` | 普通公开流不展示行动；私有日志页可展示具体成功/失败。 |
 | `quest_result` | 任务行动全员提交后 | 任务结果序列、成功牌数、失败牌数、阶段、胜者 | 无 | 生成任务结算广播；若阶段回到 `team_proposal`，前端轮次加 1。 |
+| `lady_of_lake_used` | 湖女查验后 | 查看者、目标、下一持有者和任务轮次 | 目标真实阵营 | 公开广播不展示查验结果。 |
 | `assassination` | 刺客选择目标后 | 刺客 id、目标 id、胜者 | 无 | 生成刺杀结算广播并写入当前轮复盘。 |
 | `ai_decision` | AI 决策成功或失败后 | 玩家、阶段、决策类型、校验状态、策略摘要 | prompt、原始输出、解析结果、上下文摘要或错误 | 普通复盘跳过；日志页可展开 AI 提示词。 |
 
@@ -492,6 +533,8 @@ GameService._restore_state
 - `activeGameEvents`：用于桌面信息流的事件列表。
 
 `applyActiveGame()` 先使用 `updated.events` 更新显示，再尝试调用 `listGameEvents(updated.id)` 拉取更完整事件。`eventsForFlowReview()` 比较两个事件列表的最大 `event_index`，保留较新的列表，避免异步请求把更新的事件流覆盖成旧版本。
+
+活动对局同时使用 `EventSource` 订阅 `game-event`，合并增量事件后短暂合并刷新请求，再读取对局状态。当前 SSE 不直接推送完整状态；状态和事件仍可能由不同时间点的请求返回。
 
 桌面展示链路：
 
@@ -516,30 +559,32 @@ GameDesk
 - `quest_result` 写入任务结算；如果后端返回阶段为 `team_proposal`，说明对局进入下一轮，前端递增 `currentRoundNumber`。
 - `assassination` 写入当前轮刺杀结果。
 
-### 8.5 日志页与导出
+### 8.5 房间复盘与导出
 
-日志页和实时对局使用同一个 `buildFlowReview()`，但请求策略不同：
+房间复盘和实时对局使用同一个 `buildFlowReview()`，但请求策略不同：
 
 - 实时对局通常使用公开事件，不展开私有任务行动或 AI prompt。
-- 日志页 `showEvents()` 调用 `listGameEvents(gameId, true)`，显式请求私有 payload。
-- 日志页同时调用 `getGame(gameId)` 读取玩家名称，用于把事件中的 player id 转成人类可读名字。
+- 房间页 `showEvents()` 调用 `getRoomDetail(gameId)`，一次取得状态、完整事件、AI 决策和用量统计。
+- 玩家名称从详情内的对局状态读取，用于将内部 ID 转成展示名称。
 - `ReplayDetail` 展示按轮次聚合后的完整复盘。
 - `event-panel` 展示原始事件 payload；`quest_action_submitted` 会把私有 `mission_action` 合并显示。
 - `AiPromptDetails` 从 `event.private_payload.prompt_messages` 读取并展开 AI prompt。
 - `showExport()` 调用 `exportGame(gameId, true)`，把包含私有 payload 的完整 JSON 输出到导出面板。
 
-因此，普通对局信息流偏向“玩家合法可见信息”，日志页偏向“本地调试和复盘审计”。维护时不要把这两种视图混在一个安全边界里。
+普通对局信息流面向玩家，房间复盘面向完整审计。当前服务端 `/room` 和私有导出未以完成态隔离；前端只在完成态展示部分内容不能阻止其他客户端读取。
 
-## 9. 安全与隐私边界
+## 9. 当前过滤与边界缺口
 
 - 真实模型配置写入 `config/llm_profiles.json` 或 `SOLOAVALON_LLM_CONFIG` 指向的本地文件，`config/` 被 git 忽略。
 - `config.example/llm_profiles.json` 只能放示例值。
 - SQLite 只保存模型 profile id 和模型名，不保存 API Key。
 - 模型连通性测试失败时会把错误消息中的 API Key 替换为 `[redacted]`。
 - API 公开事件默认不包含 `private_payload`。
-- 未结算投票隐藏具体票值，只暴露谁已经投票。
+- 公开过滤会隐藏尚未结算的投票票值。
 - AI prompt 使用公开事件历史和合法私有视角，不直接接收完整隐藏真相。
-- 日志页请求 `include_private=true` 属于本地调试/复盘能力，应避免把导出内容提交到仓库。
+- `/room`、私有事件查询和私有导出属于完整审计入口，当前没有阻止读取进行中对局。
+
+尚不能声称“前端只接收到合法信息”：列表中的有序 `role_set`、公开 `ai_decision.strategy_summary` 都可能带出隐藏信息。后续需以响应白名单和完成态审计边界收口，而不是仅删除 `private_payload` 或隐藏 UI。
 
 ## 10. 开发与验证模块
 
@@ -557,7 +602,10 @@ GameDesk
 前端测试：
 
 - `frontend/src/flowReview.test.ts` 覆盖事件转复盘逻辑。
-- `frontend/src/App.test.ts` 覆盖前端辅助逻辑。
+- `frontend/src/apiKey.test.ts` 覆盖密钥展示脱敏函数。
+- `frontend/src/App.test.ts` 主要检查源码字符串和样式约定，不是运行组件交互测试。
+
+后端 API 测试主要覆盖适配对象与错误包装，尚不能替代真实 HTTP 和任务生命周期的集成验证。模型测试中的字符串替身与真实 `LlmCompletionResult` 返回类型不一致，是当前遗漏的契约问题之一。
 
 常用验证命令：
 
@@ -574,10 +622,11 @@ npm run test
 
 - 自定义身份编辑器：当前只支持 5-10 人推荐组合和有限开关，尚不支持任意身份池编辑。
 - 新身份：扩展 `Role`、`faction_for_role()`、`private_view_for_player()`、prompt 配置、前端 `roleLabel()`。
-- AI fallback 或重试：当前失败会记录并抛出；如要恢复历史设计，需要在 `AiPlayer` 或 `GameService._run_ai_turn()` 增加明确策略，并补齐测试。
+- AI 重试：当前已有部分网络／空输出重试、解析重试和暂停后的人工重试；没有 fallback，也没有中断后的持久化任务恢复。
 - Prompt 模板产品化：可把 `config.example/prompt_templates.json` 复制到本地可编辑路径，并用 `SOLOAVALON_PROMPT_CONFIG` 指向。
-- AI 审计 UI：日志页已经能展开 prompt messages，可继续读取 `ai_decisions` 和 `ai_memory_snapshots` 做专门调试面板。
-- 外部存储：`storage/` 已集中仓储边界，替换数据库实现时应保持规则层纯净。
+- AI 审计 UI：完成态已能展开 Prompt 和决策，但记忆留档尚未进入决策；新增记忆能力需独立验证其作用，不作为当前重构前提。
+
+架构优化优先修复公开边界与接口契约，再统一建局事务、恢复推进意图，最后拆分命令／查询和后台推进职责。详细目标与兼容性影响见[后端重设计方案](./game-service-redesign.md)，不是先更换技术栈或数据库。
 
 ## 12. 维护注意事项
 

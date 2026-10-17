@@ -31,7 +31,7 @@ class LlmProfileRepositoryTests(unittest.TestCase):
             connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
             try:
                 initialize_database(connection)
-                repository = _repository(connection, tmpdir)
+                repository = _repository(tmpdir)
 
                 self.assertEqual(repository.list_profiles(), [])
                 self.assertIsNone(repository.get_profile("missing"))
@@ -44,7 +44,7 @@ class LlmProfileRepositoryTests(unittest.TestCase):
             connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
             try:
                 initialize_database(connection)
-                repository = _repository(connection, tmpdir)
+                repository = _repository(tmpdir)
 
                 created = repository.create_profile("profile_1", profile_input())
                 listed = repository.list_profiles()
@@ -69,7 +69,7 @@ class LlmProfileRepositoryTests(unittest.TestCase):
             connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
             try:
                 initialize_database(connection)
-                repository = _repository(connection, tmpdir)
+                repository = _repository(tmpdir)
 
                 profile = repository.create_profile("profile_1", profile_input())
 
@@ -106,7 +106,7 @@ class LlmProfileRepositoryTests(unittest.TestCase):
             connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
             try:
                 initialize_database(connection)
-                repository = _repository(connection, tmpdir)
+                repository = _repository(tmpdir)
 
                 loaded = repository.get_profile("legacy_profile")
                 repository.update_profile(
@@ -128,7 +128,7 @@ class LlmProfileRepositoryTests(unittest.TestCase):
             connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
             try:
                 initialize_database(connection)
-                repository = _repository(connection, tmpdir)
+                repository = _repository(tmpdir)
                 created = repository.create_profile("profile_1", profile_input())
 
                 updated = repository.update_profile(
@@ -153,7 +153,7 @@ class LlmProfileRepositoryTests(unittest.TestCase):
             connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
             try:
                 initialize_database(connection)
-                repository = _repository(connection, tmpdir)
+                repository = _repository(tmpdir)
                 repository.create_profile("profile_1", profile_input())
 
                 repository.delete_profile("profile_1")
@@ -171,57 +171,27 @@ class LlmProfileRepositoryTests(unittest.TestCase):
             connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
             try:
                 initialize_database(connection)
-                repository = _repository(connection, tmpdir)
+                repository = _repository(tmpdir)
 
                 with self.assertRaises(ValueError):
                     repository.list_profiles()
             finally:
                 connection.close()
 
-    def test_resolve_profile_uses_player_override_before_game_default(self):
+    def test_file_config_uses_shared_validation_without_modifying_invalid_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
-            try:
-                initialize_database(connection)
-                profiles = _repository(connection, tmpdir)
-                games = GameRepository(connection)
-                profiles.create_profile("default_profile", profile_input(name="Default"))
-                profiles.create_profile(
-                    "override_profile",
-                    profile_input(name="Override", api_key="test-key-override123456", model="qwen-plus"),
-                )
-                games.save_new_game(
-                    create_five_player_game(seed=41),
-                    game_id="game_1",
-                    default_llm_profile_id="default_profile",
-                )
-                games.set_player_llm_profile(
-                    "game_1",
-                    "player_3",
-                    "override_profile",
-                )
+            repository = _repository(tmpdir)
+            repository.create_profile("profile_1", profile_input())
+            path = _config_path(tmpdir)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["profiles"][0]["timeout"] = -1
+            invalid_text = json.dumps(payload)
+            path.write_text(invalid_text, encoding="utf-8")
 
-                default_resolved = profiles.resolve_profile_for_player("game_1", "player_2")
-                override_resolved = profiles.resolve_profile_for_player("game_1", "player_3")
+            with self.assertRaisesRegex(ValueError, "invalid llm profile config file"):
+                repository.list_profiles()
 
-                self.assertEqual(default_resolved.id, "default_profile")
-                self.assertEqual(override_resolved.id, "override_profile")
-            finally:
-                connection.close()
-
-    def test_resolve_profile_rejects_game_without_default_or_override(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            connection = connect_sqlite(Path(tmpdir) / "soloavalon.sqlite3")
-            try:
-                initialize_database(connection)
-                profiles = _repository(connection, tmpdir)
-                games = GameRepository(connection)
-                games.save_new_game(create_five_player_game(seed=42), game_id="game_1")
-
-                with self.assertRaises(ValueError):
-                    profiles.resolve_profile_for_player("game_1", "player_2")
-            finally:
-                connection.close()
+            self.assertEqual(path.read_text(encoding="utf-8"), invalid_text)
 
     def test_setting_missing_override_profile_stores_id_without_sqlite_profile_row(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -248,8 +218,8 @@ def _config_path(tmpdir: str) -> Path:
     return Path(tmpdir) / "config" / "llm_profiles.json"
 
 
-def _repository(connection, tmpdir: str) -> LlmProfileRepository:
-    return LlmProfileRepository(connection, config_path=_config_path(tmpdir))
+def _repository(tmpdir: str) -> LlmProfileRepository:
+    return LlmProfileRepository(config_path=_config_path(tmpdir))
 
 
 def _sqlite_text(connection) -> str:

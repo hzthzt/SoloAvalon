@@ -1,8 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Literal, cast
-from urllib.parse import urlparse
+from typing import Annotated, Any, Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    StringConstraints,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 
 ReasoningEffort = Literal[
@@ -23,6 +33,8 @@ REASONING_EFFORTS: tuple[ReasoningEffort, ...] = (
     "xhigh",
     "max",
 )
+NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+_http_url = TypeAdapter(HttpUrl)
 
 
 def mask_api_key(api_key: str) -> str:
@@ -41,91 +53,55 @@ def mask_api_key(api_key: str) -> str:
 
 
 def validate_base_url(base_url: str) -> None:
-    parsed = urlparse(base_url.strip())
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("base_url must start with http:// or https://")
+    try:
+        _http_url.validate_python(base_url)
+    except ValidationError as exc:
+        raise ValueError("base_url must start with http:// or https://") from exc
 
 
-def normalize_reasoning_effort(value: object) -> ReasoningEffort:
-    if not isinstance(value, str):
-        raise ValueError("reasoning_effort must be a string")
-    normalized = value.strip().lower()
-    if normalized not in REASONING_EFFORTS:
-        allowed = ", ".join(REASONING_EFFORTS)
-        raise ValueError(f"reasoning_effort must be one of: {allowed}")
-    return cast(ReasoningEffort, normalized)
+class LlmProfileInput(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore", hide_input_in_errors=True)
 
-
-@dataclass(frozen=True)
-class LlmProfileInput:
-    name: str
+    name: NonEmptyString
     base_url: str
-    api_key: str
-    model: str
-    reasoning_effort: ReasoningEffort
-    timeout: float
-    timeout_retries: int = 5
+    api_key: str = Field(repr=False)
+    model: NonEmptyString
+    reasoning_effort: ReasoningEffort = "medium"
+    timeout: float = Field(gt=0, allow_inf_nan=False)
+    timeout_retries: int = Field(default=5, ge=0)
 
-    def __post_init__(self) -> None:
-        if not self.name.strip():
-            raise ValueError("profile name is required")
-        if not self.base_url.strip():
-            raise ValueError("base_url is required")
-        validate_base_url(self.base_url)
-        if not self.api_key:
-            raise ValueError("api_key is required")
-        if not self.model.strip():
-            raise ValueError("model is required")
-        object.__setattr__(
-            self,
-            "reasoning_effort",
-            normalize_reasoning_effort(self.reasoning_effort),
-        )
-        if self.timeout <= 0:
-            raise ValueError("timeout must be positive")
-        if self.timeout_retries < 0:
-            raise ValueError("timeout_retries must be non-negative")
+    @field_validator("base_url")
+    @classmethod
+    def strip_base_url(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("reasoning_effort", mode="before")
+    @classmethod
+    def normalize_reasoning_effort(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def validate_connection(self) -> "LlmProfileInput":
+        # Unconfigured is an internal placeholder, never a usable connection.
+        if getattr(self, "id", None) != "unconfigured":
+            validate_base_url(self.base_url)
+            if not self.api_key.strip():
+                raise ValueError("api_key is required")
+        return self
 
 
-@dataclass(frozen=True)
-class LlmProfile:
-    id: str
-    name: str
-    base_url: str
-    api_key: str
-    model: str
-    reasoning_effort: ReasoningEffort
-    timeout: float
+class LlmProfile(LlmProfileInput):
+    id: str = Field(min_length=1)
     created_at: str
     updated_at: str
-    timeout_retries: int = 5
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "reasoning_effort",
-            normalize_reasoning_effort(self.reasoning_effort),
-        )
-        if self.id == "unconfigured":
-            if self.timeout_retries < 0:
-                raise ValueError("timeout_retries must be non-negative")
-            return
-        if not self.base_url.strip():
-            raise ValueError("base_url is required")
-        validate_base_url(self.base_url)
-        if self.timeout_retries < 0:
-            raise ValueError("timeout_retries must be non-negative")
 
     def to_public_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "name": self.name,
-            "base_url": self.base_url,
+        return self.model_dump(exclude={"api_key"}) | {
             "api_key_masked": mask_api_key(self.api_key),
-            "model": self.model,
-            "reasoning_effort": self.reasoning_effort,
-            "timeout": self.timeout,
-            "timeout_retries": self.timeout_retries,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
         }
+
+
+class LlmProfileConfig(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    profiles: list[LlmProfile]

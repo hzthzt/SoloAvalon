@@ -242,6 +242,6 @@ def sse_keep_alive_frame() -> str:
 
 
 def _ai_decision_status_code(error: AiDecisionError) -> int:
-    if error.error_type == "TimeoutError":
+    if error.error_type in {"TimeoutError", "APITimeoutError"}:
         return 504
     return 502

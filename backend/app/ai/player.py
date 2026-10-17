@@ -5,7 +5,7 @@ from typing import Any, Callable, Generic, TypeVar
 
 from backend.app.game.models import GameState, Phase
 from backend.app.llm.profiles import LlmProfile
-from backend.app.llm.provider import LlmProvider
+from backend.app.llm.provider import EmptyModelOutputError, LlmProvider
 from backend.app.prompting.schemas import (
     assassination_decision_from_output,
     lady_of_lake_decision_from_output,
@@ -263,6 +263,10 @@ class AiPlayer:
                 completion = self._provider.chat_completion(profile, messages)
                 output_raw = _completion_content(completion)
                 usage = _completion_usage(completion)
+            except EmptyModelOutputError as exc:
+                if retry_index < profile.timeout_retries:
+                    continue
+                raise_decision_error(exc, output_raw, output_parsed, usage)
             except Exception as exc:
                 raise_decision_error(exc, output_raw, output_parsed, usage)
 

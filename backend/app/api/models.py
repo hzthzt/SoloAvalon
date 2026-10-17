@@ -4,11 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from backend.app.game.models import GameOption
-from backend.app.llm.profiles import (
-    LlmProfileInput,
-    ReasoningEffort,
-    normalize_reasoning_effort,
-)
+from backend.app.llm.profiles import LlmProfileInput
 
 
 @dataclass(frozen=True)
@@ -53,40 +49,13 @@ class HumanActionRequest:
         )
 
 
-@dataclass(frozen=True)
-class LlmProfileRequest:
-    name: str
-    base_url: str
-    api_key: str
-    model: str
-    reasoning_effort: ReasoningEffort
-    timeout: float
-    timeout_retries: int = 5
-
+class LlmProfileRequest(LlmProfileInput):
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "LlmProfileRequest":
-        return cls(
-            name=_required_string(payload, "name"),
-            base_url=_required_string(payload, "base_url"),
-            api_key=str(payload.get("api_key", "")),
-            model=_required_string(payload, "model"),
-            reasoning_effort=normalize_reasoning_effort(
-                payload.get("reasoning_effort", "medium")
-            ),
-            timeout=float(payload["timeout"]),
-            timeout_retries=int(payload.get("timeout_retries", 5)),
-        )
+        return cls.model_validate(payload)
 
     def to_input(self) -> LlmProfileInput:
-        return LlmProfileInput(
-            name=self.name,
-            base_url=self.base_url,
-            api_key=self.api_key,
-            model=self.model,
-            reasoning_effort=self.reasoning_effort,
-            timeout=self.timeout,
-            timeout_retries=self.timeout_retries,
-        )
+        return self
 
 
 def _required_string(payload: dict[str, Any], key: str) -> str:

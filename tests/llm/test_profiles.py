@@ -1,7 +1,6 @@
 import unittest
-from dataclasses import fields
 
-from backend.app.llm.profiles import LlmProfile, LlmProfileInput, mask_api_key
+from backend.app.llm.profiles import LlmProfile, LlmProfileConfig, LlmProfileInput, mask_api_key
 
 
 def _profile_kwargs() -> dict[str, object]:
@@ -16,8 +15,6 @@ def _profile_kwargs() -> dict[str, object]:
         "created_at": "2026-06-15T00:00:00Z",
         "updated_at": "2026-06-15T00:00:00Z",
     }
-    if "max_tokens" in {field.name for field in fields(LlmProfile)}:
-        kwargs["max_tokens"] = 1024
     return kwargs
 
 
@@ -30,8 +27,6 @@ def _profile_input_kwargs(**overrides: object) -> dict[str, object]:
         "reasoning_effort": "medium",
         "timeout": 30.0,
     }
-    if "max_tokens" in {field.name for field in fields(LlmProfileInput)}:
-        kwargs["max_tokens"] = 1024
     kwargs.update(overrides)
     return kwargs
 
@@ -47,10 +42,10 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(mask_api_key(""), "")
 
     def test_profile_types_exclude_removed_runtime_fields(self):
-        self.assertNotIn("max_tokens", {field.name for field in fields(LlmProfileInput)})
-        self.assertNotIn("max_tokens", {field.name for field in fields(LlmProfile)})
-        self.assertNotIn("temperature", {field.name for field in fields(LlmProfileInput)})
-        self.assertNotIn("temperature", {field.name for field in fields(LlmProfile)})
+        self.assertNotIn("max_tokens", LlmProfileInput.model_fields)
+        self.assertNotIn("max_tokens", LlmProfile.model_fields)
+        self.assertNotIn("temperature", LlmProfileInput.model_fields)
+        self.assertNotIn("temperature", LlmProfile.model_fields)
 
     def test_public_dict_excludes_plain_api_key(self):
         profile = LlmProfile(**_profile_kwargs())
@@ -76,6 +71,32 @@ class LlmProfileTests(unittest.TestCase):
             LlmProfileInput(**_profile_input_kwargs(reasoning_effort="extreme"))
         with self.assertRaises(ValueError):
             LlmProfileInput(**_profile_input_kwargs(timeout_retries=-1))
+
+    def test_api_and_file_profiles_share_validation(self):
+        for overrides in (
+            {"name": " "},
+            {"api_key": ""},
+            {"model": " "},
+            {"timeout": 0},
+            {"timeout": float("inf")},
+            {"timeout": float("nan")},
+            {"timeout_retries": 1.5},
+            {"timeout_retries": -1},
+            {"reasoning_effort": "extreme"},
+        ):
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(ValueError):
+                    LlmProfileInput(**_profile_input_kwargs(**overrides))
+                with self.assertRaises(ValueError):
+                    LlmProfileConfig.model_validate({"profiles": [_profile_kwargs() | overrides]})
+
+    def test_validation_errors_and_repr_do_not_include_api_key(self):
+        secret = "test-secret-not-for-errors"
+        with self.assertRaises(ValueError) as captured:
+            LlmProfileInput(**_profile_input_kwargs(api_key=secret, timeout=-1))
+
+        self.assertNotIn(secret, str(captured.exception))
+        self.assertNotIn(secret, repr(LlmProfileInput(**_profile_input_kwargs(api_key=secret))))
 
     def test_input_validation_rejects_non_http_base_url(self):
         for base_url in ("api.example.com/v1", "file:///v1"):

@@ -1,14 +1,12 @@
 import json
-import urllib.error
 import unittest
-from dataclasses import fields
 
 from backend.app.ai.context import ContextBuilder
 from backend.app.ai.player import AiDecisionError, AiPlayer
 from backend.app.game.models import Faction, GameOption, GameState, MissionAction, MissionConfig, Phase, Player, Role, Vote
 from backend.app.game.rules import create_five_player_game, create_game, propose_team
 from backend.app.llm.profiles import LlmProfile
-from backend.app.llm.provider import LlmCompletionResult, LlmProvider
+from backend.app.llm.provider import EmptyModelOutputError, LlmCompletionResult
 from backend.app.prompting.config import load_prompt_template_config
 from backend.app.prompting.schemas import (
     lady_of_lake_decision_from_output,
@@ -30,8 +28,6 @@ def test_profile() -> LlmProfile:
         "created_at": "2026-06-15T00:00:00Z",
         "updated_at": "2026-06-15T00:00:00Z",
     }
-    if "max_tokens" in {field.name for field in fields(LlmProfile)}:
-        kwargs["max_tokens"] = 256
     return LlmProfile(**kwargs)
 
 
@@ -1042,220 +1038,40 @@ class PromptingAndProviderTests(unittest.TestCase):
 
         self.assertEqual(parsed, {"vote": "approve"})
 
-    def test_llm_provider_uses_injectable_transport(self):
-        captured = {}
-
-        def transport(url, headers, payload, timeout):
-            captured["url"] = url
-            captured["headers"] = headers
-            captured["payload"] = payload
-            captured["timeout"] = timeout
-            return {
-                "choices": [
-                    {"message": {"content": json.dumps({"vote": "approve"})}}
-                ]
-            }
-
-        provider = LlmProvider(transport=transport)
-
-        result = provider.chat_completion(
-            test_profile(),
-            messages=[{"role": "user", "content": "vote"}],
-        )
-
-        self.assertEqual(json.loads(result.content), {"vote": "approve"})
-        self.assertEqual(captured["url"], "https://api.example.com/v1/chat/completions")
-        self.assertEqual(captured["headers"]["Authorization"], "Bearer test-api-key")
-        self.assertEqual(captured["payload"]["model"], "model")
-        self.assertEqual(captured["payload"]["reasoning_effort"], "high")
-        self.assertNotIn("temperature", captured["payload"])
-        self.assertNotIn("max_tokens", captured["payload"])
-
-    def test_llm_provider_returns_openai_usage_when_available(self):
-        def transport(url, headers, payload, timeout):
-            return {
-                "choices": [
-                    {"message": {"content": json.dumps({"vote": "approve"})}}
-                ],
-                "usage": {
-                    "prompt_tokens": 100,
-                    "completion_tokens": 25,
-                    "total_tokens": 125,
-                    "prompt_tokens_details": {"cached_tokens": 40},
-                },
-            }
-
-        result = LlmProvider(transport=transport).chat_completion(
-            test_profile(),
-            messages=[{"role": "user", "content": "vote"}],
-        )
-
-        self.assertEqual(json.loads(result.content), {"vote": "approve"})
-        self.assertEqual(result.prompt_tokens, 100)
-        self.assertEqual(result.completion_tokens, 25)
-        self.assertEqual(result.total_tokens, 125)
-        self.assertEqual(result.cached_tokens, 40)
-        self.assertEqual(result.cache_hit_rate, 0.4)
-
-    def test_llm_provider_returns_empty_usage_when_provider_omits_usage(self):
-        def transport(url, headers, payload, timeout):
-            return {"choices": [{"message": {"content": "{}"}}]}
-
-        result = LlmProvider(transport=transport).chat_completion(
-            test_profile(),
-            messages=[{"role": "user", "content": "vote"}],
-        )
-
-        self.assertEqual(result.content, "{}")
-        self.assertIsNone(result.prompt_tokens)
-        self.assertIsNone(result.completion_tokens)
-        self.assertIsNone(result.total_tokens)
-        self.assertIsNone(result.cached_tokens)
-        self.assertIsNone(result.cache_hit_rate)
-
-    def test_llm_provider_rejects_invalid_base_url_before_transport(self):
-        calls = []
-
-        def transport(url, headers, payload, timeout):
-            calls.append(url)
-            return {"choices": [{"message": {"content": "{}"}}]}
-
-        profile = object.__new__(LlmProfile)
-        object.__setattr__(profile, "id", "bad_profile")
-        object.__setattr__(profile, "name", "Bad")
-        object.__setattr__(profile, "base_url", "file:///v1")
-        object.__setattr__(profile, "api_key", "test-api-key")
-        object.__setattr__(profile, "model", "model")
-        object.__setattr__(profile, "reasoning_effort", "high")
-        object.__setattr__(profile, "timeout", 5.0)
-        object.__setattr__(profile, "timeout_retries", 0)
-        object.__setattr__(profile, "created_at", "2026-06-15T00:00:00Z")
-        object.__setattr__(profile, "updated_at", "2026-06-15T00:00:00Z")
-
-        with self.assertRaisesRegex(ValueError, "base_url must start with http:// or https://"):
-            LlmProvider(transport=transport).chat_completion(profile, messages=[])
-
-        self.assertEqual(calls, [])
-
-    def test_llm_provider_describes_urlopen_file_errors_as_local_ssl_or_proxy_path_issues(self):
-        def transport(url, headers, payload, timeout):
-            raise urllib.error.URLError(FileNotFoundError(2, "No such file or directory"))
-
-        with self.assertRaisesRegex(ConnectionError, "local SSL certificate or proxy path"):
-            LlmProvider(transport=transport).chat_completion(
-                test_profile(),
-                messages=[{"role": "user", "content": "vote"}],
-            )
-
-    def test_llm_provider_includes_runtime_diagnostics_for_connection_errors(self):
-        def transport(url, headers, payload, timeout):
-            raise urllib.error.URLError(ConnectionRefusedError(10061, "connection refused"))
-
-        with self.assertRaises(ConnectionError) as context:
-            LlmProvider(transport=transport).chat_completion(
-                test_profile(),
-                messages=[{"role": "user", "content": "vote"}],
-            )
-
-        message = str(context.exception)
-        self.assertIn("error_type=ConnectionRefusedError", message)
-        self.assertIn("python_executable=", message)
-        self.assertIn("proxies=", message)
-        self.assertNotIn("test-api-key", message)
-
-    def test_llm_provider_describes_http_errors_with_status_code(self):
-        def transport(url, headers, payload, timeout):
-            raise urllib.error.HTTPError(url, 401, "Unauthorized", hdrs=None, fp=None)
-
-        with self.assertRaisesRegex(ConnectionError, "llm endpoint returned HTTP 401"):
-            LlmProvider(transport=transport).chat_completion(
-                test_profile(),
-                messages=[{"role": "user", "content": "vote"}],
-            )
-
-    def test_llm_provider_retries_timeout_errors_until_success(self):
+    def test_ai_player_retries_empty_output_until_valid_decision(self):
         attempts = []
 
-        def transport(url, headers, payload, timeout):
-            attempts.append(timeout)
-            if len(attempts) < 3:
-                raise TimeoutError("The read operation timed out")
-            return {
-                "choices": [
-                    {"message": {"content": json.dumps({"vote": "approve"})}}
-                ]
-            }
+        class RetryProvider:
+            def chat_completion(self, profile, messages):
+                attempts.append(messages)
+                if len(attempts) < 3:
+                    raise EmptyModelOutputError("non-empty message content required")
+                return LlmCompletionResult(content='{"vote":"approve"}')
 
-        profile_kwargs = test_profile().__dict__ | {"timeout_retries": 5}
-        provider = LlmProvider(transport=transport)
+        state = create_five_player_game(seed=21)
+        state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
+        profile = test_profile().model_copy(update={"timeout_retries": 2})
 
-        result = provider.chat_completion(
-            LlmProfile(**profile_kwargs),
-            messages=[{"role": "user", "content": "vote"}],
-        )
+        result = AiPlayer(provider=RetryProvider()).vote(state, state.players[3].id, profile)
 
-        self.assertEqual(json.loads(result.content), {"vote": "approve"})
+        self.assertEqual(result.decision.vote, Vote.APPROVE)
         self.assertEqual(len(attempts), 3)
 
-    def test_llm_provider_stops_after_configured_timeout_retries(self):
+    def test_ai_player_stops_after_configured_empty_output_retries(self):
         attempts = []
 
-        def transport(url, headers, payload, timeout):
-            attempts.append(timeout)
-            raise TimeoutError("The read operation timed out")
+        class EmptyProvider:
+            def chat_completion(self, profile, messages):
+                attempts.append(messages)
+                raise EmptyModelOutputError("non-empty message content required")
 
-        profile_kwargs = test_profile().__dict__ | {"timeout_retries": 2}
-        provider = LlmProvider(transport=transport)
+        state = create_five_player_game(seed=21)
+        profile = test_profile().model_copy(update={"timeout_retries": 2})
 
-        with self.assertRaises(TimeoutError):
-            provider.chat_completion(
-                LlmProfile(**profile_kwargs),
-                messages=[{"role": "user", "content": "vote"}],
-            )
+        with self.assertRaises(AiDecisionError) as captured:
+            AiPlayer(provider=EmptyProvider()).propose_team(state, state.players[0].id, profile)
 
-        self.assertEqual(len(attempts), 3)
-
-    def test_llm_provider_retries_empty_message_content_until_success(self):
-        attempts = []
-
-        def transport(url, headers, payload, timeout):
-            attempts.append(timeout)
-            if len(attempts) < 3:
-                return {"choices": [{"message": {"content": ""}}]}
-            return {
-                "choices": [
-                    {"message": {"content": json.dumps({"vote": "approve"})}}
-                ]
-            }
-
-        profile_kwargs = test_profile().__dict__ | {"timeout_retries": 5}
-        provider = LlmProvider(transport=transport)
-
-        result = provider.chat_completion(
-            LlmProfile(**profile_kwargs),
-            messages=[{"role": "user", "content": "vote"}],
-        )
-
-        self.assertEqual(json.loads(result.content), {"vote": "approve"})
-        self.assertEqual(len(attempts), 3)
-
-    def test_llm_provider_stops_after_configured_empty_content_retries(self):
-        attempts = []
-
-        def transport(url, headers, payload, timeout):
-            attempts.append(timeout)
-            return {"choices": [{"message": {"content": ""}}]}
-
-        profile_kwargs = test_profile().__dict__ | {"timeout_retries": 2}
-        provider = LlmProvider(transport=transport)
-
-        with self.assertRaises(ValueError) as captured:
-            provider.chat_completion(
-                LlmProfile(**profile_kwargs),
-                messages=[{"role": "user", "content": "vote"}],
-            )
-
-        self.assertIn("non-empty message content", str(captured.exception))
+        self.assertEqual(captured.exception.error_type, "EmptyModelOutputError")
         self.assertEqual(len(attempts), 3)
 
     def test_ai_player_retries_invalid_json_until_valid_decision(self):
@@ -1275,7 +1091,7 @@ class PromptingAndProviderTests(unittest.TestCase):
                 )
 
         state = create_five_player_game(seed=21)
-        profile = LlmProfile(**(test_profile().__dict__ | {"timeout_retries": 1}))
+        profile = LlmProfile(**(test_profile().model_dump() | {"timeout_retries": 1}))
 
         result = AiPlayer(provider=RetryProvider()).propose_team(
             state,
@@ -1299,7 +1115,7 @@ class PromptingAndProviderTests(unittest.TestCase):
 
         state = create_five_player_game(seed=21)
         state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
-        profile = LlmProfile(**(test_profile().__dict__ | {"timeout_retries": 1}))
+        profile = LlmProfile(**(test_profile().model_dump() | {"timeout_retries": 1}))
 
         result = AiPlayer(provider=RetryProvider()).vote(state, state.players[3].id, profile)
 
@@ -1319,7 +1135,7 @@ class PromptingAndProviderTests(unittest.TestCase):
 
         state = create_five_player_game(seed=21)
         state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
-        profile = LlmProfile(**(test_profile().__dict__ | {"timeout_retries": 1}))
+        profile = LlmProfile(**(test_profile().model_dump() | {"timeout_retries": 1}))
 
         result = AiPlayer(provider=RetryProvider()).vote(state, state.players[3].id, profile)
 
@@ -1341,7 +1157,7 @@ class PromptingAndProviderTests(unittest.TestCase):
         good_player = next(player for player in state.players if player.role == Role.LOYAL_SERVANT)
         teammate = next(player for player in state.players if player.id != good_player.id)
         state = propose_team(state, state.players[0].id, (good_player.id, teammate.id))
-        profile = LlmProfile(**(test_profile().__dict__ | {"timeout_retries": 1}))
+        profile = LlmProfile(**(test_profile().model_dump() | {"timeout_retries": 1}))
 
         result = AiPlayer(provider=RetryProvider()).mission_action(state, good_player.id, profile)
 

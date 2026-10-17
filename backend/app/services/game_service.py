@@ -75,7 +75,7 @@ class GameService:
         self._events = EventStore(connection)
         self._ai_decisions = AiDecisionRepository(connection)
         self._ai_memory = AiMemoryRepository(connection)
-        self._profiles = LlmProfileRepository(connection)
+        self._profiles = LlmProfileRepository()
         self._ai_player = ai_player or AiPlayer()
         self._states: dict[str, GameState] = {}
         self._step_runner = GameStepRunner()
@@ -474,19 +474,30 @@ class GameService:
 
     def _profile_for_ai(self, game_id: str, player_id: str) -> LlmProfile:
         try:
-            return self._profiles.resolve_profile_for_player(game_id, player_id)
-        except ValueError:
-            return LlmProfile(
-                id="unconfigured",
-                name="Unconfigured",
-                base_url="",
-                api_key="",
-                model="unconfigured",
-                reasoning_effort="none",
-                timeout=1.0,
-                created_at="",
-                updated_at="",
+            summary = self._games.get_game_summary(game_id)
+            player = next(
+                (player for player in self._games.list_players(game_id) if player.id == player_id),
+                None,
             )
+            if summary is not None and player is not None:
+                profile_id = player.llm_profile_id or summary.default_llm_profile_id
+                if profile_id is not None:
+                    profile = self._profiles.get_profile(profile_id)
+                    if profile is not None:
+                        return profile
+        except ValueError:
+            pass
+        return LlmProfile(
+            id="unconfigured",
+            name="Unconfigured",
+            base_url="",
+            api_key="",
+            model="unconfigured",
+            reasoning_effort="none",
+            timeout=1.0,
+            created_at="",
+            updated_at="",
+        )
 
     def _public_events_for_ai(self, game_id: str) -> list[dict[str, Any]]:
         return public_event_dicts(self._events.list_events(game_id))
