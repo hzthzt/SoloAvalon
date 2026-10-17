@@ -29,14 +29,7 @@ class PromptBuilder:
                 "role": "user",
                 "content": _player_view_message(context, self._prompt_config),
             },
-            {
-                "role": "user",
-                "content": _action_format_message(),
-            },
-            {
-                "role": "user",
-                "content": _activity_log_message(context, self._prompt_config),
-            },
+            *_activity_log_messages(context, self._prompt_config),
             {
                 "role": "user",
                 "content": _action_message(context, phase, self._prompt_config),
@@ -74,44 +67,42 @@ def _player_view_message(context: AiContext, prompt_config: PromptTemplateConfig
     )
 
 
-def _action_format_message() -> str:
-    return "\n".join(
-        [
-            "【动作 JSON 格式声明】",
-            "以下格式在整局中固定，后续不重复声明。你每次只返回本次请求对应的 JSON。",
-            "",
-            "propose_team:",
-            '{"team":["player_id"],"public_message":"...","private_reason_summary":"..."}',
-            "",
-            "speak:",
-            '{"public_message":"...","private_reason_summary":"..."}',
-            "",
-            "vote:",
-            '{"vote":"approve|reject","private_reason_summary":"..."}',
-            "",
-            "mission_action:",
-            '{"mission_action":"success|fail","private_reason_summary":"..."}',
-            "",
-            "刺杀 assassinate 和湖中仙女 use_lady_of_lake 不在这里声明；"
-            "只有实际轮到对应行动时，才在本次行动中临时给出格式。",
-        ]
-    )
-
-
-def _activity_log_message(context: AiContext, prompt_config: PromptTemplateConfig) -> str:
+def _activity_log_messages(
+    context: AiContext, prompt_config: PromptTemplateConfig
+) -> list[dict[str, str]]:
     player_labels = _player_label_map(context.public_state["players"])
-    lines = ["【活动日志】"]
     record_lines = _activity_log_lines(
-        _player_visible_events(context.recent_public_events),
+        _timeline_events(context),
         prompt_config,
         player_labels,
         context,
     )
-    if not record_lines:
-        lines.append("暂无活动。")
-    else:
-        lines.extend(record_lines)
-    return "\n".join(lines)
+    return [
+        {"role": "user", "content": content}
+        for content in ["【活动日志】", *record_lines]
+    ]
+
+
+def _timeline_events(context: AiContext) -> list[dict[str, Any]]:
+    records = sorted(context.personal_records, key=lambda record: record["after_event_index"])
+    timeline: list[dict[str, Any]] = []
+    record_index = 0
+    for fallback_index, event in enumerate(context.recent_public_events, start=1):
+        event_index = event.get("event_index", fallback_index)
+        while (
+            record_index < len(records)
+            and records[record_index]["after_event_index"] < event_index
+        ):
+            timeline.append(
+                {"event_type": "personal_reason", "public_payload": records[record_index]}
+            )
+            record_index += 1
+        timeline.append(event | {"event_index": event_index})
+    timeline.extend(
+        {"event_type": "personal_reason", "public_payload": record}
+        for record in records[record_index:]
+    )
+    return _player_visible_events(timeline)
 
 
 def _action_message(
@@ -126,12 +117,31 @@ def _action_message(
         [
             prompt_config.section_titles["action"],
             f"请求你执行 {action}。",
+            *_current_state_lines(context, prompt_config),
             *_action_lines(context, prompt_config),
             prompt_config.labels["json_only"],
             *contract_lines,
             f"当前只执行：{action}。",
         ]
     )
+
+
+def _current_state_lines(context: AiContext, prompt_config: PromptTemplateConfig) -> list[str]:
+    state = context.public_state
+    player_labels = _player_label_map(state["players"])
+    lines = [
+        f"当前第 {state['current_round']} 轮，阶段：{state['phase']}。",
+        f"队长：{_player_label(state['leader_player_id'], player_labels)}；"
+        f"当前车队：{_join_player_labels(state['proposed_team'], player_labels)}。",
+        f"连续否决次数：{state['failed_team_votes']}；"
+        f"强制组队：{'是' if state['forced_team'] else '否'}。",
+    ]
+    if state.get("lady_of_lake_holder_player_id"):
+        lines.append(
+            f"湖中仙女持有者：{_player_label(state['lady_of_lake_holder_player_id'], player_labels)}。"
+        )
+    lines.extend(_completed_quest_result_reminder_lines(context, prompt_config))
+    return lines
 
 
 def _temporary_phase_contract(
@@ -154,7 +164,6 @@ def _action_lines(
     action = str(legal_actions.get("action", "none"))
     if action == "propose_team":
         return [
-            *prompt_config.action_prompts["propose_team"]["lines"],
             prompt_config.labels["team_size"].format(
                 team_size=_join_or_none(legal_actions.get("team_size"))
             ),
@@ -163,16 +172,13 @@ def _action_lines(
             ),
         ]
     if action == "speak":
-        return list(prompt_config.action_prompts["speak"]["lines"])
+        return []
     if action == "vote":
         return [
-            *prompt_config.action_prompts["vote"]["lines"],
-            *_completed_quest_result_reminder_lines(context, prompt_config),
             f"当前可选：{_join_or_none(legal_actions.get('votes'))}。",
         ]
     if action == "mission_action":
         return [
-            *prompt_config.action_prompts["mission_action"]["lines"],
             prompt_config.labels["mission_actions"].format(
                 actions=_mission_actions_text(
                     legal_actions.get("mission_actions"),
@@ -220,7 +226,7 @@ def _player_visible_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]
     return [
         event
         for event in events
-        if event.get("event_type") not in {"roles_assigned", "private_view_recorded"}
+        if event.get("event_type") not in {"roles_assigned", "private_view_recorded", "ai_decision"}
     ]
 
 
@@ -233,6 +239,7 @@ def _activity_log_lines(
     lines: list[str] = []
     pending_votes: list[tuple[str, str]] = []
     completed_quests = 0
+    shown_inspections: set[str] = set()
 
     for fallback_index, event in enumerate(events, start=1):
         event_type = str(event.get("event_type", "unknown"))
@@ -250,8 +257,17 @@ def _activity_log_lines(
             continue
 
         if event_type == "vote_result":
+            settled_votes = public_payload.get("votes")
+            votes = (
+                [
+                    (_player_label(player_id, player_labels), str(vote))
+                    for player_id, vote in settled_votes.items()
+                ]
+                if isinstance(settled_votes, dict)
+                else pending_votes
+            )
             lines.append(
-                f"{prefix} {_vote_result_text(public_payload, pending_votes, completed_quests + 1)}"
+                f"{prefix} {_vote_result_text(public_payload, votes, completed_quests + 1)}"
             )
             pending_votes = []
             continue
@@ -264,7 +280,7 @@ def _activity_log_lines(
             lines.append(f"{prefix} {_quest_result_text(public_payload, completed_quests, prompt_config)}")
             continue
 
-        if pending_votes:
+        if pending_votes and event_type != "personal_reason":
             pending_votes = []
 
         if event_type == "team_proposed":
@@ -288,14 +304,17 @@ def _activity_log_lines(
             viewer = _payload_player_text(public_payload, player_labels, "viewer_player_id")
             target = _payload_player_text(public_payload, player_labels, "target_player_id")
             result = _viewer_lady_of_lake_result(context, public_payload, player_labels, prompt_config)
+            lines.append(f"{prefix} {viewer} 使用湖中仙女查看了 {target}。")
             if result:
-                lines.append(f"{prefix} {viewer} 使用湖中仙女查看了 {target}。{result}")
-            else:
-                lines.append(f"{prefix} {viewer} 使用湖中仙女查看了 {target}。")
-        elif event_type == "ai_decision":
-            player_id = _payload_text(public_payload, "player_id")
-            if player_id == context.viewer_player_id:
-                lines.append(f"{prefix} {_action_completion_text(public_payload)}")
+                lines.append(f"【私有记录】{result}")
+                shown_inspections.add(_payload_text(public_payload, "target_player_id"))
+        elif event_type == "personal_reason":
+            if public_payload.get("player_id") == context.viewer_player_id:
+                decision_type = _payload_text(public_payload, "decision_type")
+                summary = _replace_player_ids(
+                    _payload_text(public_payload, "reason_summary"), player_labels
+                )
+                lines.append(f"【个人判断记录·{decision_type}】\n{summary}")
         elif event_type == "game_created":
             lines.append(f"{prefix} 对局开始。")
         else:
@@ -303,8 +322,15 @@ def _activity_log_lines(
                 f"{prefix} {_plain_payload_text(public_payload, player_labels)}"
             )
 
-    if pending_votes:
-        pending_votes = []
+    # Without full public history, keep known inspections without changing the opening view.
+    for inspection in context.private_information_events:
+        if inspection["target_player_id"] not in shown_inspections:
+            target = _player_label(inspection["target_player_id"], player_labels)
+            faction = _faction_label(inspection["target_faction"], prompt_config)
+            lines.append(
+                f"【私有记录】第 {inspection['round_number']} 轮，"
+                f"你通过湖中仙女确认：{target} 为{faction}阵营。"
+            )
 
     return lines
 
@@ -375,13 +401,6 @@ def _event_prefix(event: dict[str, Any], fallback_index: int) -> str:
     return f"#{fallback_index:04d}"
 
 
-def _action_completion_text(payload: dict[str, Any]) -> str:
-    decision_type = _payload_text(payload, "decision_type")
-    if decision_type:
-        return f"{decision_type} 已进行处理。"
-    return "行动已进行处理。"
-
-
 def _viewer_lady_of_lake_result(
     context: AiContext,
     payload: dict[str, Any],
@@ -435,7 +454,6 @@ def _extra_information_text(
     known_evil_ids = context.private_view.get("known_evil_player_ids", [])
     merlin_candidate_ids = context.private_view.get("merlin_candidate_player_ids", [])
     known_good_ids = context.private_view.get("known_good_player_ids", [])
-    lake_known_factions = context.private_view.get("lady_of_lake_known_factions", {})
     extra_lines: list[str] = []
     if role == "merlin" and known_evil_ids:
         extra_lines.append(
@@ -461,12 +479,6 @@ def _extra_information_text(
                 players=_join_player_labels(known_evil_ids, player_labels)
             )
         )
-    if isinstance(lake_known_factions, dict):
-        for player_id, faction in lake_known_factions.items():
-            extra_lines.append(
-                f"你通过湖中仙女确认：{_player_label(player_id, player_labels)} 为"
-                f"{_faction_label(str(faction), prompt_config)}阵营。"
-            )
     return " ".join(extra_lines) if extra_lines else prompt_config.extra_information["none"]
 
 

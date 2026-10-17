@@ -31,7 +31,8 @@ class AiDecisionRunner:
                           created_at="", updated_at="")
 
     def decide(self, game_id: str, state: GameState, player_id: str, action: str,
-               profile: LlmProfile, events: list[dict[str, Any]]) -> StepResult:
+               profile: LlmProfile, events: list[dict[str, Any]],
+               personal_records: list[dict[str, Any]] | None = None) -> StepResult:
         method, decision_type, field, attribute = {
             "propose_team": ("propose_team", "team_proposal", "team", "team"),
             "speak": ("speak", "speech", "message", "public_message"),
@@ -40,7 +41,10 @@ class AiDecisionRunner:
             "assassinate": ("assassinate", "assassination", "target_player_id", "target_player_id"),
             "use_lady_of_lake": ("use_lady_of_lake", "lady_of_lake", "target_player_id", "target_player_id"),
         }[action]
-        result = getattr(self.player, method)(state, player_id, profile, public_events=events)
+        result = getattr(self.player, method)(
+            state, player_id, profile,
+            public_events=events, personal_records=personal_records,
+        )
         value = _json_ready(getattr(result.decision, attribute))
         step = GameStepRunner().apply_player_action(state, player_id, action, {field: value})
         return self._step_with_ai_decision(step, game_id, player_id, state.phase,
@@ -78,7 +82,7 @@ class AiDecisionRunner:
                 prompt_template_version=error.prompt_template_version,
                 context_builder_version=error.context_builder_version,
                 stable_prefix_hash=error.stable_prefix_hash,
-                cache_strategy="stable-prefix-v1",
+                cache_strategy="append-only-history-v2",
                 context_summary=error.context_summary,
                 context_truncated=error.context_truncated,
                 output_raw=error.output_raw,
@@ -178,7 +182,7 @@ class AiDecisionRunner:
                 prompt_template_version=result.prompt_template_version,
                 context_builder_version=result.context_builder_version,
                 stable_prefix_hash=result.stable_prefix_hash,
-                cache_strategy="stable-prefix-v1",
+                cache_strategy="append-only-history-v2",
                 context_summary=result.context_summary,
                 context_truncated=result.context_truncated,
                 output_raw=result.output_raw,

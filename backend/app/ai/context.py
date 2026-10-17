@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from backend.app.game.models import GameOption, GameState, Phase, Role
@@ -13,9 +13,10 @@ from backend.app.game.rules import (
     private_view_for_player,
 )
 from backend.app.prompting.config import PromptTemplateConfig, load_prompt_template_config
+from backend.app.prompting.prefix import common_action_prefix
 
 
-CONTEXT_BUILDER_VERSION = "context-builder.v1"
+CONTEXT_BUILDER_VERSION = "context-builder.v2"
 
 ROLE_DISPLAY_ORDER = (
     Role.MERLIN,
@@ -45,6 +46,8 @@ class AiContext:
     context_summary: str
     context_truncated: bool
     context_builder_version: str = CONTEXT_BUILDER_VERSION
+    personal_records: list[dict[str, Any]] = field(default_factory=list)
+    private_information_events: list[dict[str, Any]] = field(default_factory=list)
 
 
 class ContextBuilder:
@@ -62,6 +65,7 @@ class ContextBuilder:
         viewer_player_id: str,
         phase: Phase,
         public_events: list[dict[str, Any]] | None = None,
+        personal_records: list[dict[str, Any]] | None = None,
     ) -> AiContext:
         view = private_view_for_player(state, viewer_player_id)
         viewer = next(player for player in state.players if player.id == viewer_player_id)
@@ -89,6 +93,21 @@ class ContextBuilder:
                 player_id: faction.value
                 for player_id, faction in view.lady_of_lake_known_factions.items()
             }
+        own_records = [
+            dict(record)
+            for record in personal_records or []
+            if record.get("player_id") == viewer_player_id
+        ]
+        private_events = [
+            {
+                "viewer_player_id": inspection.viewer_player_id,
+                "target_player_id": inspection.target_player_id,
+                "target_faction": inspection.target_faction.value,
+                "round_number": inspection.round_number,
+            }
+            for inspection in state.lady_of_lake_inspections
+            if inspection.viewer_player_id == viewer_player_id
+        ]
         public_state = {
             "players": [
                 {
@@ -118,6 +137,8 @@ class ContextBuilder:
             "public_state": public_state,
             "recent_public_events": recent_events,
             "legal_actions": legal_actions,
+            "personal_records": own_records,
+            "private_information_events": private_events,
         }
         dynamic_suffix = json.dumps(
             dynamic_payload,
@@ -142,6 +163,8 @@ class ContextBuilder:
             legal_actions=legal_actions,
             context_summary=context_summary,
             context_truncated=truncated,
+            personal_records=own_records,
+            private_information_events=private_events,
         )
 
 
@@ -156,6 +179,8 @@ def _stable_prefix_for_state(state: GameState, prompt_config: PromptTemplateConf
         [
             prompt_config.section_titles["system"],
             *prompt_config.system_lines,
+            "",
+            common_action_prefix(prompt_config),
             "",
             prompt_config.section_titles["game_config"],
             prompt_config.labels["player_count"].format(count=len(state.players)),

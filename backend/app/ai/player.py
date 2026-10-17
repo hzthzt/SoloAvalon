@@ -116,6 +116,7 @@ class AiPlayer:
         leader_player_id: str,
         profile: LlmProfile,
         public_events: list[dict[str, Any]] | None = None,
+        personal_records: list[dict[str, Any]] | None = None,
     ) -> AiTurnResult[TeamProposalDecision]:
         return self._decide(
             state,
@@ -125,6 +126,7 @@ class AiPlayer:
             lambda output: team_decision_from_output(output, state),
             None,
             public_events=public_events,
+            personal_records=personal_records,
         )
 
     def speak(
@@ -133,6 +135,7 @@ class AiPlayer:
         player_id: str,
         profile: LlmProfile,
         public_events: list[dict[str, Any]] | None = None,
+        personal_records: list[dict[str, Any]] | None = None,
     ) -> AiTurnResult[SpeechDecision]:
         return self._decide(
             state,
@@ -142,6 +145,7 @@ class AiPlayer:
             speech_decision_from_output,
             speech_decision_from_text,
             public_events=public_events,
+            personal_records=personal_records,
         )
 
     def vote(
@@ -150,6 +154,7 @@ class AiPlayer:
         player_id: str,
         profile: LlmProfile,
         public_events: list[dict[str, Any]] | None = None,
+        personal_records: list[dict[str, Any]] | None = None,
     ) -> AiTurnResult[VoteDecision]:
         return self._decide(
             state,
@@ -159,6 +164,7 @@ class AiPlayer:
             vote_decision_from_output,
             vote_decision_from_text,
             public_events=public_events,
+            personal_records=personal_records,
         )
 
     def mission_action(
@@ -167,6 +173,7 @@ class AiPlayer:
         player_id: str,
         profile: LlmProfile,
         public_events: list[dict[str, Any]] | None = None,
+        personal_records: list[dict[str, Any]] | None = None,
     ) -> AiTurnResult[MissionActionDecision]:
         return self._decide(
             state,
@@ -176,6 +183,7 @@ class AiPlayer:
             lambda output: mission_decision_from_output(output, state, player_id),
             None,
             public_events=public_events,
+            personal_records=personal_records,
         )
 
     def assassinate(
@@ -184,6 +192,7 @@ class AiPlayer:
         assassin_player_id: str,
         profile: LlmProfile,
         public_events: list[dict[str, Any]] | None = None,
+        personal_records: list[dict[str, Any]] | None = None,
     ) -> AiTurnResult[AssassinationDecision]:
         return self._decide(
             state,
@@ -193,6 +202,7 @@ class AiPlayer:
             lambda output: assassination_decision_from_output(output, state, assassin_player_id),
             None,
             public_events=public_events,
+            personal_records=personal_records,
         )
 
     def use_lady_of_lake(
@@ -201,6 +211,7 @@ class AiPlayer:
         viewer_player_id: str,
         profile: LlmProfile,
         public_events: list[dict[str, Any]] | None = None,
+        personal_records: list[dict[str, Any]] | None = None,
     ) -> AiTurnResult[LadyOfLakeDecision]:
         return self._decide(
             state,
@@ -210,6 +221,7 @@ class AiPlayer:
             lambda output: lady_of_lake_decision_from_output(output, state, viewer_player_id),
             None,
             public_events=public_events,
+            personal_records=personal_records,
         )
 
     def _decide(
@@ -221,8 +233,12 @@ class AiPlayer:
         parse_decision: Callable[[dict[str, Any]], DecisionT],
         parse_text_decision: Callable[[str], DecisionT] | None,
         public_events: list[dict[str, Any]] | None = None,
+        personal_records: list[dict[str, Any]] | None = None,
     ) -> AiTurnResult[DecisionT]:
-        context = self._context_builder.build(state, player_id, phase, public_events=public_events)
+        context = self._context_builder.build(
+            state, player_id, phase,
+            public_events=public_events, personal_records=personal_records,
+        )
         messages = self._prompt_builder.build_messages(context, phase)
         last_output_raw: str | None = None
         last_output_parsed: dict[str, Any] | None = None

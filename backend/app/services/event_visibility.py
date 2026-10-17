@@ -43,6 +43,46 @@ def public_event_dicts(events: list[EventRecord]) -> list[dict[str, Any]]:
     return payloads
 
 
+def personal_reason_records(
+    events: list[EventRecord], player_id: str
+) -> list[dict[str, Any]]:
+    records = []
+    public_count = 0
+    placeholders = {
+        "模型未提供私有理由摘要。",
+        "模型直接输出中文发言。",
+        "模型直接输出中文投票。",
+    }
+    for event in events:
+        if event.event_type in PUBLIC_FIELDS:
+            public_count += 1
+        if event.event_type != "ai_decision":
+            continue
+        payload = event.public_payload
+        if (
+            payload.get("player_id") != player_id
+            or payload.get("validation_status") != "valid"
+        ):
+            continue
+        summary = payload.get("strategy_summary")
+        if (
+            not isinstance(summary, str)
+            or not summary.strip()
+            or summary.strip() in placeholders
+        ):
+            continue
+        records.append(
+            {
+                "player_id": player_id,
+                "decision_type": payload.get("decision_type", ""),
+                "reason_summary": summary,
+                # Public numbering omits audit rows; anchor without renumbering it.
+                "after_event_index": public_count,
+            }
+        )
+    return records
+
+
 def normalize_public_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     normalized = {field: payload[field] for field in PUBLIC_FIELDS.get(event_type, ()) if field in payload}
     if event_type == "speech" and "message" in normalized:

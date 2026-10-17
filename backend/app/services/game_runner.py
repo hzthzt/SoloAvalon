@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from backend.app.ai.player import AiDecisionError
 from backend.app.errors import describe_error, public_error
 from backend.app.game.models import Faction, Phase, Role
-from .event_visibility import public_event_dicts
+from .event_visibility import personal_reason_records, public_event_dicts
 from .game_flow import GameReplayError, GameStepRunner
 from .game_work import GameUnitOfWork, advance_mode, human_player, next_human_action
 
@@ -202,15 +202,19 @@ class GameRunner:
             try:
                 state, _ = work.load(game_id)
                 player_id, action = _actor(state, snapshot.advance_mode)
-                events = public_event_dicts(work.events.list_events(game_id))
+                history = work.events.list_events(game_id)
+                events = public_event_dicts(history)
+                personal_records = personal_reason_records(history, player_id)
             except Exception as error:
                 raise GameAdvanceError(snapshot, error) from error
         try:
-            return self._execute(game_id, state, snapshot, player_id, action, events)
+            return self._execute(
+                game_id, state, snapshot, player_id, action, events, personal_records
+            )
         except Exception as error:
             raise GameAdvanceError(snapshot, error) from error
 
-    def _execute(self, game_id, state, snapshot, player_id, action, events):
+    def _execute(self, game_id, state, snapshot, player_id, action, events, personal_records):
         # No connection, transaction or global lock survives the model call.
         profile = None
         failure = None
@@ -224,7 +228,9 @@ class GameRunner:
                 step = steps.apply_player_action(state, player_id, action, {"mission_action": "success"})
             else:
                 profile = self.decisions.profile_for(state, snapshot, player_id)
-                step = self.decisions.decide(game_id, state, player_id, action, profile, events)
+                step = self.decisions.decide(
+                    game_id, state, player_id, action, profile, events, personal_records
+                )
         except Exception as error:
             failure = error
 
