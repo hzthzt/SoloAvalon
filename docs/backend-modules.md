@@ -1,222 +1,171 @@
 # 后端模块与运行机制
 
-核对日期：2026-10-17。本文记录当前代码，不代表目标架构已经实现。整体架构见[架构总览](./architecture.md)，目标职责、接口和迁移步骤见[后端重设计方案](./game-service-redesign.md)，领域用语见[领域术语](../CONTEXT.md)。
+核对日期：2026-10-18。本文记录当前实现。整体架构见[架构总览](./architecture.md)，实施契约与分阶段记录见[后端重设计方案](./game-service-redesign.md)，领域用语见[领域术语](../CONTEXT.md)。
 
 ## 总体分层
 
-当前后端是 FastAPI 加标准库 SQLite 的分层单体。规则层决定动作是否合法及其结果，服务层安排执行顺序，AI 链路生成行动建议。
+后端保留 FastAPI、SQLite、文件型模型配置和确定性规则核心。命令、查询与后台推进分开，模型调用不占用 SQLite 事务或全局业务锁。
 
 ```mermaid
 flowchart TD
-    Main["main：运行时装配"] --> Api["api：HTTP 与 SSE"]
-    Main --> Storage["storage：SQLite 与配置文件"]
-    Api --> Services["services：对局编排"]
-    Api --> Profiles["LlmProfileRepository：模型配置"]
-    Services --> Game["game：规则与玩家视角"]
-    Services --> AI["ai：单次决策"]
-    Services --> Storage
-    AI --> Game
-    AI --> Prompting["prompting：提示词与输出解析"]
-    AI --> LLM["llm：模型通信"]
+    App["create_app / lifespan"] --> Api["HTTP / SSE"]
+    App --> Runner["GameRunner"]
+    Api --> Commands["GameApplication"]
+    Api --> Queries["GameQueries"]
+    Commands --> Work["GameUnitOfWork"]
+    Runner --> Work
+    Runner --> Decision["AiDecisionRunner"]
+    Decision --> AI["AiPlayer / Prompting / Provider"]
+    Work --> Store["SQLite 仓储"]
+    Queries --> Loader["GameStateLoader / 视角投影"]
+    Loader --> Store
+    Commands --> Signal["提交后通知"]
+    Runner --> Signal
+    Signal --> Runner
+    Signal --> Api
 ```
-
-对局请求经过 `GameService`；模型配置 CRUD 和连通性测试由 API 直接调用配置仓储和 Provider。不是所有接口都经过服务层。
 
 ## 模块职责
 
-### 1. main：应用装配
+### 应用装配与生命周期
 
-`backend/app/main.py` 在模块导入时完成以下动作：
+`backend/app/main.py` 提供 `create_app()`。每个应用有自己的 `app.state.services`；`GameService` 只装配应用、查询、决策与推进组件，不再保存规则缓存或转发旧同步接口。模块级 `app` 是供 Uvicorn 使用的默认工厂产物，不再暴露全局数据库连接或 `game_service`。
 
-- 从 `SOLOAVALON_DB` 读取数据库路径，默认使用仓库根目录 `soloavalon.sqlite3`。
-- 创建共享 SQLite 连接，初始化 schema 和兼容迁移。
-- 创建全局 `GameService`、`LlmProfileRepository` 和 FastAPI 应用。
-- 配置本地前端 CORS，支持 `SOLOAVALON_FRONTEND_ORIGIN`。
-- 挂载对局和模型配置路由。
+应用 lifespan 启动推进器，校验历史并扫描持久化推进意图；退出时停止接收新任务并关闭数据库资源。尚在网络调用中的工作不会因退出而提交旧回答，未完成意图供下次启动恢复。
 
-该模块不裁判规则，目前也没有通过应用生命周期统一管理连接和推进任务。
+数据库路径取自 `SOLOAVALON_DB`，默认仓库根目录 `soloavalon.sqlite3`。前端 CORS 默认允许 `localhost:5173` 与 `127.0.0.1:5173`，可通过 `SOLOAVALON_FRONTEND_ORIGIN` 添加来源。
 
-### 2. api：请求、响应与事件流
+### API 与响应边界
 
-| 文件 | 当前功能 |
+| 文件 | 职责 |
 | --- | --- |
-| `backend/app/api/models.py` | 使用 dataclass 和 `from_payload()` 手动解析建局、真人动作和模型配置请求。建局会校验人数与可选机制组合；动作的阶段和规则约束留给服务与规则层。 |
-| `backend/app/api/games.py` | `GamesApi` 适配对局服务；路由提供建局、查询、动作、AI 代打、重试、房间详情、归档、删除、事件和导出。负责后台建局推进与 SSE 帧输出。 |
-| `backend/app/api/llm_profiles.py` | 配置 CRUD、空密钥保留旧值、公开密钥脱敏和连通性测试。直接访问配置仓储与 Provider。 |
-| `backend/app/api/errors.py` | 将异常整理为 `message`、`error_type` 和 `traceback`。路由将参数错误映射为 400，AI 超时映射为 504，其他 AI 决策错误映射为 502，未预期异常映射为 500。 |
+| `api/models.py` | 解析建局、真人动作和模型配置请求；定义 `GameView`、`GameSummaryView`、`PublicEventView` 与完成态 `RoomReview`。 |
+| `api/games.py` | 适配命令和查询，输出公开事件、状态 SSE、房间复盘及导出。动作端点只等待本次提交，不等待后续 AI。 |
+| `api/llm_profiles.py` | 配置 CRUD、空密钥保留、脱敏与连通性测试；测试读取 Provider 结果的 `.content`。 |
+| `api/errors.py` | 整理参数或服务异常；版本过期和未完成审计访问单独返回 409。 |
 
-当前请求体主要使用 `dict[str, Any]`，响应主要使用字典；尚未建立与仓储对象分离的完整公开响应模型。
+`/actions` 与 `/ai-actions/human` 必须带非负整数 `expected_revision`。过期返回 409 和 `detail.current_revision`，不重试执行旧命令；其他非法动作返回 400。AI 后台失败通过状态查询或 `game-state` 的 `error_paused` 表达。
 
-### 3. services：对局编排
+### 应用层
 
-`backend/app/services/game_service.py` 中的 `GameService` 是对局业务入口，负责：
-
-- 建局、应用模型覆盖并记录开局事件。
-- 校验真人当前可执行动作，支持真人 AI 代打。
-- 组合规则执行、AI 决策、事务提交与自动推进。
-- 管理 `_states` 内存缓存，缓存缺失时重放恢复。
-- 组装真人可见状态、`next_human_action`、房间详情和用量统计。
-- 处理 AI 失败审计、错误暂停、重试、归档和删除。
-
-`backend/app/services/game_flow.py` 已拆出以下组件：
-
-| 组件 | 输入与输出 | 职责边界 |
-| --- | --- | --- |
-| `GameStepRunner` | 玩家动作或系统结算 → `StepResult` | 调用规则函数，构造新状态与规则事件，不写数据库。 |
-| `PendingEvent`、`StepResult` | 待提交事件、新状态、可选 AI 决策和记忆 | 是一次执行结果的数据载体，不是已持久化事实。 |
-| `GameCommitter` | `StepResult` → 已提交状态 | 在一个事务中保存规则事件、审计事件、AI 决策、记忆和对局摘要；提交后更新缓存并通知 SSE。失败审计与 `error_paused` 也统一提交。 |
-| `GameAdvanceLoop` | 当前状态 → 下一个阻塞点的状态 | 按阶段选择 AI 或执行系统结算，最多循环 100 次；遇到真人、结束或错误停止。 |
-| `GameStateLoader` | 对局 ID → `LoadedGameState` | 读取建局元数据、玩家真相和事件，重建规则状态并返回重放诊断。 |
-| `apply_replay_event()` | 历史事件与旧状态 → 新状态 | 重放已知规则事件，跳过审计事件；当前对其他未知类型直接保留旧状态。 |
-| `GameReplayError` | 重放错误及事件位置 | 阻止已知坏尾部被静默忽略后继续写入。 |
-
-其他服务组件：
-
-| 文件 | 当前功能 |
+| 文件与组件 | 职责 |
 | --- | --- |
-| `backend/app/services/event_visibility.py` | 删除私有 payload，隐藏未结算投票票值，并将公开发言中的 `player_N` 转成 `玩家N`。这不是对所有公开字段的白名单过滤，见下文已知缺口。 |
-| `backend/app/services/event_notifier.py` | 按对局管理进程内订阅，提交后跨线程唤醒 SSE。只通知有更新，不保存、传输或裁判事件内容。 |
+| `services/game_application.py` / `GameApplication` | 建局、手动动作、代打意图、显式恢复、归档与删除；提交后通知 SSE 并唤醒推进器。 |
+| `services/game_queries.py` / `GameQueries` | 列表白名单、真人视角、公开事件、完成态完整审计、导出与用量统计；从不安排推进。 |
+| `services/game_runner.py` / `GameRunner` | 有界线程池、同局唯一任务、启动恢复、通知唤醒和定期补扫；一次只应用一个规则步骤。 |
+| `services/ai_decision_runner.py` / `AiDecisionRunner` | 从玩家覆盖或对局默认 ID 解析文件配置，统一普通 AI 和真人代打的决策、成功审计与失败审计。 |
+| `services/game_work.py` / `GameUnitOfWork` | 管理单次操作的连接、事务、最新状态读取和版本检查。 |
+| `services/game_flow.py` / `GameStepRunner` | 执行玩家动作或系统结算，返回 `StepResult`，不访问外部模型或提交数据库。 |
+| `services/game_flow.py` / `GameCommitter` | 保存单步规则事件、AI 审计、记忆和规则摘要；生产路径的提交与回滚归外层工作单元。 |
+| `services/game_flow.py` / `GameStateLoader` | 依据玩家真相、已保存任务配置和内部历史重放；已知审计跳过，未知事件或坏规则事件保留失败位置诊断。 |
+| `services/event_visibility.py` | 允许事件与字段白名单、独立公开序号、旧投票结算聚合、发言玩家名规范化。 |
+| `services/event_notifier.py` | 提交后跨线程唤醒 SSE 订阅；通知本身不是持久化任务或事件。 |
 
-写入口使用同一个 `RLock`，锁覆盖 AI 网络调用，因此不同房间的写操作也会串行等待。查询没有使用同一把锁；所有仓储仍共享同一个 SQLite 连接。
+旧 `GameAdvanceLoop` 和 `GameService` 中的重复阶段分支已移除。当前不维护状态缓存，命令和查询都从各自的数据库范围读取。
 
-### 4. game：领域模型与规则
+### 规则、AI 与模型
 
-| 文件 | 当前功能 |
+`game/models.py` 定义领域状态和玩家视角；`game/rules.py` 是唯一规则裁判；`game/events.py` 构造开局事件。支持 5-10 人标准局、8-10 人湖女和 9-10 人 Tristan / Isolde。动作来源不提供规则豁免，善方任务固定成功也经过同一规则执行和提交路径。
+
+`ai/context.py` 使用合法私有视角及过滤后的公开历史构建上下文；`prompting/templates.py` 输出稳定规则前缀、玩家视角、动作格式、活动日志、本次行动五段消息。配置由 `SOLOAVALON_PROMPT_CONFIG` 或 `config.example/prompt_templates.json` 读取。`ai/player.py` 解析回答并返回 `AiTurnResult`，最终失败抛出带审计上下文的 `AiDecisionError`；没有确定性 fallback。
+
+`llm/provider.py` 使用 OpenAI Python SDK，支持自定义 API 前缀和兼容完整 `/chat/completions` 地址。结果统一为 `LlmCompletionResult`，包含文本及可选 Token、缓存用量。SDK 自带重试关闭，项目只对明确捕获的超时和空回答执行 `transport_retries`；输出解析或决策校验失败由 `AiPlayer` 的 `parse_retries` 控制，不对任意网络或 HTTP 错误重试。
+
+两项重试默认均为 5，均指首次尝试以外的额外次数。旧 `timeout_retries` 分别补足缺失的新字段；再次保存只写新字段。旧 `temperature` 被忽略，缺少 `reasoning_effort` 时使用 `medium`。
+
+### 存储
+
+| 表或文件 | 内容 |
 | --- | --- |
-| `backend/app/game/models.py` | 定义身份、阵营、阶段、投票、任务行动、可选机制，以及 `Player`、`GameState`、`PrivateView`、任务和湖女查验数据。 |
-| `backend/app/game/rules.py` | 支持 5-10 人建局、身份与座位分配、合法私有视角、组队、顺序发言、投票、任务、湖女、刺杀和胜负。规则函数校验动作并返回新状态，不依赖 HTTP、数据库或模型服务。 |
-| `backend/app/game/events.py` | 仅构造 `game_created`、`roles_assigned`、`private_view_recorded` 的公开与私有 payload；运行中规则事件主要由 `GameStepRunner` 构造。 |
+| `games` | 初始元数据、规则派生摘要、运行状态、归档、模型 ID、`revision` 和 `advance_mode`。 |
+| `players` | 座位、名称、真人标记、真实身份与阵营、玩家模型覆盖。 |
+| `game_events` | 内部连续序号的规则事实与审计，保留恢复所需的私有 payload。 |
+| `ai_decisions` | 决策输出、理由、版本、校验状态与用量；完整 Prompt 在对应审计事件的私有 payload。 |
+| `ai_memory_snapshots` | 只作私有留档，当前不读入后续 AI 决策。 |
+| `config/llm_profiles.json` | 本地模型配置和 API Key；支持 `SOLOAVALON_LLM_CONFIG`。SQLite 不保存真实密钥。 |
 
-`private_view_for_player()` 是身份可知信息的集中入口。最终动作裁判在规则层，不由 Prompt 文案或模型回答决定。
-
-### 5. ai：上下文和单次决策
-
-| 文件 | 当前功能 |
-| --- | --- |
-| `backend/app/ai/context.py` | `ContextBuilder` 生成 `AiContext`：稳定规则前缀及哈希、玩家合法私有视角、公开状态与历史、合法动作及上下文摘要。默认不截断事件，可配置最近事件数量。 |
-| `backend/app/ai/player.py` | `AiPlayer` 执行一次组队、发言、投票、任务、刺杀或湖女决策。调用失败或最终解析失败时抛出带审计上下文的 `AiDecisionError`，成功返回 `AiTurnResult`。 |
-| `backend/app/ai/strategy.py` | 定义各类决策 dataclass，承载动作、公开表达和私有理由；不是独立策略引擎，也没有确定性 fallback。 |
-
-AI 不自行推进整局或落库。善方任务行动由服务层直接提交 `success`，不调用模型。当前记忆快照没有被读入后续 AI 上下文。
-
-### 6. prompting：提示词和输出契约
-
-| 文件 | 当前功能 |
-| --- | --- |
-| `backend/app/prompting/config.py` | 加载并校验 Prompt 版本、身份说明、策略提示、可选机制文案和动作输出要求。默认读 `config.example/prompt_templates.json`，支持 `SOLOAVALON_PROMPT_CONFIG`。 |
-| `backend/app/prompting/templates.py` | `PromptBuilder` 渲染五段消息：稳定系统前缀、玩家视角、动作格式、活动日志、本次行动。不会直接发送 `dynamic_private_suffix` 的原始 JSON。 |
-| `backend/app/prompting/schemas.py` | 解析 JSON 或允许的发言、投票文本，检查队伍、行动值和目标范围，产出决策对象。实际执行仍要经过规则层。 |
-
-Prompt 配置描述规则和玩法，但不决定真实身份池、阶段和胜负。稳定前缀及缓存用量记录也不等于后端实现了模型缓存服务。
-
-### 7. llm：配置类型和模型通信
-
-| 文件 | 当前功能 |
-| --- | --- |
-| `backend/app/llm/profiles.py` | 使用 Pydantic 定义 `LlmProfileInput`、`LlmProfile` 和文件结构 `LlmProfileConfig`，统一校验 API 输入与文件配置，并生成脱敏公开字段。 |
-| `backend/app/llm/provider.py` | 通过 OpenAI Python SDK 调用自定义 `/chat/completions` 服务，返回 `LlmCompletionResult`，包含文本、Token 用量和缓存命中数据。SDK 负责网络重试和类型化异常；HTTP 客户端在调用结束或失败后关闭，测试注入 HTTPX transport。 |
-
-保留 `timeout_retries` 字段和默认值 5：它映射到 SDK 的 `max_retries`，处理连接错误、超时、HTTP 408、409、429 和 5xx；同一个参数还被 `AiPlayer` 用于空回答、输出解析和决策校验失败重试。网络失败不会再在 AI 层重试，避免叠加两套网络重试循环。
-
-### 8. storage：持久化
-
-| 文件 | 当前功能 |
-| --- | --- |
-| `backend/app/storage/database.py` | 创建 SQLite 连接、启用外键、初始化 schema、补列，并迁移旧模型配置表引用。 |
-| `backend/app/storage/schema.py` | 定义 `games`、`players`、`game_events`、`ai_decisions`、`ai_memory_snapshots` 五张表。 |
-| `backend/app/storage/game_repository.py` | 保存对局与真实玩家信息，读取摘要和玩家，生成房间编号，更新状态，归档、删除和设置模型覆盖。 |
-| `backend/app/storage/event_store.py` | 按对局序号追加事件，查询全部或增量事件，导出日志。重放不在仓储中执行。 |
-| `backend/app/storage/ai_decision_repository.py` | 保存并读取决策结果、理由、原始与解析输出、版本、校验状态和用量。完整 Prompt 消息保存在对应事件的私有 payload 中。 |
-| `backend/app/storage/ai_memory_repository.py` | 校验、保存和查询记忆快照；当前业务主要写入决策摘要，没有形成记忆读写循环。 |
-| `backend/app/storage/llm_profile_repository.py` | 通过 Pydantic 读取和序列化本地模型配置 JSON，通过临时文件替换保存，不再依赖 SQLite。玩家覆盖优先、对局默认其次的模型选择由 `GameService` 负责。 |
-
-真实模型配置默认位于 `config/llm_profiles.json`，支持 `SOLOAVALON_LLM_CONFIG`；SQLite 不保存 API Key。
+`Database` 对文件数据库使用独立短连接、外键和 WAL；每次工作单元关闭连接。`:memory:` 使用单个测试作用域连接，只在数据库范围内串行使用，不跨模型调用持锁。文件配置仓储只做 JSON 读写，进程内串行修改并用临时文件替换，不查询 SQLite 或提交对局事务。
 
 ## 关键数据流
 
-### 创建对局
+### 创建与手动动作
 
 ```text
-POST /api/games
-  -> 解析建局请求
-  -> GameService.create_game(auto_advance=False)
-  -> 规则建局，保存 games / players / 开局事件
-  -> 返回初始真人视角状态
-  -> BackgroundTasks 调用 advance_game
-  -> GameAdvanceLoop 推进，提交后通知 SSE
+开始短写事务
+  -> 创建完整 games / players / 开局事件，或重放当前状态并检查 expected_revision
+  -> GameStepRunner 应用合法动作
+  -> 保存事件、规则摘要和运行状态
+  -> 更新 advance_mode，递增 revision
+提交并关闭连接
+  -> 通知 SSE，唤醒 GameRunner
+  -> 返回真人视角状态
 ```
 
-直接调用 `GameService.create_game()` 默认 `auto_advance=True`，可能等待 AI；不能将这一默认行为套用到 HTTP 创建路由。建局的多次写入目前尚未组成一个外层事务。
+建局的任意写入失败均整局回滚。手动合法动作可以覆盖本阶段未完成的真人代打；旧回答因版本不同而丢弃。
 
-### 真人动作与 AI 推进
+### 后台 AI 单步
 
 ```text
-真人请求
-  -> 读取缓存或恢复状态，校验 next_human_action
-  -> GameStepRunner 应用规则，返回 StepResult
-  -> GameCommitter 原子提交当前步
-  -> GameAdvanceLoop 选择后续行动者
-  -> AiPlayer 构建上下文、调用模型、解析回答
-  -> GameStepRunner 再次用规则裁判
-  -> 附加 AI 审计，由 GameCommitter 提交
-  -> 重复，直到真人动作、结束或失败
+短读取：状态、revision、阶段、行动者、advance_mode
+关闭连接
+  -> 选择模型并调用 AiPlayer，或执行无需模型的系统步骤
+短写事务
+  -> 重读并检查版本、运行状态、推进模式、阶段和行动者
+  -> 旧成功或旧错误：不追加审计、不修改当前规则、不暂停新状态
+  -> 当前成功：规则事件、AI 审计、记忆、摘要和下一推进模式一同提交
+  -> 当前失败：错误审计和 error_paused 一同提交，保留推进意图
+提交后通知，再判断是否继续
 ```
 
-真人 AI 代打和普通 AI 推进目前有重复的阶段分支，但共用 `AiPlayer`、规则执行器和提交器。
-
-### AI 失败与恢复
-
-`AiDecisionError` 被服务层捕获后，由 `commit_ai_error()` 原子保存失败审计与 `error_paused`，不保存当前失败步的规则事件，随后向调用方抛出。重试会先从持久化历史重读状态，再继续自动推进；没有自动 fallback。
-
-### 事件查询与 SSE
-
-普通事件查询使用公开过滤。SSE 接受 `after` 游标，先从数据库补发后续事件，再等待进程内通知；无新事件时发送心跳。通知不是持久化消息队列，应用退出后不会保留后台任务。
-
-### 状态恢复
-
-```text
-GameStateLoader
-  -> games 中的人数和可选项、players 中的真实玩家
-  -> 用当前 STANDARD_MISSION_CONFIGS 重建初始状态
-  -> 按 event_index 重放规则事件，跳过已知审计事件
-  -> 返回 GameState 或明确的重放失败位置
-```
-
-因此不是仅靠公开事件恢复，也不是完整的事件溯源框架。任务行动需要私有 `mission_action`，湖女事件需要私有 `target_faction`；这些内容不能从运行数据库中删除。
+同局同时最多一个推进任务；默认最多 4 个房间同时运行，单个推进任务最多执行 100 步。达到步数上限写入诊断并暂停，不留下没有任务的正常 `active` 对局。网络调用或计费不承诺恰好一次；版本检查保证旧动作不重复落库。
 
 ## 状态与事务边界
 
-| 数据 | 当前用途 |
+`revision` 从旧数据库的 0 开始。有效规则动作、代打安排、暂停、恢复、归档等执行相关操作递增版本，公开版本不取内部审计数量。
+
+| advance_mode | 含义 |
 | --- | --- |
-| `_states` | 进程内运行态缓存，真人动作优先使用它。 |
-| `games`、`players` | 建局元数据与真实玩家；`games` 还保存轮次、阶段、胜者、错误暂停和归档信息。 |
-| `game_events` | 可重放规则历史与非规则审计，二者混存在同一表。 |
-| `ai_decisions`、`ai_memory_snapshots` | 决策与记忆留档，不参与规则恢复。 |
+| `null` | 不需要后台推进；通常等真人操作、已经完成或已归档。 |
+| `auto` | 推进普通 AI 或系统结算，遇到真人时停止。 |
+| `human_once` | 已请求一次真人代打；成功后改为 `auto` 或 `null`，不继续接管下一次真人动作。 |
 
-`GameCommitter` 已保证一次推进步的数据库写入共同提交或回滚，并在提交后更新缓存。默认仓储仍支持自动提交，建局及其他管理入口尚未统一成一个工作单元。`status=error_paused` 和归档属于运行管理状态，不能只靠规则事件重建；不要将整个 `games` 表都视为可丢弃的规则投影。
+可执行条件是未归档、`status=active` 且推进模式非空。错误暂停保留失败前模式；归档和规则完成清空模式。
 
-恢复规则状态不会自动恢复执行任务。若进程在 AI 行动中退出，留下 `active` 且没有真人动作的对局，当前查询不推进，重试又只处理 `error_paused`，因而可能停住。
+启动恢复先重放规则历史并校验摘要，再安排任务。已保存的 `game_created.missions` 优先于当前常量；缺少该字段的旧局明确回退标准配置。任务行动和湖女恢复仍依赖私有 payload，不能删除这些事实。未知事件和损坏历史保持停止、保留诊断，不截断后继续追加。
 
-## 已知缺口
+旧 `active` AI／系统回合可补设 `auto`；真人、暂停、完成和归档局不自动接管。显式 `/retry` 可以恢复暂停局或补上活跃 AI 回合的意图。历史里未记录的真人代打不猜测。摘要重建只修复轮次、阶段、胜者，不覆盖暂停、归档、配置或推进意图。
 
-以下为 2026-10-17 审查确认的问题，本次文档更新没有修复代码：
+## 公开信息与完成态审计
 
-| 问题 | 当前代码与影响 |
-| --- | --- |
-| 对局列表暴露身份顺序 | `GameRepository` 按玩家顺序保存 `role_set`，`GamesApi.list_games()` 整体序列化摘要，普通列表响应可推导每个座位的真实身份。 |
-| 私有决策理由进入公开事件 | `AiPlayer` 将 `private_reason_summary` 作为 `strategy_summary`，服务层写入 `ai_decision.public_payload`；删除私有 payload 不能移除它。 |
-| 审计访问与游玩边界不完整 | `/room` 和 `include_private=true` 可以读取进行中对局的私有记录，前端完成态控制只是展示条件，不是后端访问边界。 |
-| 模型测试返回契约错误 | Provider 返回 `LlmCompletionResult`，模型测试却执行 `content[:160]`；成功回答也会导致 `TypeError`。现有假 Provider 返回字符串，未覆盖该契约。 |
-| 中断后的活跃 AI 回合无恢复入口 | 持久化状态可以重放，但后台任务没有恢复，非 `error_paused` 的重试不推进。 |
+普通列表不序列化 `role_set` 或完整仓储对象。状态只从真人的合法 `PrivateView` 投影；完成后才公开所有身份。`private_view_recorded`、`ai_decision`、`runner_error` 不进入公开事件流；允许事件也按字段白名单投影，过滤历史日志中的私有理由。
+
+公开 `id` 和 `event_index` 从 1 独立连续编号，既不沿用内部审计序号，也不暴露内部记录数量。查询先投影完整历史，再按公开 `after` 筛选；不能把公开游标传给按内部序号读取的仓储方法。
+
+`vote_cast` 始终只表示玩家已投票。`vote_result.votes` 携带完整票型，旧记录从前面的 `vote_cast` 聚合补足；客户端不需要修改已收到的旧事件。
+
+`/room`、`include_private=true` 事件和私有导出只有规则完成后才提供。进行中或未完成的归档局返回 409；普通状态、公开事件和公开导出仍可读取。完整复盘与公开事件使用独立集合，前端不混合二者的序号。
+
+## SSE 与前端协作
+
+SSE 建连先发 `game-state`，然后按公开游标补发 `game-event`，之后等待提交通知；无更新时输出心跳。`game-event` 的 SSE ID 是公开序号；`game-state` 没有事件 ID，不推进游标，用于表示代打安排、暂停、恢复和归档等无公开规则事件的修改。
+
+前端按 `revision` 忽略旧状态，以 `is_advancing` 判断任务是否结束。连续代打等待本次后台工作结束或暂停后才发下一请求。未完成归档房间仅加载公开状态和事件；完成态才加载完整复盘。
 
 ## 验证与阅读顺序
 
-建议按 `game` → `GameStepRunner` / `GameCommitter` / `GameAdvanceLoop` → `GameService` → AI 链路 → API 与仓储阅读。现有测试按 `tests/game/`、`tests/services/`、`tests/ai/`、`tests/llm/`、`tests/api/`、`tests/storage/` 组织。
+建议按规则 → `GameStepRunner` / `GameUnitOfWork` → `GameApplication` / `GameRunner` → `GameQueries` → AI 与仓储阅读。
 
-后续重构应先覆盖公开响应、真实 Provider 返回类型、建局事务和中断恢复，再调整模块组织。现有 API 测试主要调用适配对象，不等同完整 HTTP 集成验证；前端源码字符串检查也不能替代异步交互验证。
+`tests/services/test_game_service.py` 验证完整建局回滚、版本竞争、六类 AI 决策失败、慢调用期间其他房间命令、旧成功与旧失败丢弃、数据库重开、任务配置和完整对局。`test_game_flow_modules.py` 保留单步事务与重放检查；`test_game_lifecycle.py` 验证 lifespan、定期补扫、有界执行器和停机意图保留。
 
-## 架构判断与后续设计
+`tests/api/test_games_api.py` 通过真实 HTTP 路由与 ASGI SSE 验证公开边界、409、导出和游标。模型 HTTP 适配使用真实 Provider 加假 HTTPX transport，不访问真实密钥或真实模型。前端 `gameSession.test.ts` 执行等待、SSE 分流和版本请求逻辑，`flowReview.test.ts` 验证公开增量投票复盘；原 `App.test.ts` 的源码与样式检查只是补充。
 
-当前技术栈适合本地单用户游戏和模型策略实验。应保留纯规则核心、单步执行和事务提交，重设计应用层的职责与任务生命周期，而不是先更换数据库或拆成网络服务。
+```powershell
+.venv\Scripts\python.exe -m unittest discover -s tests -v
+cd frontend
+npm run test
+npm run build
+```
 
-[后端重设计方案](./game-service-redesign.md) 给出目标模块、公开与审计边界、持久化推进意图、短事务、模型调用后的版本校验、生命周期管理及迁移顺序。其中的新增模块和字段均为建议，不能当成当前能力。
+## 当前范围
+
+仅支持本地单进程，不使用跨进程租约、外部队列或多进程工作器。进程中断后外部模型请求可能重发，但已提交规则步不重复应用。当前不增加规则快照、状态缓存或记忆智能体；只在真实读取成本或产品需求出现后再设计。

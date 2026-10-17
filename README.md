@@ -7,9 +7,9 @@ SoloAvalon 是一个本地单人《阿瓦隆》Web 应用。它支持 5-10 人�
 ## 当前能力
 
 - 5-10 人阿瓦隆规则：身份分配、组队、固定顺序发言、投票、任务、刺杀和胜负结算；8-10 人可启用湖中仙女，9-10 人可启用 Tristan / Isolde，另有详细身份提示开关。
-- 真人视角：对局状态按真人身份生成可见字段；其他响应仍有已知可见性缺口，见下文。
+- 真人视角：状态、列表与事件使用公开白名单；完整身份与私有审计仅在对局完成后开放。
 - AI 决策链路：私有上下文、公开历史、稳定 Prompt 前缀、结构化输出解析和 OpenAI-compatible 模型调用；最终失败后暂停并支持重试，没有确定性 fallback。
-- SQLite 持久化：对局、玩家、公开/私有事件、AI 决策和记忆留档、规则状态重放和 JSON 导出；记忆留档尚未参与后续决策。
+- SQLite 持久化：对局、玩家、公开/私有事件、AI 决策和记忆留档、规则状态重放、持久化后台推进意图和 JSON 导出；记忆留档尚未参与后续决策。
 - 文件型模型配置：OpenAI-compatible 配置明文保存到被 git 忽略的 `config/llm_profiles.json`。
 - 本地 API：对局管理、真人动作、AI 代打、错误重试、房间归档、事件与 SSE、日志导出和 LLM 配置 CRUD。
 - React + TypeScript 前端：开局、游玩、AI 代打真人席位、管理模型配置、房间复盘和日志导出。
@@ -21,29 +21,25 @@ SoloAvalon 是一个本地单人《阿瓦隆》Web 应用。它支持 5-10 人�
 ```text
 React 前端
   -> FastAPI 路由
-  -> GameService 编排层
-  -> 确定性规则层 + AI 决策链路 + SQLite 仓储
+  -> GameApplication 命令 / GameQueries 查询 / GameRunner 后台推进
+  -> 确定性规则层 + AI 决策链路 + SQLite 短事务
 ```
 
 设计与维护边界：
 
 - 后端是唯一规则裁判。
-- 普通游玩响应应只包含过滤后的真人视角，完整审计应与游玩接口隔离；当前缺口见下文。
+- 普通游玩只返回合法玩家视角；完整审计与游玩查询分开，未完成时请求完整审计返回 409。
 - AI prompt 只从合法私有视角和过滤后的公开事件历史构建。
-- 公开日志会移除私有 payload，并隐藏未结算投票的具体票值。
+- 公开日志不包含 AI 私有审计，使用独立连续序号；投票票型只在结算事件中公布。
 - SQLite 事件日志支持复盘、导出和活跃状态恢复。
 
-模块边界、数据流和实现限制见[架构总览](docs/architecture.md)；命令／查询分离、可恢复后台推进等属于[目标方案](docs/game-service-redesign.md)，尚未实现。
+模块边界、数据流和实现限制见[架构总览](docs/architecture.md)；命令／查询分离、可恢复后台推进与短事务的设计和实施记录见[重设计方案](docs/game-service-redesign.md)。
 
-## 已知限制
+## 运行约定与限制
 
-以下为 2026-10-17 代码审查确认的现状，本次文档更新没有修复代码：
+创建和动作接口只等待当前操作提交，不等待后续 AI。状态的 `revision` 用于提交版本检查，`is_advancing` 表示仍有后台工作；前端通过 SSE 同步状态，连续代打会等待本次工作结束或暂停。
 
-- 对局列表的有序身份字段、公开 AI 决策摘要和进行中完整审计访问仍存在隐藏信息边界缺口。
-- 模型连通性测试尚未适配真实 Provider 的返回对象，模型回答成功后也可能报错。
-- 重启后能恢复规则状态，但没有恢复后台推进任务；停在 AI 回合的 `active` 对局可能无法通过当前重试入口继续。
-
-原因与代码位置见[后端已知缺口](docs/backend-modules.md#已知缺口)。
+后台推进仅支持单进程；进程中断后可恢复普通推进和一次真人代打意图。外部模型请求可能在重启后重新调用，但旧回答和旧错误不会重复写入规则或暂停已经前进的状态。记忆快照目前只作审计留档。
 
 ## 目录结构
 
@@ -188,7 +184,7 @@ npm run dev
 4. 在模型页保存可用的模型配置，然后在首页选择模型并创建新对局。
 5. 轮到真人玩家时，在动作面板完成组队、发言、投票、任务行动、湖女查验或刺杀。
 
-游玩需要可用模型配置。当前没有离线 fallback；没有配置或调用最终失败时，AI 无法继续正常决策。失败会保存审计并进入 `error_paused`，修复模型配置后可重试。HTTP 创建对局先返回初始状态，后续 AI 由后台任务推进并通过 SSE 通知。
+游玩需要可用模型配置。当前没有离线 fallback；没有配置或调用最终失败时，AI 无法继续正常决策。失败会原子保存审计并进入 `error_paused`，保留推进意图，修复模型配置后可重试。HTTP 创建和动作提交均先返回当前公开状态，后续 AI 由后台任务推进并通过 SSE 通知。
 
 ## AI 测试控制
 
@@ -209,7 +205,8 @@ npm run dev
 - `model`
 - `reasoning_effort`
 - `timeout`
-- `timeout_retries`
+- `transport_retries`
+- `parse_retries`
 
 编辑已有配置时，如果 `api_key` 留空，会保留原密钥。公开 API 响应和前端只展示脱敏后的 key。
 
@@ -219,7 +216,7 @@ npm run dev
 
 配置文件格式可参考 `config.example/llm_profiles.json`。真实 API Key 应放入 `config/llm_profiles.json` 或 `SOLOAVALON_LLM_CONFIG` 指向的本地文件，不要放入仓库跟踪文件。
 
-`timeout_retries` 默认为 5，保留原字段名：网络请求交给 SDK 按该次数重试连接错误、超时、HTTP 408、409、429 和 5xx；普通 400、401 等错误不会自动重试。AI 空回答、输出解析或决策校验失败使用同一配置值作为独立的输出重试上限。两层上限都表示首次尝试之后的额外次数，网络错误不会再由 AI 层重复重试。
+`transport_retries` 和 `parse_retries` 默认均为 5，表示首次尝试后的额外次数。前者只处理明确捕获的超时与空回答；后者处理输出解析或决策校验失败。SDK 自带网络／HTTP 状态码重试关闭，任意网络错误不会被统一自动重试。旧文件的 `timeout_retries` 分别补足缺失的新字段，重新保存后只写新字段。
 
 ## API 概览
 
@@ -238,6 +235,8 @@ npm run dev
 - `POST /api/games/{game_id}/archive`
 - `DELETE /api/games/{game_id}`
 
+`/actions` 和 `/ai-actions/human` 请求体必须包含非负整数 `expected_revision`。版本过期返回 409 和 `detail.current_revision`，非法动作返回 400。SSE 包含带公开事件 ID 的 `game-event`，以及不推进游标的 `game-state`（最新状态、版本及后台推进标记）。GET 查询不触发续局，`/retry` 用于显式恢复暂停或活跃 AI 回合。
+
 模型配置 API：
 
 - `GET /api/llm-profiles`
@@ -253,8 +252,8 @@ npm run dev
 - `.venv`、前端构建产物、日志、SQLite 文件和真实模型配置目录已被 git 忽略。
 - 不要提交真实 API Key 或本地模型供应商配置；`config.example/` 只能放示例值。
 - 默认日志导出不包含私有事件 payload。
-- 公开事件流会在投票结果出现前隐藏具体票值。
-- 删除私有 payload 不等于已过滤所有隐藏信息；完整审计接口和已知公开字段缺口见[已知限制](#已知限制)。
+- `vote_cast` 始终不含票值，结算后的完整票型由 `vote_result.votes` 提供。
+- `/room`、私有事件和私有导出只在完成态开放；未完成的归档房间仍只提供公开信息。
 
 ## 验证
 
@@ -267,4 +266,4 @@ npm run build
 npm run test
 ```
 
-当前后端测试使用标准库 `unittest`；前端验证使用 TypeScript、Vite build 和 Node 测试。`App.test.ts` 主要检查源码字符串与样式约定，不是完整交互测试。文档-only 变更检查内容、链接、路径和命令，不要求重复运行完整测试。
+当前后端测试使用标准库 `unittest`；前端验证使用 TypeScript、Vite build 和 Node 测试。`gameSession.test.ts` 执行 SSE、版本与后台等待逻辑，`flowReview.test.ts` 验证公开事件复盘；`App.test.ts` 的源码与样式约定检查只是补充，不是完整组件交互测试。文档-only 变更检查内容、链接、路径和命令，不要求重复运行完整测试。
