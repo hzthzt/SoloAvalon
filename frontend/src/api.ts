@@ -19,6 +19,8 @@ export type GameEvent = {
 };
 
 export type GameState = {
+  revision: number;
+  is_advancing: boolean;
   id: string;
   display_name: string;
   status: string;
@@ -131,7 +133,8 @@ export type LlmProfile = {
   model: string;
   reasoning_effort: ReasoningEffort;
   timeout: number;
-  timeout_retries: number;
+  transport_retries: number;
+  parse_retries: number;
   created_at: string;
   updated_at: string;
 };
@@ -144,7 +147,8 @@ export type LlmProfileInput = {
   model: string;
   reasoning_effort: ReasoningEffort;
   timeout: number;
-  timeout_retries: number;
+  transport_retries: number;
+  parse_retries: number;
 };
 
 const jsonHeaders = { "Content-Type": "application/json" };
@@ -170,17 +174,21 @@ export async function getGame(gameId: string): Promise<GameState> {
 
 export async function submitAction(
   gameId: string,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  expectedRevision: number
 ): Promise<GameState> {
   return request(`${gamePath(gameId)}/actions`, {
     method: "POST",
     headers: jsonHeaders,
-    body: JSON.stringify(payload)
+    body: JSON.stringify({ ...payload, expected_revision: expectedRevision })
   });
 }
 
-export async function submitHumanAiAction(gameId: string): Promise<GameState> {
-  return request(`${gamePath(gameId)}/ai-actions/human`, { method: "POST" });
+export async function submitHumanAiAction(gameId: string, expectedRevision: number): Promise<GameState> {
+  return request(`${gamePath(gameId)}/ai-actions/human`, {
+    method: "POST", headers: jsonHeaders,
+    body: JSON.stringify({ expected_revision: expectedRevision })
+  });
 }
 
 export async function retryPausedGame(gameId: string): Promise<GameState> {
@@ -300,4 +308,8 @@ export class ApiError extends Error {
     this.name = "ApiError";
     this.status = status;
   }
+}
+
+export function newerGameState(current: GameState | null, incoming: GameState): GameState {
+  return current?.id === incoming.id && current.revision > incoming.revision ? current : incoming;
 }

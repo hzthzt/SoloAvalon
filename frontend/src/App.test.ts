@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const sessionSource = readFileSync(new URL("../src/gameSession.ts", import.meta.url), "utf8");
 const apiSource = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
 const styleSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8").replace(
   /\r\n/g,
@@ -63,7 +64,7 @@ test("playable room list is centered while setup panel keeps new room controls",
   assert.equal(source.includes("<h2>开局</h2>"), true);
   assert.equal(source.includes("PlayableRoomList"), true);
   assert.equal(
-    source.indexOf("<PlayableRoomList") > source.indexOf("</section>\r\n\r\n          {game &&"),
+    source.indexOf("<PlayableRoomList") > source.indexOf("</section>\n\n          {game &&"),
     true
   );
   assert.equal(source.includes("<h2>新建房间</h2>"), false);
@@ -172,10 +173,13 @@ test("model profile form uses reasoning effort instead of temperature", () => {
   assert.equal(apiSource.includes("temperature: number"), false);
 });
 
-test("model profile form exposes timeout retry configuration", () => {
-  assert.equal(source.includes("timeout_retries: 5"), true);
-  assert.equal(source.includes("profile.timeout_retries"), true);
-  assert.equal(apiSource.includes("timeout_retries: number"), true);
+test("model profile form separates transport and parse retries", () => {
+  assert.equal(source.includes("transport_retries: 5"), true);
+  assert.equal(source.includes("parse_retries: 5"), true);
+  assert.equal(source.includes("profile.transport_retries"), true);
+  assert.equal(source.includes("profile.parse_retries"), true);
+  assert.equal(apiSource.includes("transport_retries: number"), true);
+  assert.equal(apiSource.includes("parse_retries: number"), true);
 });
 
 test("ai decision gateway errors offer manual retry", () => {
@@ -294,9 +298,9 @@ test("information feed reveals queued items gradually", () => {
 
 test("active game subscribes to server-sent event updates while the play view is open", () => {
   assert.equal(source.includes("subscribeGameEvents"), true);
-  assert.equal(source.includes("new EventSource"), true);
-  assert.equal(source.includes("eventSource.addEventListener(\"game-event\""), true);
-  assert.equal(source.includes("eventSource.close()"), true);
+  assert.equal(sessionSource.includes("new EventSource"), true);
+  assert.equal(sessionSource.includes("source.addEventListener(\"game-event\""), true);
+  assert.equal(sessionSource.includes("source.close()"), true);
   assert.equal(source.includes("window.setInterval"), false);
 });
 

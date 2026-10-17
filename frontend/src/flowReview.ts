@@ -242,6 +242,11 @@ export function buildFlowReview(
     }
 
     if (event.event_type === "vote_result") {
+      if (payload.votes && typeof payload.votes === "object") {
+        pendingVotes = Object.entries(payload.votes).map(([playerId, vote]) => ({
+          playerId, vote: valueAsString(vote)
+        }));
+      }
       const approvals = pendingVotes
         .filter((vote) => vote.vote === "approve")
         .map((vote) => nameFor(playerNames, vote.playerId));

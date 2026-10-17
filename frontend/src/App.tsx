@@ -31,10 +31,10 @@ import {
   AiDecisionDetail,
   GameEvent,
   GameState,
-  gameEventsStreamUrl,
   GameSummary,
   getRoomDetail,
   getGame,
+  newerGameState,
   listGameEvents,
   listGames,
   listProfiles,
@@ -58,6 +58,7 @@ import {
 } from "./flowReview";
 import type { FlowReview, InformationFeedItem, ReviewRound, SummaryCard } from "./flowReview";
 import { maskApiKeyForDisplay } from "./apiKey";
+import { subscribeGameEvents, waitForGameIdle } from "./gameSession";
 
 type Tab = "game" | "profiles" | "rooms";
 
@@ -76,7 +77,8 @@ const emptyProfile: LlmProfileInput = {
   model: "",
   reasoning_effort: "medium",
   timeout: 30,
-  timeout_retries: 5
+  transport_retries: 5,
+  parse_retries: 5
 };
 
 export function App() {
@@ -127,8 +129,10 @@ export function App() {
       profileForm.name.trim() &&
       profileForm.base_url.trim() &&
       profileForm.model.trim() &&
-      Number.isFinite(profileForm.timeout_retries) &&
-      profileForm.timeout_retries >= 0 &&
+      Number.isInteger(profileForm.transport_retries) &&
+      profileForm.transport_retries >= 0 &&
+      Number.isInteger(profileForm.parse_retries) &&
+      profileForm.parse_retries >= 0 &&
       (editingProfileId || profileForm.api_key.trim())
   );
   const selectedLogReview = useMemo(() => {
@@ -203,6 +207,12 @@ export function App() {
       (event) => {
         setActiveGameEvents((current) => mergeEventsForFlowReview(current, [event]));
         refreshFromStream();
+      },
+      (state) => {
+        if (activeGameIdRef.current !== state.id) return;
+        setGame((current) => newerGameState(current, state));
+        setActiveGameEvents((current) => eventsForFlowReview(state.events, current));
+        if (isGameComplete(state)) void refreshActiveRoomDetailIfComplete(state);
       }
     );
     return () => {
@@ -259,19 +269,23 @@ export function App() {
   }
 
   async function applyActiveGame(updated: GameState, resetEvents = false) {
+    if (resetEvents) activeGameIdRef.current = updated.id;
+    if (activeGameIdRef.current !== updated.id) return updated;
     const stateEvents = updated.events ?? [];
     let freshestEvents = stateEvents;
-    setGame(updated);
+    setGame((current) => newerGameState(current, updated));
     setActiveGameEvents((current) =>
       resetEvents ? stateEvents : eventsForFlowReview(stateEvents, current)
     );
     try {
       const fetchedEvents = await listGameEvents(updated.id);
+      if (activeGameIdRef.current !== updated.id) return updated;
       freshestEvents = eventsForFlowReview(stateEvents, fetchedEvents);
       setActiveGameEvents((current) =>
         resetEvents ? freshestEvents : eventsForFlowReview(freshestEvents, current)
       );
     } catch {
+      if (activeGameIdRef.current !== updated.id) return updated;
       setActiveGameEvents((current) =>
         resetEvents ? stateEvents : eventsForFlowReview(stateEvents, current)
       );
@@ -279,8 +293,9 @@ export function App() {
     if (latestEventIndex(freshestEvents) > latestEventIndex(stateEvents)) {
       try {
         const latestState = await getGame(updated.id);
+        if (activeGameIdRef.current !== updated.id) return latestState;
         const latestEvents = eventsForFlowReview(latestState.events ?? [], freshestEvents);
-        setGame((current) => (current?.id === updated.id ? latestState : current));
+        setGame((current) => (current?.id === updated.id ? newerGameState(current, latestState) : current));
         setActiveGameEvents((current) =>
           resetEvents ? latestEvents : eventsForFlowReview(latestEvents, current)
         );
@@ -295,13 +310,18 @@ export function App() {
   }
 
   async function refreshActiveRoomDetailIfComplete(updated: GameState) {
+    if (activeGameIdRef.current !== updated.id) return;
     if (!isGameComplete(updated)) {
-      setActiveRoomDetail(null);
+      setActiveRoomDetail((current) => current?.game.id === updated.id ? current : null);
       return;
     }
     const detail = await getRoomDetail(updated.id);
-    setActiveRoomDetail(detail);
-    setActiveGameEvents((current) => eventsForFlowReview(detail.events, current));
+    if (activeGameIdRef.current === updated.id) {
+      setActiveRoomDetail((current) =>
+        current?.game.id === detail.game.id && current.game.revision > detail.game.revision ? current : detail
+      );
+    }
+    // 完整复盘使用独立事件集合，不能与公开游标合并。
   }
 
   async function startGame() {
@@ -361,7 +381,7 @@ export function App() {
         if (!current || current.id !== gameId) {
           return current;
         }
-        return updated;
+        return newerGameState(current, updated);
       });
       setActiveGameEvents((current) => eventsForFlowReview(updated.events ?? [], current));
       await refreshActiveRoomDetailIfComplete(updated);
@@ -372,19 +392,8 @@ export function App() {
   }
 
   async function waitForHumanActionOrTerminal(current: GameState) {
-    let updated = current;
-    for (let attempt = 0; attempt < 80; attempt += 1) {
-      if (
-        updated.next_human_action ||
-        updated.phase === "complete" ||
-        updated.status === "error_paused"
-      ) {
-        return updated;
-      }
-      await pauseForFlow();
-      updated = await applyActiveGame(await getGame(current.id));
-    }
-    return updated;
+    return waitForGameIdle(current, getGame, pauseForFlow, applyActiveGame,
+      () => activeGameIdRef.current === current.id);
   }
 
   async function sendAction(payload: Record<string, unknown>) {
@@ -392,7 +401,7 @@ export function App() {
       return;
     }
     await run(async () => {
-      const updated = await submitAction(game.id, payload);
+      const updated = await submitAction(game.id, payload, game.revision);
       await applyActiveGame(updated);
       if (payload.action_type === "speak") {
         setSpeech("");
@@ -442,11 +451,14 @@ export function App() {
       let current = start;
       const maxSteps = repeat ? 80 : 1;
       for (let step = 0; step < maxSteps; step += 1) {
-        if (!current.next_human_action || current.phase === "complete") {
+        current = await waitForHumanActionOrTerminal(current);
+        if (activeGameIdRef.current !== current.id || current.is_advancing || current.status === "error_paused" ||
+            !current.next_human_action || current.phase === "complete") {
           return current;
         }
-        current = await submitHumanAiAction(current.id);
+        current = await submitHumanAiAction(current.id, current.revision);
         await applyActiveGame(current);
+        current = await waitForHumanActionOrTerminal(current);
         setSelectedTeam([current.human_player_id]);
         if (repeat) {
           await pauseForFlow();
@@ -495,7 +507,8 @@ export function App() {
       model: profile.model,
       reasoning_effort: profile.reasoning_effort,
       timeout: profile.timeout,
-      timeout_retries: profile.timeout_retries
+      transport_retries: profile.transport_retries,
+      parse_retries: profile.parse_retries
     });
     setProfileEditorOpen(true);
   }
@@ -539,6 +552,7 @@ export function App() {
 
   async function leaveActiveRoom() {
     await run(async () => {
+      activeGameIdRef.current = "";
       setGame(null);
       setActiveGameEvents([]);
       setActiveRoomDetail(null);
@@ -585,7 +599,8 @@ export function App() {
 
   async function showExport(gameId: string) {
     await run(async () => {
-      const payload = await exportGame(gameId, true);
+      const state = await getGame(gameId);
+      const payload = await exportGame(gameId, isGameComplete(state));
       setSelectedRoomGameId(gameId);
       setExportedLog(JSON.stringify(payload, null, 2));
     });
@@ -593,12 +608,13 @@ export function App() {
 
   async function showEvents(gameId: string) {
     await run(async () => {
-      const detail = await getRoomDetail(gameId);
+      const state = await getGame(gameId);
+      const detail = isGameComplete(state) ? await getRoomDetail(gameId) : null;
       setSelectedRoomGameId(gameId);
       setSelectedLogPlayerNames(
-        Object.fromEntries(detail.game.players.map((player) => [player.id, player.name]))
+        Object.fromEntries(state.players.map((player) => [player.id, player.name]))
       );
-      setEventLog(detail.events);
+      setEventLog(detail?.events ?? await listGameEvents(gameId));
       setRoomDetail(detail);
     });
   }
@@ -612,7 +628,7 @@ export function App() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
       onError?.(error);
-      if (isRetryableAiDecisionError(error) && game) {
+      if ((isRetryableAiDecisionError(error) || (error instanceof ApiError && error.status === 409)) && game) {
         try {
           const updated = await getGame(game.id);
           await applyActiveGame(updated);
@@ -626,7 +642,7 @@ export function App() {
     }
   }
 
-  const activeAction = game?.next_human_action;
+  const activeAction = game?.status === "active" ? game.next_human_action : null;
   const showSetupState = tab === "game" && !game && !startingGame;
   const showStartingState = tab === "game" && !game && startingGame;
   const showPlayState = tab === "game" && Boolean(game);
@@ -665,7 +681,7 @@ export function App() {
             <button
               type="button"
               onClick={() => sendHumanAiAction(manualRetryRepeat)}
-              disabled={busy || autoPlaying}
+              disabled={busy || autoPlaying || game?.is_advancing}
             >
               <RefreshCw size={16} /> 手动重试
             </button>
@@ -814,6 +830,7 @@ export function App() {
               </button>
             </div>
             <StatusStrip game={game} />
+            {game.is_advancing && <div role="status">AI 正在推进，完成后会自动更新。</div>}
             {Object.keys(game.lady_of_lake_known_factions).length > 0 && (
               <div className="lake-results">
                 {Object.entries(game.lady_of_lake_known_factions).map(([playerId, faction]) => (
@@ -827,7 +844,7 @@ export function App() {
               <div className="button-row">
                 <button
                   className="primary"
-                  disabled={busy || autoPlaying}
+                  disabled={busy || autoPlaying || game?.is_advancing}
                   onClick={sendPausedGameRetry}
                 >
                   <RefreshCw size={18} /> 重试推进
@@ -836,12 +853,12 @@ export function App() {
             )}
             {activeAction && (
               <div className="button-row">
-                <button disabled={busy || autoPlaying} onClick={() => sendHumanAiAction(false)}>
+                <button disabled={busy || autoPlaying || game?.is_advancing} onClick={() => sendHumanAiAction(false)}>
                   <Bot size={18} /> AI 代打一步
                 </button>
                 <button
                   className="primary"
-                  disabled={busy || autoPlaying}
+                  disabled={busy || autoPlaying || game?.is_advancing}
                   onClick={() => sendHumanAiAction(true)}
                 >
                   <Bot size={18} /> 连续代打
@@ -1003,7 +1020,9 @@ export function App() {
               </div>
             )}
 
-            {!activeAction && <div className="empty-state">等待 AI 或对局已结算</div>}
+            {!activeAction && !game.is_advancing && (
+              <div className="empty-state">{game.status === "error_paused" ? "推进已暂停，请重试" : "对局已结算或等待行动"}</div>
+            )}
             <ActionRoundSummary summaries={activeGameReview.summaries} />
           </section>
         </section>
@@ -1054,8 +1073,8 @@ export function App() {
                             <dd>{profile.model}</dd>
                           </div>
                           <div>
-                            <dt>Timeout Retries</dt>
-                            <dd>{profile.timeout_retries}</dd>
+                            <dt>网络 / 解析重试</dt>
+                            <dd>{profile.transport_retries} / {profile.parse_retries}</dd>
                           </div>
                           <div>
                             <dt>API Key</dt>
@@ -1216,24 +1235,6 @@ export function App() {
 
 function pauseForFlow() {
   return new Promise<void>((resolve) => window.setTimeout(resolve, 280));
-}
-
-function subscribeGameEvents(
-  activeGameId: string,
-  afterEventIndex: number,
-  onEvent: (event: GameEvent) => void
-) {
-  const eventSource = new EventSource(gameEventsStreamUrl(activeGameId, afterEventIndex));
-  eventSource.addEventListener("game-event", (message) => {
-    try {
-      onEvent(JSON.parse((message as MessageEvent).data) as GameEvent);
-    } catch {
-      // 忽略无法解析的单条事件，浏览器会继续保持 SSE 连接。
-    }
-  });
-  return () => {
-    eventSource.close();
-  };
 }
 
 function latestEventIndex(events: GameEvent[]): number {
@@ -1987,13 +1988,18 @@ function ProfileForm({
         />
       </label>
       <label>
-        Timeout Retries
+        网络重试（超时或空回答）
         <input
           type="number"
           min="0"
-          value={form.timeout_retries}
-          onChange={(event) => update({ timeout_retries: Number(event.target.value) })}
+          value={form.transport_retries}
+          onChange={(event) => update({ transport_retries: Number(event.target.value) })}
         />
+      </label>
+      <label>
+        解析重试
+        <input type="number" min="0" value={form.parse_retries}
+          onChange={(event) => update({ parse_retries: Number(event.target.value) })} />
       </label>
     </div>
   );

@@ -522,6 +522,8 @@ function gameState(overrides: Partial<GameState>): GameState {
     id: "game_1",
     display_name: "游戏#1",
     status: "active",
+    revision: 1,
+    is_advancing: false,
     player_count: 5,
     phase: "team_proposal",
     current_round: 1,
@@ -559,3 +561,19 @@ function gameState(overrides: Partial<GameState>): GameState {
     ...overrides
   };
 }
+
+
+test("incremental public vote result carries settled votes without rewriting vote_cast", () => {
+  const previous = [
+    event(1, "team_proposed", { leader_player_id: "player_1", team: ["player_1", "player_2"] }),
+    event(2, "vote_cast", { player_id: "player_1" }),
+    event(3, "vote_cast", { player_id: "player_2" })
+  ];
+  const received = mergeEventsForFlowReview(previous, [event(4, "vote_result", {
+    approved: true, failed_team_votes: 0, votes: { player_1: "approve", player_2: "reject" }
+  })]);
+  const review = buildFlowReview(received, playerNames);
+  assert.deepEqual(review.rounds[0].vote?.approvals, [playerNames.get("player_1")]);
+  assert.deepEqual(review.rounds[0].vote?.rejections, [playerNames.get("player_2")]);
+  assert.deepEqual(received[1], previous[1]);
+});

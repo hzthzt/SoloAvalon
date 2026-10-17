@@ -12,6 +12,8 @@
     "src/flowReview.ts",
     "src/flowReview.test.ts",
     "src/App.test.ts",
-    "src/node-test.d.ts"
+    "src/node-test.d.ts",
+    "src/gameSession.ts",
+    "src/gameSession.test.ts"
   ]
 }
