@@ -27,9 +27,9 @@ class LlmProfilesApiTests(unittest.TestCase):
             listed = api.list_profiles()
 
             self.assertNotIn("api_key", created)
-            self.assertEqual(created["api_key_masked"], "test...cdef")
+            self.assertEqual(created["api_key_masked"], "test********cdef")
             self.assertNotIn("api_key", listed[0])
-            self.assertEqual(listed[0]["api_key_masked"], "test...cdef")
+            self.assertEqual(listed[0]["api_key_masked"], "test********cdef")
             self.assertEqual(listed[0]["reasoning_effort"], "high")
             self.assertNotIn("temperature", listed[0])
             self.assertEqual([profile["id"] for profile in listed], ["profile_1"])

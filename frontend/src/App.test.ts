@@ -4,7 +4,10 @@ import test from "node:test";
 
 const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const apiSource = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
-const styleSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const styleSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8").replace(
+  /\r\n/g,
+  "\n"
+);
 
 test("start game UI does not expose seed controls", () => {
   assert.equal(source.includes("Seed"), false);
@@ -142,6 +145,24 @@ test("profile list shows runtime configuration fields", () => {
   assert.equal(source.includes("profile.model"), true);
 });
 
+test("model settings only render while creating or editing a profile", () => {
+  assert.equal(source.includes("profileEditorOpen"), true);
+  assert.equal(source.includes("!profileEditorOpen ? ("), true);
+  assert.equal(source.includes("onClick={openNewProfile}"), true);
+  assert.equal(source.includes("<Plus size={18} /> 新增模型"), true);
+  assert.equal(source.includes('setProfileEditorOpen(true);'), true);
+  assert.equal(source.includes('setProfileEditorOpen(false);'), true);
+});
+
+test("model editor returns to the list after save or cancel", () => {
+  assert.equal(source.includes('title="返回模型列表"'), true);
+  assert.equal(source.includes('<X size={18} /> 取消'), true);
+  assert.equal(/resetProfileForm\(\);\s+await refreshLists\(\);/.test(source), true);
+  assert.equal(source.includes("restoreProfileListFocusRef.current = true;"), true);
+  assert.equal(source.includes("newProfileButtonRef.current?.focus();"), true);
+  assert.equal(styleSource.includes(".profile-editor-header .icon-button"), true);
+});
+
 test("model profile form uses reasoning effort instead of temperature", () => {
   assert.equal(source.includes("思考强度"), true);
   assert.equal(source.includes('reasoning_effort: "medium"'), true);
@@ -177,11 +198,14 @@ test("api errors include structured backend error details and tracebacks", () =>
   assert.equal(apiSource.includes("traceback"), true);
 });
 
-test("model edit form does not display plain api key from saved profile", () => {
+test("model edit form keeps saved api keys masked and toggles new values", () => {
   assert.equal(source.includes("api_key: profile.api_key"), false);
-  assert.equal(source.includes('type="password"'), false);
   assert.equal(source.includes("profile.api_key_masked"), true);
   assert.equal(source.includes("留空则保留原密钥"), true);
+  assert.equal(source.includes("maskApiKeyForDisplay(value)"), true);
+  assert.equal(source.includes('aria-label={visibilityLabel}'), true);
+  assert.equal(source.includes("savedApiKeyMasked={editingProfileApiKeyMasked}"), true);
+  assert.equal(source.includes("savedMaskedValue={savedApiKeyMasked}"), true);
 });
 
 test("player cards show original names while start request sends human name", () => {

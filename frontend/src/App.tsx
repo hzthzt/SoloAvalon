@@ -4,10 +4,13 @@ import {
   Bot,
   Check,
   Download,
+  Eye,
+  EyeOff,
   History,
   MessageSquare,
   Pencil,
   Play,
+  Plus,
   RefreshCw,
   Save,
   Settings,
@@ -54,6 +57,7 @@ import {
   mergeEventsForFlowReview
 } from "./flowReview";
 import type { FlowReview, InformationFeedItem, ReviewRound, SummaryCard } from "./flowReview";
+import { maskApiKeyForDisplay } from "./apiKey";
 
 type Tab = "game" | "profiles" | "rooms";
 
@@ -97,6 +101,8 @@ export function App() {
   const [profileForm, setProfileForm] = useState<LlmProfileInput>(emptyProfile);
   const [profileTestResults, setProfileTestResults] = useState<Record<string, string>>({});
   const [editingProfileId, setEditingProfileId] = useState("");
+  const [editingProfileApiKeyMasked, setEditingProfileApiKeyMasked] = useState("");
+  const [profileEditorOpen, setProfileEditorOpen] = useState(false);
   const [selectedRoomGameId, setSelectedRoomGameId] = useState("");
   const [selectedLogPlayerNames, setSelectedLogPlayerNames] = useState<Record<string, string>>({});
   const [eventLog, setEventLog] = useState<GameEvent[]>([]);
@@ -151,6 +157,8 @@ export function App() {
   const activeTeamAttemptNumber = game ? currentTeamAttemptNumber(game, activeGameReview) : 1;
   const activeGameId = game?.id ?? "";
   const activeGameIdRef = useRef(activeGameId);
+  const newProfileButtonRef = useRef<HTMLButtonElement>(null);
+  const restoreProfileListFocusRef = useRef(false);
 
   useEffect(() => {
     void refreshLists();
@@ -159,6 +167,14 @@ export function App() {
   useEffect(() => {
     activeGameIdRef.current = activeGameId;
   }, [activeGameId]);
+
+  useEffect(() => {
+    if (profileEditorOpen || busy || !restoreProfileListFocusRef.current) {
+      return;
+    }
+    restoreProfileListFocusRef.current = false;
+    newProfileButtonRef.current?.focus();
+  }, [profileEditorOpen, busy]);
 
   useEffect(() => {
     if (!activeGameId) {
@@ -470,6 +486,7 @@ export function App() {
 
   function editProfile(profile: LlmProfile) {
     setEditingProfileId(profile.id);
+    setEditingProfileApiKeyMasked(profile.api_key_masked);
     setProfileForm({
       id: profile.id,
       name: profile.name,
@@ -480,11 +497,22 @@ export function App() {
       timeout: profile.timeout,
       timeout_retries: profile.timeout_retries
     });
+    setProfileEditorOpen(true);
+  }
+
+  function openNewProfile() {
+    setEditingProfileId("");
+    setEditingProfileApiKeyMasked("");
+    setProfileForm({ ...emptyProfile });
+    setProfileEditorOpen(true);
   }
 
   function resetProfileForm() {
+    restoreProfileListFocusRef.current = true;
     setEditingProfileId("");
+    setEditingProfileApiKeyMasked("");
     setProfileForm({ ...emptyProfile });
+    setProfileEditorOpen(false);
   }
 
   async function checkProfile(profileId: string) {
@@ -989,73 +1017,120 @@ export function App() {
       )}
 
       {tab === "profiles" && (
-        <section className="two-column">
-          <section className="panel">
-            <div className="section-title">
-              <Save size={18} />
-              <h2>{editingProfileId ? "编辑模型" : "模型配置"}</h2>
-            </div>
-            <ProfileForm
-              form={profileForm}
-              setForm={setProfileForm}
-              isEditing={Boolean(editingProfileId)}
-            />
-            <div className="button-row">
-              <button className="primary" onClick={saveProfile} disabled={busy || !canSaveProfile}>
-                <Save size={18} /> 保存
-              </button>
-              {editingProfileId && (
+        <section className="profile-workspace">
+          {!profileEditorOpen ? (
+            <section className="list-panel profile-list-panel">
+              <div className="section-title profile-list-header">
+                <Settings size={18} />
+                <h2>模型配置</h2>
+                <button
+                  ref={newProfileButtonRef}
+                  className="primary"
+                  onClick={openNewProfile}
+                  disabled={busy}
+                >
+                  <Plus size={18} /> 新增模型
+                </button>
+              </div>
+              {profiles.length === 0 ? (
+                <div className="empty-state">暂无模型配置</div>
+              ) : (
+                <div className="profile-list">
+                  {profiles.map((profile) => (
+                    <article className="profile-item" key={profile.id}>
+                      <div className="profile-item-copy">
+                        <h3>{profile.name}</h3>
+                        <dl className="profile-runtime-fields">
+                          <div>
+                            <dt>ID</dt>
+                            <dd>{profile.id}</dd>
+                          </div>
+                          <div>
+                            <dt>Base URL</dt>
+                            <dd>{profile.base_url}</dd>
+                          </div>
+                          <div>
+                            <dt>Model</dt>
+                            <dd>{profile.model}</dd>
+                          </div>
+                          <div>
+                            <dt>Timeout Retries</dt>
+                            <dd>{profile.timeout_retries}</dd>
+                          </div>
+                          <div>
+                            <dt>API Key</dt>
+                            <dd>{profile.api_key_masked}</dd>
+                          </div>
+                        </dl>
+                        {profileTestResults[profile.id] && (
+                          <code className="test-result">{profileTestResults[profile.id]}</code>
+                        )}
+                      </div>
+                      <div className="item-actions">
+                        <button
+                          onClick={() => editProfile(profile)}
+                          title="编辑"
+                          aria-label={`编辑 ${profile.name}`}
+                          disabled={busy}
+                        >
+                          <Pencil size={17} />
+                        </button>
+                        <button
+                          onClick={() => checkProfile(profile.id)}
+                          title="测试"
+                          aria-label={`测试 ${profile.name}`}
+                          disabled={busy}
+                        >
+                          <Check size={17} />
+                        </button>
+                        <button
+                          onClick={() => removeProfile(profile.id)}
+                          title="删除"
+                          aria-label={`删除 ${profile.name}`}
+                          disabled={busy}
+                        >
+                          <Trash2 size={17} />
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+          ) : (
+            <section className="panel profile-editor">
+              <div className="section-title profile-editor-header">
+                <button
+                  className="icon-button"
+                  onClick={resetProfileForm}
+                  title="返回模型列表"
+                  aria-label="返回模型列表"
+                  disabled={busy}
+                >
+                  <ArrowLeft size={18} />
+                </button>
+                <h2>{editingProfileId ? "编辑模型" : "新增模型"}</h2>
+              </div>
+              <ProfileForm
+                form={profileForm}
+                setForm={setProfileForm}
+                isEditing={Boolean(editingProfileId)}
+                savedApiKeyMasked={editingProfileApiKeyMasked}
+              />
+              <div className="button-row profile-editor-actions">
                 <button onClick={resetProfileForm} disabled={busy}>
                   <X size={18} /> 取消
                 </button>
-              )}
-            </div>
-          </section>
-          <section className="list-panel">
-            {profiles.map((profile) => (
-              <article className="profile-item" key={profile.id}>
-                <div>
-                  <h3>{profile.name}</h3>
-                  <dl className="profile-runtime-fields">
-                    <div>
-                      <dt>ID</dt>
-                      <dd>{profile.id}</dd>
-                    </div>
-                    <div>
-                      <dt>Base URL</dt>
-                      <dd>{profile.base_url}</dd>
-                    </div>
-                    <div>
-                      <dt>Model</dt>
-                      <dd>{profile.model}</dd>
-                    </div>
-                    <div>
-                      <dt>Timeout Retries</dt>
-                      <dd>{profile.timeout_retries}</dd>
-                    </div>
-                    <div>
-                      <dt>API Key</dt>
-                      <dd>{profile.api_key_masked}</dd>
-                    </div>
-                  </dl>
-                  {profileTestResults[profile.id] && (
-                    <code className="test-result">{profileTestResults[profile.id]}</code>
-                  )}
-                </div>
-                <div className="item-actions">
-                  <button onClick={() => editProfile(profile)} title="编辑">
-                    <Pencil size={17} />
-                  </button>
-                  <button onClick={() => checkProfile(profile.id)} title="测试">
-                    <Check size={17} />
-                  </button>
-                  <button onClick={() => removeProfile(profile.id)} title="删除">
-                    <Trash2 size={17} />
-                  </button>
-                </div>
-              </article>
-            ))}
-          </section>
+                <button
+                  className="primary"
+                  onClick={saveProfile}
+                  disabled={busy || !canSaveProfile}
+                >
+                  <Save size={18} /> 保存
+                </button>
+              </div>
+            </section>
+          )}
         </section>
       )}
 
@@ -1836,11 +1911,13 @@ function StartingActionPanel() {
 function ProfileForm({
   form,
   setForm,
-  isEditing
+  isEditing,
+  savedApiKeyMasked
 }: {
   form: LlmProfileInput;
   setForm: (form: LlmProfileInput) => void;
   isEditing: boolean;
+  savedApiKeyMasked: string;
 }) {
   const update = (patch: Partial<LlmProfileInput>) => setForm({ ...form, ...patch });
   return (
@@ -1850,12 +1927,17 @@ function ProfileForm({
         <input
           value={form.id}
           disabled={isEditing}
+          autoFocus={!isEditing}
           onChange={(event) => update({ id: event.target.value })}
         />
       </label>
       <label>
         名称
-        <input value={form.name} onChange={(event) => update({ name: event.target.value })} />
+        <input
+          value={form.name}
+          autoFocus={isEditing}
+          onChange={(event) => update({ name: event.target.value })}
+        />
       </label>
       <label>
         Base URL
@@ -1864,15 +1946,16 @@ function ProfileForm({
           onChange={(event) => update({ base_url: event.target.value })}
         />
       </label>
-      <label>
-        API Key
-        <input
-          type="text"
+      <div className="form-field">
+        <label htmlFor="profile-api-key">API Key</label>
+        <ApiKeyInput
+          id="profile-api-key"
           value={form.api_key}
-          placeholder={isEditing ? "留空则保留原密钥" : ""}
-          onChange={(event) => update({ api_key: event.target.value })}
+          savedMaskedValue={savedApiKeyMasked}
+          preserveSavedKey={isEditing}
+          onChange={(apiKey) => update({ api_key: apiKey })}
         />
-      </label>
+      </div>
       <label>
         Model
         <input value={form.model} onChange={(event) => update({ model: event.target.value })} />
@@ -1912,6 +1995,88 @@ function ProfileForm({
           onChange={(event) => update({ timeout_retries: Number(event.target.value) })}
         />
       </label>
+    </div>
+  );
+}
+
+function ApiKeyInput({
+  id,
+  value,
+  savedMaskedValue,
+  preserveSavedKey,
+  onChange
+}: {
+  id: string;
+  value: string;
+  savedMaskedValue: string;
+  preserveSavedKey: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [revealed, setRevealed] = useState(false);
+  const [editingMaskedValue, setEditingMaskedValue] = useState(false);
+  const showNewValuePreview = !revealed && !editingMaskedValue && Boolean(value);
+  const showSavedValuePreview =
+    !revealed && !editingMaskedValue && !value && Boolean(savedMaskedValue);
+  const displayedValue = showNewValuePreview
+    ? maskApiKeyForDisplay(value)
+    : showSavedValuePreview
+      ? savedMaskedValue
+      : value;
+  const inputIsReadOnly = showNewValuePreview || showSavedValuePreview;
+  const canReveal = Boolean(value);
+  const visibilityLabel = canReveal
+    ? revealed
+      ? "隐藏 API Key"
+      : "显示 API Key"
+    : "输入新 API Key 后可显示明文";
+
+  function toggleReveal() {
+    if (!canReveal) {
+      return;
+    }
+    setEditingMaskedValue(false);
+    setRevealed((current) => !current);
+  }
+
+  return (
+    <div className="api-key-control">
+      <input
+        id={id}
+        type={revealed || inputIsReadOnly ? "text" : "password"}
+        value={displayedValue}
+        readOnly={inputIsReadOnly}
+        placeholder={preserveSavedKey ? "留空则保留原密钥" : ""}
+        autoComplete="off"
+        spellCheck={false}
+        onFocus={() => {
+          if (!revealed) {
+            setEditingMaskedValue(true);
+          }
+        }}
+        onBlur={() => {
+          if (!revealed) {
+            setEditingMaskedValue(false);
+          }
+        }}
+        onChange={(event) => {
+          if (!event.target.value) {
+            setRevealed(false);
+            setEditingMaskedValue(true);
+          }
+          onChange(event.target.value);
+        }}
+      />
+      <button
+        type="button"
+        className="icon-button api-key-visibility"
+        onClick={toggleReveal}
+        disabled={!canReveal}
+        aria-label={visibilityLabel}
+        aria-pressed={revealed}
+        title={visibilityLabel}
+      >
+        {revealed ? <EyeOff size={18} /> : <Eye size={18} />}
+      </button>
     </div>
   );
 }

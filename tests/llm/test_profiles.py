@@ -38,8 +38,12 @@ def _profile_input_kwargs(**overrides: object) -> dict[str, object]:
 
 class LlmProfileTests(unittest.TestCase):
     def test_mask_api_key_hides_full_secret(self):
-        self.assertEqual(mask_api_key("test-key-1234567890abcdef"), "test...cdef")
+        api_key = "test-key-1234567890abcdef"
+        masked = mask_api_key(api_key)
+
+        self.assertEqual(masked, "test********cdef")
         self.assertEqual(mask_api_key("short"), "*****")
+        self.assertEqual(mask_api_key("123456789012345"), "***************")
         self.assertEqual(mask_api_key(""), "")
 
     def test_profile_types_exclude_removed_runtime_fields(self):
@@ -54,7 +58,7 @@ class LlmProfileTests(unittest.TestCase):
         public_dict = profile.to_public_dict()
 
         self.assertNotIn("api_key", public_dict)
-        self.assertEqual(public_dict["api_key_masked"], "test...cdef")
+        self.assertEqual(public_dict["api_key_masked"], "test********cdef")
         self.assertEqual(public_dict["reasoning_effort"], "high")
         self.assertNotIn("temperature", public_dict)
         self.assertEqual(public_dict["timeout_retries"], 5)

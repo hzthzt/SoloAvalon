@@ -55,6 +55,11 @@ textarea {
   width: 100%;
 }
 
+input::placeholder {
+  color: #5e6b7a;
+  opacity: 1;
+}
+
 textarea {
   min-height: 120px;
   resize: vertical;
@@ -203,6 +208,29 @@ label {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.form-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.api-key-control {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 40px;
+  min-width: 0;
+}
+
+.api-key-control input {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  min-width: 0;
+}
+
+.api-key-visibility {
+  height: 40px;
+  width: 40px;
 }
 
 .ai-config {
@@ -701,6 +729,54 @@ label {
   overflow-wrap: anywhere;
 }
 
+.profile-workspace {
+  display: grid;
+  min-width: 0;
+}
+
+.profile-list-panel {
+  min-width: 0;
+}
+
+.profile-list-header {
+  margin-bottom: 2px;
+}
+
+.profile-list-header .primary {
+  margin-left: auto;
+}
+
+.profile-list {
+  display: grid;
+  gap: 10px;
+}
+
+.profile-item-copy {
+  min-width: 0;
+}
+
+.profile-editor {
+  display: grid;
+  gap: 16px;
+  justify-self: center;
+  max-width: 780px;
+  width: 100%;
+}
+
+.profile-editor-header {
+  margin-bottom: 0;
+}
+
+.profile-editor-header .icon-button {
+  margin-left: 0;
+}
+
+.profile-editor-actions {
+  justify-self: end;
+  max-width: 320px;
+  width: 100%;
+}
+
 .status-strip {
   display: grid;
   gap: 8px;
@@ -1131,6 +1207,30 @@ label {
 
   .tabs button {
     padding: 8px;
+  }
+
+  .profile-list-header {
+    align-items: stretch;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .profile-list-header .primary {
+    grid-column: 1 / -1;
+    margin-left: 0;
+  }
+
+  .profile-list .profile-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .profile-list .profile-item .item-actions {
+    justify-content: flex-end;
+  }
+
+  .profile-editor-actions {
+    max-width: none;
   }
 
   .ai-name-grid,

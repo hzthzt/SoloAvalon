@@ -7,6 +7,8 @@
     "outDir": ".test-dist"
   },
   "include": [
+    "src/apiKey.ts",
+    "src/apiKey.test.ts",
     "src/flowReview.ts",
     "src/flowReview.test.ts",
     "src/App.test.ts",

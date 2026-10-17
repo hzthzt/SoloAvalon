@@ -28,9 +28,16 @@ REASONING_EFFORTS: tuple[ReasoningEffort, ...] = (
 def mask_api_key(api_key: str) -> str:
     if not api_key:
         return ""
-    if len(api_key) <= 8:
+    visible_prefix_length = 4
+    visible_suffix_length = 4
+    min_partial_mask_length = 16
+    if len(api_key) < min_partial_mask_length:
         return "*" * len(api_key)
-    return f"{api_key[:4]}...{api_key[-4:]}"
+    return (
+        f"{api_key[:visible_prefix_length]}"
+        "********"
+        f"{api_key[-visible_suffix_length:]}"
+    )
 
 
 def validate_base_url(base_url: str) -> None:

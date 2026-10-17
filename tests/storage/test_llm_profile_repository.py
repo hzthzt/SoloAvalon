@@ -75,7 +75,7 @@ class LlmProfileRepositoryTests(unittest.TestCase):
 
                 public_dict = profile.to_public_dict()
                 self.assertNotIn("api_key", public_dict)
-                self.assertEqual(public_dict["api_key_masked"], "test...cdef")
+                self.assertEqual(public_dict["api_key_masked"], "test********cdef")
             finally:
                 connection.close()
 
