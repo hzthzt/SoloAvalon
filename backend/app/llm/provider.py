@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from openai import DefaultHttpxClient, OpenAI
+from openai import APITimeoutError, DefaultHttpxClient, OpenAI
 from openai.types.chat import ChatCompletion
 
 from .profiles import LlmProfile, validate_base_url
@@ -41,15 +41,21 @@ class LlmProvider:
             base_url=base_url,
             api_key=profile.api_key,
             timeout=profile.timeout,
-            max_retries=profile.timeout_retries,
+            max_retries=0,
             http_client=http_client,
         ) as client:
-            response = client.chat.completions.create(
-                model=profile.model,
-                messages=messages,
-                reasoning_effort=profile.reasoning_effort,
-            )
-        return _completion_result(response)
+            for attempt in range(profile.transport_retries + 1):
+                try:
+                    response = client.chat.completions.create(
+                        model=profile.model,
+                        messages=messages,
+                        reasoning_effort=profile.reasoning_effort,
+                    )
+                    return _completion_result(response)
+                except (APITimeoutError, TimeoutError, EmptyModelOutputError):
+                    if attempt == profile.transport_retries:
+                        raise
+        raise RuntimeError("unreachable transport retry state")
 
 
 class EmptyModelOutputError(ValueError):

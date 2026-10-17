@@ -5,9 +5,44 @@ import unittest
 from pathlib import Path
 
 from backend.app.storage.database import connect_sqlite, initialize_database
+from backend.app.storage.schema import SCHEMA_SQL
+from backend.app.storage.game_repository import GameRepository
+from backend.app.game.rules import create_game
 
 
 class DatabaseSchemaTests(unittest.TestCase):
+    def test_legacy_foreign_key_migration_preserves_runtime_and_existing_metadata(self):
+        connection = connect_sqlite(":memory:")
+        try:
+            legacy_schema = SCHEMA_SQL.replace(
+                "updated_at text not null\n);",
+                "updated_at text not null,\nforeign key(default_llm_profile_id) references llm_profiles(id)\n);",
+                1,
+            ).replace(
+                "unique(game_id, seat_index)",
+                "foreign key(llm_profile_id) references llm_profiles(id), unique(game_id, seat_index)",
+            )
+            connection.executescript("create table llm_profiles (id text primary key); insert into llm_profiles values ('test');")
+            connection.executescript(legacy_schema)
+            games = GameRepository(connection)
+            games.save_new_game(create_game(player_count=8, seed=2, enabled_options={"lady_of_lake"}),
+                                "game_1", "保留房间", "test")
+            connection.execute("update games set status='error_paused', revision=17, advance_mode='human_once', archived_at='saved'")
+            connection.execute("update players set original_name='保留名称', llm_profile_id='test' where id='player_1'")
+            connection.commit()
+
+            initialize_database(connection)
+
+            summary = games.get_game_summary("game_1")
+            self.assertEqual(summary.display_name, "保留房间")
+            self.assertEqual(summary.enabled_options, ["lady_of_lake"])
+            self.assertEqual((summary.status, summary.revision, summary.advance_mode, summary.archived_at),
+                             ("error_paused", 17, "human_once", "saved"))
+            self.assertEqual(summary.default_llm_profile_id, "test")
+            self.assertEqual(games.list_players("game_1")[0].original_name, "保留名称")
+        finally:
+            connection.close()
+
     def test_initialize_database_creates_required_tables_and_foreign_keys(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "soloavalon.sqlite3"
@@ -41,6 +76,8 @@ class DatabaseSchemaTests(unittest.TestCase):
                 }
                 self.assertIn("enabled_options", game_columns)
                 self.assertIn("display_name", game_columns)
+                self.assertIn("revision", game_columns)
+                self.assertIn("advance_mode", game_columns)
             finally:
                 connection.close()
 
@@ -204,6 +241,9 @@ class DatabaseSchemaTests(unittest.TestCase):
             self.assertNotIn("llm_profiles", table_names)
             self.assertEqual(game_profile_id, "profile_1")
             self.assertEqual(game_display_name, "game_1")
+            runtime = connection.execute("select revision, advance_mode from games where id = 'game_1'").fetchone()
+            self.assertEqual(runtime["revision"], 0)
+            self.assertIsNone(runtime["advance_mode"])
             self.assertEqual(player_profile_id, "profile_1")
             self.assertIsNone(player_original_name)
             self.assertEqual(decision_profile_id, "profile_1")

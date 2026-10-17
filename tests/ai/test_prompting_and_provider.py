@@ -930,7 +930,7 @@ class PromptingAndProviderTests(unittest.TestCase):
     def test_ai_player_accepts_plain_text_speech_output(self):
         class TextProvider:
             def chat_completion(self, profile, messages):
-                return "我觉得这轮先看车队票型，暂时不急着下定论。"
+                return LlmCompletionResult(content="我觉得这轮先看车队票型，暂时不急着下定论。")
 
         state = create_five_player_game(seed=21)
         state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
@@ -945,13 +945,13 @@ class PromptingAndProviderTests(unittest.TestCase):
     def test_ai_player_accepts_json_speech_without_stance(self):
         class JsonProvider:
             def chat_completion(self, profile, messages):
-                return json.dumps(
+                return LlmCompletionResult(content=json.dumps(
                     {
                         "public_message": "这轮我先看车队结构和后续票型。",
                         "private_reason_summary": "发言阶段不强制给 stance。",
                     },
                     ensure_ascii=False,
-                )
+                ))
 
         state = create_five_player_game(seed=21)
         state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
@@ -993,11 +993,11 @@ class PromptingAndProviderTests(unittest.TestCase):
     def test_ai_player_extracts_malformed_speech_json_without_private_summary_leak(self):
         class AlmostJsonProvider:
             def chat_completion(self, profile, messages):
-                return (
+                return LlmCompletionResult(content=(
                     '{"public_message":"第一轮我继续信任player_1和player_2，'
                     '第二轮可以考虑带player_3。",'
                     '"private_reason_summary":"这段不能公开。”}'
-                )
+                ))
 
         state = create_five_player_game(seed=21)
         state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
@@ -1015,7 +1015,7 @@ class PromptingAndProviderTests(unittest.TestCase):
     def test_ai_player_accepts_plain_text_vote_output(self):
         class TextProvider:
             def chat_completion(self, profile, messages):
-                return "反对，因为这个车队目前缺少足够的公开依据。"
+                return LlmCompletionResult(content="反对，因为这个车队目前缺少足够的公开依据。")
 
         state = create_five_player_game(seed=21)
         state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
@@ -1038,26 +1038,7 @@ class PromptingAndProviderTests(unittest.TestCase):
 
         self.assertEqual(parsed, {"vote": "approve"})
 
-    def test_ai_player_retries_empty_output_until_valid_decision(self):
-        attempts = []
-
-        class RetryProvider:
-            def chat_completion(self, profile, messages):
-                attempts.append(messages)
-                if len(attempts) < 3:
-                    raise EmptyModelOutputError("non-empty message content required")
-                return LlmCompletionResult(content='{"vote":"approve"}')
-
-        state = create_five_player_game(seed=21)
-        state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
-        profile = test_profile().model_copy(update={"timeout_retries": 2})
-
-        result = AiPlayer(provider=RetryProvider()).vote(state, state.players[3].id, profile)
-
-        self.assertEqual(result.decision.vote, Vote.APPROVE)
-        self.assertEqual(len(attempts), 3)
-
-    def test_ai_player_stops_after_configured_empty_output_retries(self):
+    def test_ai_player_does_not_repeat_transport_empty_output_errors(self):
         attempts = []
 
         class EmptyProvider:
@@ -1066,13 +1047,13 @@ class PromptingAndProviderTests(unittest.TestCase):
                 raise EmptyModelOutputError("non-empty message content required")
 
         state = create_five_player_game(seed=21)
-        profile = test_profile().model_copy(update={"timeout_retries": 2})
+        profile = test_profile().model_copy(update={"parse_retries": 2})
 
         with self.assertRaises(AiDecisionError) as captured:
             AiPlayer(provider=EmptyProvider()).propose_team(state, state.players[0].id, profile)
 
         self.assertEqual(captured.exception.error_type, "EmptyModelOutputError")
-        self.assertEqual(len(attempts), 3)
+        self.assertEqual(len(attempts), 1)
 
     def test_ai_player_retries_invalid_json_until_valid_decision(self):
         attempts = []
@@ -1081,17 +1062,17 @@ class PromptingAndProviderTests(unittest.TestCase):
             def chat_completion(self, profile, messages):
                 attempts.append(messages)
                 if len(attempts) == 1:
-                    return "{not json"
-                return json.dumps(
+                    return LlmCompletionResult(content="{not json")
+                return LlmCompletionResult(content=json.dumps(
                     {
                         "team": ["player_1", "player_2"],
                         "public_message": "先开一个常规两人车。",
                     },
                     ensure_ascii=False,
-                )
+                ))
 
         state = create_five_player_game(seed=21)
-        profile = LlmProfile(**(test_profile().model_dump() | {"timeout_retries": 1}))
+        profile = LlmProfile(**(test_profile().model_dump() | {"parse_retries": 1}))
 
         result = AiPlayer(provider=RetryProvider()).propose_team(
             state,
@@ -1110,12 +1091,12 @@ class PromptingAndProviderTests(unittest.TestCase):
             def chat_completion(self, profile, messages):
                 attempts.append(messages)
                 if len(attempts) == 1:
-                    return json.dumps({})
-                return json.dumps({"vote": "approve"})
+                    return LlmCompletionResult(content=json.dumps({}))
+                return LlmCompletionResult(content=json.dumps({"vote": "approve"}))
 
         state = create_five_player_game(seed=21)
         state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
-        profile = LlmProfile(**(test_profile().model_dump() | {"timeout_retries": 1}))
+        profile = LlmProfile(**(test_profile().model_dump() | {"parse_retries": 1}))
 
         result = AiPlayer(provider=RetryProvider()).vote(state, state.players[3].id, profile)
 
@@ -1130,12 +1111,12 @@ class PromptingAndProviderTests(unittest.TestCase):
             def chat_completion(self, profile, messages):
                 attempts.append(messages)
                 if len(attempts) == 1:
-                    return json.dumps({"vote": "maybe"})
-                return json.dumps({"vote": "reject"})
+                    return LlmCompletionResult(content=json.dumps({"vote": "maybe"}))
+                return LlmCompletionResult(content=json.dumps({"vote": "reject"}))
 
         state = create_five_player_game(seed=21)
         state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
-        profile = LlmProfile(**(test_profile().model_dump() | {"timeout_retries": 1}))
+        profile = LlmProfile(**(test_profile().model_dump() | {"parse_retries": 1}))
 
         result = AiPlayer(provider=RetryProvider()).vote(state, state.players[3].id, profile)
 
@@ -1150,14 +1131,14 @@ class PromptingAndProviderTests(unittest.TestCase):
             def chat_completion(self, profile, messages):
                 attempts.append(messages)
                 if len(attempts) == 1:
-                    return json.dumps({"mission_action": "fail"})
-                return json.dumps({"mission_action": "success"})
+                    return LlmCompletionResult(content=json.dumps({"mission_action": "fail"}))
+                return LlmCompletionResult(content=json.dumps({"mission_action": "success"}))
 
         state = create_five_player_game(seed=22)
         good_player = next(player for player in state.players if player.role == Role.LOYAL_SERVANT)
         teammate = next(player for player in state.players if player.id != good_player.id)
         state = propose_team(state, state.players[0].id, (good_player.id, teammate.id))
-        profile = LlmProfile(**(test_profile().model_dump() | {"timeout_retries": 1}))
+        profile = LlmProfile(**(test_profile().model_dump() | {"parse_retries": 1}))
 
         result = AiPlayer(provider=RetryProvider()).mission_action(state, good_player.id, profile)
 
@@ -1168,7 +1149,7 @@ class PromptingAndProviderTests(unittest.TestCase):
     def test_ai_player_raises_when_model_returns_illegal_vote(self):
         class BadProvider:
             def chat_completion(self, profile, messages):
-                return json.dumps({"vote": "maybe"})
+                return LlmCompletionResult(content=json.dumps({"vote": "maybe"}))
 
         state = create_five_player_game(seed=21)
         state = propose_team(state, state.players[0].id, ("player_1", "player_2"))
@@ -1184,12 +1165,12 @@ class PromptingAndProviderTests(unittest.TestCase):
     def test_ai_player_raises_when_good_player_model_returns_fail(self):
         class BadProvider:
             def chat_completion(self, profile, messages):
-                return json.dumps(
+                return LlmCompletionResult(content=json.dumps(
                     {
                         "mission_action": "fail",
                         "private_reason_summary": "bad output",
                     }
-                )
+                ))
 
         state = create_five_player_game(seed=22)
         good_player = next(player for player in state.players if player.role == Role.LOYAL_SERVANT)

@@ -25,6 +25,8 @@ class GameSummary:
     archived_at: str | None
     created_at: str
     updated_at: str
+    revision: int = 0
+    advance_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -248,6 +250,22 @@ class GameRepository:
         if self._autocommit:
             self._connection.commit()
 
+    def update_runtime(self, game_id: str, *, advance_mode: str | None, status: str | None = None) -> None:
+        self._connection.execute(
+            """update games set advance_mode = ?, status = coalesce(?, status),
+               revision = revision + 1, updated_at = ? where id = ?""",
+            (advance_mode, status, _utc_now(), game_id),
+        )
+        self._commit_if_needed()
+
+    def rebuild_rule_summary(self, game_id: str, state: GameState) -> None:
+        self._connection.execute(
+            """update games set current_round = ?, current_phase = ?, winner = ?
+               where id = ?""",
+            (state.current_round, state.phase.value, state.winner.value if state.winner else None, game_id),
+        )
+        self._commit_if_needed()
+
 
 def _matching_numbers(values: Iterable[str | None], pattern: str) -> list[int]:
     numbers = []
@@ -275,6 +293,8 @@ def _game_summary_from_row(row: sqlite3.Row) -> GameSummary:
         archived_at=row["archived_at"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        revision=row["revision"],
+        advance_mode=row["advance_mode"],
     )
 
 

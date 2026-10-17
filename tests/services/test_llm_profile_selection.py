@@ -6,6 +6,7 @@ from unittest.mock import patch
 from backend.app.game.rules import create_five_player_game
 from backend.app.llm.profiles import LlmProfileInput
 from backend.app.services.game_service import GameService
+from backend.app.services.game_work import GameUnitOfWork
 from backend.app.storage.database import connect_sqlite, initialize_database
 from backend.app.storage.game_repository import GameRepository
 from backend.app.storage.llm_profile_repository import LlmProfileRepository
@@ -41,13 +42,13 @@ class LlmProfileSelectionTests(unittest.TestCase):
         )
         self.games.set_player_llm_profile("game_1", "player_3", "override")
 
-        self.assertEqual(self.service._profile_for_ai("game_1", "player_2").id, "default")
-        self.assertEqual(self.service._profile_for_ai("game_1", "player_3").id, "override")
+        self.assertEqual(self._profile_for_ai("game_1", "player_2").id, "default")
+        self.assertEqual(self._profile_for_ai("game_1", "player_3").id, "override")
 
     def test_missing_configuration_keeps_unconfigured_placeholder(self):
         self.games.save_new_game(create_five_player_game(seed=42), "game_1")
 
-        self.assertEqual(self.service._profile_for_ai("game_1", "player_2").id, "unconfigured")
+        self.assertEqual(self._profile_for_ai("game_1", "player_2").id, "unconfigured")
 
     def test_missing_override_does_not_silently_use_default(self):
         self.games.save_new_game(
@@ -55,4 +56,9 @@ class LlmProfileSelectionTests(unittest.TestCase):
         )
         self.games.set_player_llm_profile("game_1", "player_3", "missing")
 
-        self.assertEqual(self.service._profile_for_ai("game_1", "player_3").id, "unconfigured")
+        self.assertEqual(self._profile_for_ai("game_1", "player_3").id, "unconfigured")
+
+    def _profile_for_ai(self, game_id, player_id):
+        with GameUnitOfWork(self.service.database) as work:
+            state, summary = work.load(game_id)
+        return self.service.decisions.profile_for(state, summary, player_id)

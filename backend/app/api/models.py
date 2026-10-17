@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from pydantic import BaseModel
 
 from backend.app.game.models import GameOption
 from backend.app.llm.profiles import LlmProfileInput
@@ -39,14 +40,110 @@ class CreateGameRequest:
 class HumanActionRequest:
     action_type: str
     payload: dict[str, Any]
+    expected_revision: int
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "HumanActionRequest":
         action_type = _required_string(payload, "action_type")
         return cls(
             action_type=action_type,
-            payload={key: value for key, value in payload.items() if key != "action_type"},
+            expected_revision=expected_revision(payload),
+            payload={key: value for key, value in payload.items() if key not in {"action_type", "expected_revision"}},
         )
+
+
+def expected_revision(payload: dict[str, Any]) -> int:
+    value = payload.get("expected_revision")
+    if type(value) is not int or value < 0:
+        raise ValueError("expected_revision must be a non-negative integer")
+    return value
+
+
+class PublicEventView(BaseModel):
+    id: int
+    game_id: str
+    event_index: int
+    event_type: str
+    public_payload: dict[str, Any]
+    created_at: str
+
+
+class PlayerView(BaseModel):
+    id: str
+    seat_index: int
+    name: str
+    original_name: str | None
+    is_human: bool
+    visible_role: str | None
+    revealed_role: str | None
+
+
+class MissionView(BaseModel):
+    round_number: int
+    team_size: int
+    fail_cards_required: int
+
+
+class GameView(BaseModel):
+    id: str
+    display_name: str
+    status: str
+    revision: int
+    is_advancing: bool
+    player_count: int
+    phase: str
+    current_round: int
+    leader_player_id: str
+    missions: list[MissionView]
+    enabled_options: list[str]
+    human_player_id: str
+    human_role: str
+    human_faction: str
+    known_evil_player_ids: list[str]
+    lady_of_lake_holder_player_id: str | None
+    lady_of_lake_previous_holder_ids: list[str]
+    lady_of_lake_eligible_target_ids: list[str]
+    lady_of_lake_known_factions: dict[str, str]
+    players: list[PlayerView]
+    proposed_team: list[str]
+    speech_order: list[str]
+    speeches: dict[str, str]
+    votes_cast_count: int
+    quest_actions_submitted_count: int
+    quest_results: list[str]
+    failed_team_votes: int
+    forced_team: bool
+    winner: str | None
+    assassination_target_id: str | None
+    next_human_action: str | None
+    events: list[PublicEventView]
+
+
+class GameSummaryView(BaseModel):
+    id: str
+    display_name: str
+    status: str
+    revision: int
+    player_count: int
+    enabled_options: list[str]
+    current_round: int
+    current_phase: str
+    winner: str | None
+    archived_at: str | None
+    created_at: str
+    updated_at: str
+
+
+class AuditEventView(PublicEventView):
+    private_payload: dict[str, Any] | None
+
+
+class RoomReview(BaseModel):
+    game: GameView
+    events: list[AuditEventView]
+    ai_decisions: list[dict[str, Any]]
+    usage_by_player: list[dict[str, Any]]
+    usage_by_model: list[dict[str, Any]]
 
 
 class LlmProfileRequest(LlmProfileInput):

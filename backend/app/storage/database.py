@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Union
 
@@ -10,7 +12,7 @@ DatabasePath = Union[str, Path]
 
 
 def connect_sqlite(path: DatabasePath) -> sqlite3.Connection:
-    connection = sqlite3.connect(str(path), check_same_thread=False)
+    connection = sqlite3.connect(str(path), check_same_thread=False, uri=str(path).startswith("file:"), timeout=10)
     connection.row_factory = sqlite3.Row
     connection.execute("pragma foreign_keys = on")
     return connection
@@ -26,6 +28,8 @@ def initialize_database(connection: sqlite3.Connection) -> None:
         connection.execute("update games set display_name = id where display_name is null")
         _ensure_column(connection, "games", "enabled_options", "enabled_options text not null default '[]'")
         _ensure_column(connection, "games", "archived_at", "archived_at text")
+        _ensure_column(connection, "games", "revision", "revision integer not null default 0")
+        _ensure_column(connection, "games", "advance_mode", "advance_mode text")
         _ensure_column(connection, "players", "original_name", "original_name text")
         _ensure_column(connection, "ai_decisions", "prompt_tokens", "prompt_tokens integer")
         _ensure_column(connection, "ai_decisions", "completion_tokens", "completion_tokens integer")
@@ -55,6 +59,8 @@ def _migrate_legacy_llm_profile_references(connection: sqlite3.Connection) -> No
                 winner text,
                 default_llm_profile_id text,
                 archived_at text,
+                revision integer not null default 0,
+                advance_mode text,
                 created_at text not null,
                 updated_at text not null
             )
@@ -65,10 +71,14 @@ def _migrate_legacy_llm_profile_references(connection: sqlite3.Connection) -> No
             "status",
             "player_count",
             "role_set",
+            "enabled_options",
             "current_round",
             "current_phase",
             "winner",
             "default_llm_profile_id",
+            "archived_at",
+            "revision",
+            "advance_mode",
             "created_at",
             "updated_at",
         ),
@@ -82,6 +92,7 @@ def _migrate_legacy_llm_profile_references(connection: sqlite3.Connection) -> No
                 game_id text not null,
                 seat_index integer not null,
                 name text not null,
+                original_name text,
                 is_human integer not null,
                 role text not null,
                 faction text not null,
@@ -96,6 +107,7 @@ def _migrate_legacy_llm_profile_references(connection: sqlite3.Connection) -> No
             "game_id",
             "seat_index",
             "name",
+            "original_name",
             "is_human",
             "role",
             "faction",
@@ -127,6 +139,11 @@ def _migrate_legacy_llm_profile_references(connection: sqlite3.Connection) -> No
                 output_raw text,
                 output_parsed text,
                 validation_status text not null,
+                prompt_tokens integer,
+                completion_tokens integer,
+                total_tokens integer,
+                cached_tokens integer,
+                cache_hit_rate real,
                 created_at text not null,
                 foreign key(game_id) references games(id) on delete cascade,
                 foreign key(game_id, player_id) references players(game_id, id) on delete cascade
@@ -153,6 +170,11 @@ def _migrate_legacy_llm_profile_references(connection: sqlite3.Connection) -> No
             "output_raw",
             "output_parsed",
             "validation_status",
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "cached_tokens",
+            "cache_hit_rate",
             "created_at",
         ),
     )
@@ -213,3 +235,60 @@ def _ensure_column(
     if column_name in columns:
         return
     connection.execute(f"alter table {table_name} add column {column_definition}")
+
+
+class Database:
+    """Own short connection scopes; supplied connections are for test-scoped databases."""
+
+    def __init__(self, path: DatabasePath | sqlite3.Connection):
+        self._lock = threading.RLock()
+        self._shared = path if isinstance(path, sqlite3.Connection) else None
+        self._path = str(path)
+        self._keeper = None
+        self._closed = False
+        if self._path == ":memory:":
+            self._shared = connect_sqlite(":memory:")
+            self._keeper = self._shared
+        if self._shared is not None:
+            initialize_database(self._shared)
+        else:
+            connection = connect_sqlite(self._path)
+            try:
+                connection.execute("pragma journal_mode = wal")
+                initialize_database(connection)
+            finally:
+                connection.close()
+
+    @contextmanager
+    def connection(self, *, write: bool = False):
+        if self._shared is not None:
+            with self._lock:
+                if self._closed:
+                    raise RuntimeError("database is closed")
+                try:
+                    self._shared.execute("begin immediate" if write else "begin")
+                    yield self._shared
+                    self._shared.commit()
+                except BaseException:
+                    self._shared.rollback()
+                    raise
+            return
+        if self._closed:
+            raise RuntimeError("database is closed")
+        connection = connect_sqlite(self._path)
+        try:
+            connection.execute("begin immediate" if write else "begin")
+            yield connection
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            if self._keeper is not None:
+                self._keeper.close()
+                self._keeper = None

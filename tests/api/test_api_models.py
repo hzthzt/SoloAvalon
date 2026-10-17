@@ -56,7 +56,7 @@ class ApiModelsTests(unittest.TestCase):
             HumanActionRequest.from_payload({"vote": "approve"})
 
         request = HumanActionRequest.from_payload(
-            {"action_type": "vote", "vote": "approve"}
+            {"action_type": "vote", "vote": "approve", "expected_revision": 3}
         )
 
         self.assertEqual(request.action_type, "vote")
@@ -79,7 +79,7 @@ class ApiModelsTests(unittest.TestCase):
         self.assertFalse(hasattr(request, "temperature"))
         self.assertFalse(hasattr(request, "max_tokens"))
         self.assertEqual(request.timeout, 30.0)
-        self.assertEqual(request.timeout_retries, 3)
+        self.assertEqual(request.transport_retries, 3)
 
     def test_llm_profile_request_defaults_timeout_retries_to_five(self):
         request = LlmProfileRequest.from_payload(
@@ -93,7 +93,7 @@ class ApiModelsTests(unittest.TestCase):
         )
 
         self.assertEqual(request.reasoning_effort, "medium")
-        self.assertEqual(request.timeout_retries, 5)
+        self.assertEqual(request.transport_retries, 5)
 
     def test_llm_profile_request_ignores_legacy_temperature(self):
         request = LlmProfileRequest.from_payload(

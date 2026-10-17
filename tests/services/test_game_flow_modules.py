@@ -16,7 +16,11 @@ from backend.app.storage.ai_memory_repository import AiMemorySnapshotInput
 from backend.app.storage.event_store import EventStore
 from backend.app.storage.database import connect_sqlite, initialize_database
 
-from tests.services.test_game_service import _DeterministicProvider
+from tests.game_support import _DeterministicProvider, make_service, drain
+from backend.app.storage.game_repository import GameRepository
+from backend.app.storage.ai_decision_repository import AiDecisionRepository
+from backend.app.storage.ai_memory_repository import AiMemoryRepository
+from backend.app.services.game_work import GameUnitOfWork
 
 
 class GameFlowModuleTests(unittest.TestCase):
@@ -276,7 +280,7 @@ class GameFlowModuleTests(unittest.TestCase):
 def _service():
     connection = connect_sqlite(":memory:")
     initialize_database(connection)
-    return GameService(connection, ai_player=AiPlayer(provider=_DeterministicProvider()))
+    return _FlowFixture(connection)
 
 
 class _FailingGameRepository:
@@ -359,3 +363,34 @@ def _with_ai_audit(game_id, result):
             },
         ),
     )
+
+
+class _FlowFixture:
+    def __init__(self, connection):
+        self.connection = connection
+        self.services = make_service(connection)
+        self._games = GameRepository(connection)
+        self._events = EventStore(connection)
+        self._ai_decisions = AiDecisionRepository(connection)
+        self._ai_memory = AiMemoryRepository(connection)
+        self._states = {}
+
+    def create_game(self, **kwargs):
+        return self.services.application.create_game(**kwargs)
+
+    def _state(self, game_id):
+        if game_id not in self._states:
+            with GameUnitOfWork(self.services.database) as work:
+                self._states[game_id] = work.load(game_id)[0]
+        return self._states[game_id]
+
+    def submit_human_action(self, game_id, action, payload):
+        revision = self.services.queries.get_game(game_id)["revision"]
+        self.services.application.submit_human_action(game_id, revision, action, payload)
+        return drain(self.services, game_id)
+
+    def list_events(self, game_id):
+        return self._events.list_events(game_id)
+
+    def list_games(self):
+        return self._games.list_games()

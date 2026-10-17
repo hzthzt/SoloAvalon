@@ -6,24 +6,11 @@ from pathlib import Path
 from backend.app.api.games import build_games_router
 from backend.app.api.llm_profiles import build_llm_profiles_router
 from backend.app.services.game_service import GameService
-from backend.app.storage.database import connect_sqlite, initialize_database
-from backend.app.storage.llm_profile_repository import LlmProfileRepository
 
-try:
-    from fastapi import FastAPI
-    from fastapi.middleware.cors import CORSMiddleware
-except ImportError:
-    class FastAPI:
-        def __init__(self, title: str):
-            self.title = title
+from contextlib import asynccontextmanager
 
-        def include_router(self, router):
-            return None
-
-        def add_middleware(self, *args, **kwargs):
-            return None
-
-    CORSMiddleware = None
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 
 def _database_path() -> str:
@@ -41,25 +28,28 @@ def _frontend_origins() -> list[str]:
     return origins
 
 
-connection = connect_sqlite(_database_path())
-initialize_database(connection)
-game_service = GameService(connection)
-llm_profile_repository = LlmProfileRepository()
+def create_app(database_path=None, *, ai_player=None, profiles=None, **runner_options) -> FastAPI:
+    services = GameService(database_path if database_path is not None else _database_path(),
+                           ai_player=ai_player, profiles=profiles, **runner_options)
 
-app = FastAPI(title="SoloAvalon")
+    @asynccontextmanager
+    async def lifespan(app):
+        services.runner.start()
+        try:
+            yield
+        finally:
+            services.runner.stop()
+            services.database.close()
 
-if CORSMiddleware is not None:
+    app = FastAPI(title="SoloAvalon", lifespan=lifespan)
+    app.state.services = services
     app.add_middleware(
-        CORSMiddleware,
-        allow_origins=_frontend_origins(),
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        CORSMiddleware, allow_origins=_frontend_origins(), allow_credentials=True,
+        allow_methods=["*"], allow_headers=["*"],
     )
+    app.include_router(build_games_router(services))
+    app.include_router(build_llm_profiles_router(services.profiles))
+    return app
 
-for router in (
-    build_games_router(game_service),
-    build_llm_profiles_router(llm_profile_repository),
-):
-    if router is not None:
-        app.include_router(router)
+
+app = create_app()

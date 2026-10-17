@@ -11,6 +11,8 @@ create table if not exists games (
     winner text,
     default_llm_profile_id text,
     archived_at text,
+    revision integer not null default 0,
+    advance_mode text,
     created_at text not null,
     updated_at text not null
 );

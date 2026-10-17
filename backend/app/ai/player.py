@@ -5,7 +5,7 @@ from typing import Any, Callable, Generic, TypeVar
 
 from backend.app.game.models import GameState, Phase
 from backend.app.llm.profiles import LlmProfile
-from backend.app.llm.provider import EmptyModelOutputError, LlmProvider
+from backend.app.llm.provider import LlmProvider
 from backend.app.prompting.schemas import (
     assassination_decision_from_output,
     lady_of_lake_decision_from_output,
@@ -255,18 +255,14 @@ class AiPlayer:
                 cache_hit_rate=_usage_float(usage["cache_hit_rate"]),
             ) from exc
 
-        for retry_index in range(profile.timeout_retries + 1):
+        for retry_index in range(profile.parse_retries + 1):
             output_raw: str | None = None
             output_parsed: dict[str, Any] | None = None
             usage = _empty_usage()
             try:
                 completion = self._provider.chat_completion(profile, messages)
-                output_raw = _completion_content(completion)
+                output_raw = completion.content
                 usage = _completion_usage(completion)
-            except EmptyModelOutputError as exc:
-                if retry_index < profile.timeout_retries:
-                    continue
-                raise_decision_error(exc, output_raw, output_parsed, usage)
             except Exception as exc:
                 raise_decision_error(exc, output_raw, output_parsed, usage)
 
@@ -280,7 +276,7 @@ class AiPlayer:
                 last_output_raw = output_raw
                 last_output_parsed = output_parsed
                 last_usage = usage
-                if retry_index < profile.timeout_retries:
+                if retry_index < profile.parse_retries:
                     continue
                 raise_decision_error(exc, last_output_raw, last_output_parsed, last_usage)
             else:
@@ -328,13 +324,6 @@ def _parse_decision_output(
         except Exception as text_exc:
             raise text_exc from json_exc
     return parse_decision(output_parsed), output_parsed
-
-
-def _completion_content(completion: Any) -> str:
-    content = getattr(completion, "content", completion)
-    if not isinstance(content, str):
-        raise TypeError("llm completion content must be a string")
-    return content
 
 
 def _completion_usage(completion: Any) -> dict[str, int | float | None]:

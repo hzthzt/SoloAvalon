@@ -68,7 +68,18 @@ class LlmProfileInput(BaseModel):
     model: NonEmptyString
     reasoning_effort: ReasoningEffort = "medium"
     timeout: float = Field(gt=0, allow_inf_nan=False)
-    timeout_retries: int = Field(default=5, ge=0)
+    transport_retries: int = Field(default=5, ge=0)
+    parse_retries: int = Field(default=5, ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_retries(cls, value):
+        if isinstance(value, dict) and "timeout_retries" in value:
+            value = dict(value)
+            legacy = value.pop("timeout_retries")
+            value.setdefault("transport_retries", legacy)
+            value.setdefault("parse_retries", legacy)
+        return value
 
     @field_validator("base_url")
     @classmethod

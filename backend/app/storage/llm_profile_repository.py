@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import threading
+from functools import wraps
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -8,11 +10,22 @@ from pydantic import ValidationError
 
 from backend.app.llm.profiles import LlmProfile, LlmProfileConfig, LlmProfileInput
 
+_file_lock = threading.RLock()
+
+
+def _serialized(method):
+    @wraps(method)
+    def wrapped(*args, **kwargs):
+        with _file_lock:
+            return method(*args, **kwargs)
+    return wrapped
+
 
 class LlmProfileRepository:
     def __init__(self, config_path: str | Path | None = None):
         self._config_path = Path(config_path) if config_path is not None else _default_config_path()
 
+    @_serialized
     def create_profile(
         self,
         profile_id: str,
@@ -31,12 +44,14 @@ class LlmProfileRepository:
         self._save_profiles([profile, *profiles])
         return profile
 
+    @_serialized
     def get_profile(self, profile_id: str) -> LlmProfile | None:
         for profile in self._load_profiles():
             if profile.id == profile_id:
                 return profile
         return None
 
+    @_serialized
     def list_profiles(self) -> list[LlmProfile]:
         return sorted(
             self._load_profiles(),
@@ -44,6 +59,7 @@ class LlmProfileRepository:
             reverse=True,
         )
 
+    @_serialized
     def update_profile(
         self,
         profile_id: str,
@@ -69,6 +85,7 @@ class LlmProfileRepository:
         self._save_profiles(next_profiles)
         return updated_profile
 
+    @_serialized
     def delete_profile(self, profile_id: str) -> None:
         profiles = [profile for profile in self._load_profiles() if profile.id != profile_id]
         self._save_profiles(profiles)

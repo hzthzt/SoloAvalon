@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from backend.app.game.models import (
     Faction,
     GameOption,
     GameState,
     MissionAction,
+    MissionConfig,
     Phase,
     Player,
     Role,
@@ -42,6 +43,7 @@ AUDIT_EVENT_TYPES = {
     "roles_assigned",
     "private_view_recorded",
     "ai_decision",
+    "runner_error",
 }
 
 RULE_EVENT_TYPES = {
@@ -132,19 +134,33 @@ class GameStateLoader:
         if GameOption.LADY_OF_LAKE in enabled_options:
             lake_holder = f"player_{summary.player_count}"
             lake_previous_holders = (lake_holder,)
+        history = self._events.list_events(game_id)
+        created = next((event for event in history if event.event_type == "game_created"), None)
+        missions = STANDARD_MISSION_CONFIGS[summary.player_count]
+        initial_error = None
+        if created is not None and "missions" in created.public_payload:
+            try:
+                missions = tuple(MissionConfig(**mission) for mission in created.public_payload["missions"])
+                if not missions:
+                    raise ValueError("persisted missions must not be empty")
+            except (ValueError, KeyError, TypeError) as error:
+                missions = STANDARD_MISSION_CONFIGS[summary.player_count]
+                initial_error = error
         state = GameState(
             players=players,
-            missions=STANDARD_MISSION_CONFIGS[summary.player_count],
+            missions=missions,
             enabled_options=enabled_options,
             lady_of_lake_holder_player_id=lake_holder,
             lady_of_lake_previous_holder_ids=lake_previous_holders,
         )
+        if initial_error is not None:
+            return LoadedGameState(state, 0, initial_error, created.event_index)
 
         last_replayed_event_index = 0
-        for event in self._events.list_events(game_id):
+        for event in history:
             try:
                 state = apply_replay_event(state, event)
-            except (InvalidActionError, ValueError) as exc:
+            except (InvalidActionError, ValueError, KeyError, TypeError) as exc:
                 return LoadedGameState(
                     state=state,
                     last_replayed_event_index=last_replayed_event_index,
@@ -264,6 +280,7 @@ class GameStepRunner:
                     {
                         "approved": state_after.phase == Phase.QUEST,
                         "failed_team_votes": state_after.failed_team_votes,
+                        "votes": {player_id: vote.value for player_id, vote in state.votes.items()},
                     },
                 ),
             ),
@@ -307,6 +324,7 @@ class GameCommitter:
         ai_memory: AiMemoryRepository,
         states: dict[str, GameState],
         event_notifier: GameEventNotifierProtocol | None = None,
+        manage_transaction: bool = True,
     ):
         self._connection = connection
         self._games = (
@@ -331,6 +349,7 @@ class GameCommitter:
         )
         self._states = states
         self._event_notifier = event_notifier
+        self._manage_transaction = manage_transaction
 
     def commit_step(
         self,
@@ -359,12 +378,15 @@ class GameCommitter:
                     event.private_payload,
                 )
             self._games.update_game_state(game_id, step_result.state_after)
-            self._connection.commit()
+            if self._manage_transaction:
+                self._connection.commit()
         except Exception:
-            self._connection.rollback()
+            if self._manage_transaction:
+                self._connection.rollback()
             raise
-        self._states[game_id] = step_result.state_after
-        self._notify_game_events(game_id)
+        if self._manage_transaction:
+            self._states[game_id] = step_result.state_after
+            self._notify_game_events(game_id)
         return step_result.state_after
 
     def commit_ai_error(
@@ -382,277 +404,18 @@ class GameCommitter:
                 audit_event.private_payload,
             )
             self._games.update_game_status(game_id, "error_paused")
-            self._connection.commit()
+            if self._manage_transaction:
+                self._connection.commit()
         except Exception:
-            self._connection.rollback()
+            if self._manage_transaction:
+                self._connection.rollback()
             raise
-        self._notify_game_events(game_id)
+        if self._manage_transaction:
+            self._notify_game_events(game_id)
 
     def _notify_game_events(self, game_id: str) -> None:
         if self._event_notifier is not None:
             self._event_notifier.notify(game_id)
-
-
-class GameAdvanceLoop:
-    def __init__(
-        self,
-        *,
-        ai_player: Callable[[], Any],
-        profile_for_ai: Callable[[str, str], Any],
-        run_ai_turn: Callable[..., Any],
-        attach_ai_decision: Callable[..., StepResult],
-        public_events_for_ai: Callable[[str], list[dict[str, Any]]],
-        next_human_action: Callable[[GameState], str | None],
-        set_state: Callable[[str, GameState], None],
-        step_runner: GameStepRunner,
-        committer: GameCommitter,
-    ):
-        self._ai_player = ai_player
-        self._profile_for_ai = profile_for_ai
-        self._run_ai_turn = run_ai_turn
-        self._attach_ai_decision = attach_ai_decision
-        self._public_events_for_ai = public_events_for_ai
-        self._next_human_action = next_human_action
-        self._set_state = set_state
-        self._step_runner = step_runner
-        self._committer = committer
-
-    def advance_until_blocked(self, game_id: str, state: GameState) -> GameState:
-        for _ in range(100):
-            human_action = self._next_human_action(state)
-            if human_action is not None or state.phase == Phase.COMPLETE:
-                self._set_state(game_id, state)
-                return state
-
-            if state.phase == Phase.TEAM_PROPOSAL:
-                leader = state.players[state.leader_index]
-                profile = self._profile_for_ai(game_id, leader.id)
-                result = self._run_ai_turn(
-                    game_id,
-                    leader.id,
-                    state.phase,
-                    "team_proposal",
-                    profile,
-                    lambda: self._ai_player().propose_team(
-                        state,
-                        leader.id,
-                        profile,
-                        public_events=self._public_events_for_ai(game_id),
-                    ),
-                )
-                step_result = self._step_runner.apply_player_action(
-                    state,
-                    leader.id,
-                    "propose_team",
-                    {"team": result.decision.team},
-                )
-                step_result = self._attach_ai_decision(
-                    step_result,
-                    game_id,
-                    leader.id,
-                    Phase.TEAM_PROPOSAL,
-                    "team_proposal",
-                    profile,
-                    result,
-                )
-                state = self._committer.commit_step(game_id, state, step_result)
-            elif state.phase == Phase.SPEECH:
-                next_speaker_id = state.speech_order[len(state.speeches)]
-                profile = self._profile_for_ai(game_id, next_speaker_id)
-                result = self._run_ai_turn(
-                    game_id,
-                    next_speaker_id,
-                    Phase.SPEECH,
-                    "speech",
-                    profile,
-                    lambda: self._ai_player().speak(
-                        state,
-                        next_speaker_id,
-                        profile,
-                        public_events=self._public_events_for_ai(game_id),
-                    ),
-                )
-                step_result = self._step_runner.apply_player_action(
-                    state,
-                    next_speaker_id,
-                    "speak",
-                    {"message": result.decision.public_message},
-                )
-                step_result = self._attach_ai_decision(
-                    step_result,
-                    game_id,
-                    next_speaker_id,
-                    Phase.SPEECH,
-                    "speech",
-                    profile,
-                    result,
-                )
-                state = self._committer.commit_step(game_id, state, step_result)
-            elif state.phase == Phase.VOTING:
-                human = _human_player(state)
-                for player in state.players:
-                    if player.is_human or player.id in state.votes:
-                        continue
-                    profile = self._profile_for_ai(game_id, player.id)
-                    result = self._run_ai_turn(
-                        game_id,
-                        player.id,
-                        Phase.VOTING,
-                        "vote",
-                        profile,
-                        lambda: self._ai_player().vote(
-                            state,
-                            player.id,
-                            profile,
-                            public_events=self._public_events_for_ai(game_id),
-                        ),
-                    )
-                    step_result = self._step_runner.apply_player_action(
-                        state,
-                        player.id,
-                        "vote",
-                        {"vote": result.decision.vote.value},
-                    )
-                    step_result = self._attach_ai_decision(
-                        step_result,
-                        game_id,
-                        player.id,
-                        Phase.VOTING,
-                        "vote",
-                        profile,
-                        result,
-                    )
-                    state = self._committer.commit_step(game_id, state, step_result)
-                if human.id not in state.votes:
-                    self._set_state(game_id, state)
-                    return state
-                step_result = self._step_runner.finalize_vote(state)
-                state = self._committer.commit_step(game_id, state, step_result)
-            elif state.phase == Phase.QUEST:
-                human = _human_player(state)
-                for player_id in state.proposed_team:
-                    if player_id == human.id or player_id in state.quest_actions:
-                        continue
-                    player = next(player for player in state.players if player.id == player_id)
-                    if player.faction == Faction.GOOD:
-                        step_result = self._step_runner.apply_player_action(
-                            state,
-                            player_id,
-                            "mission_action",
-                            {"mission_action": MissionAction.SUCCESS.value},
-                        )
-                        state = self._committer.commit_step(game_id, state, step_result)
-                        continue
-                    profile = self._profile_for_ai(game_id, player_id)
-                    result = self._run_ai_turn(
-                        game_id,
-                        player_id,
-                        Phase.QUEST,
-                        "mission_action",
-                        profile,
-                        lambda: self._ai_player().mission_action(
-                            state,
-                            player_id,
-                            profile,
-                            public_events=self._public_events_for_ai(game_id),
-                        ),
-                    )
-                    step_result = self._step_runner.apply_player_action(
-                        state,
-                        player_id,
-                        "mission_action",
-                        {"mission_action": result.decision.mission_action.value},
-                    )
-                    step_result = self._attach_ai_decision(
-                        step_result,
-                        game_id,
-                        player_id,
-                        Phase.QUEST,
-                        "mission_action",
-                        profile,
-                        result,
-                    )
-                    state = self._committer.commit_step(game_id, state, step_result)
-                if human.id in state.proposed_team and human.id not in state.quest_actions:
-                    self._set_state(game_id, state)
-                    return state
-                step_result = self._step_runner.finalize_quest(state)
-                state = self._committer.commit_step(game_id, state, step_result)
-            elif state.phase == Phase.ASSASSINATION:
-                assassin = next(player for player in state.players if player.role.value == "assassin")
-                profile = self._profile_for_ai(game_id, assassin.id)
-                result = self._run_ai_turn(
-                    game_id,
-                    assassin.id,
-                    Phase.ASSASSINATION,
-                    "assassination",
-                    profile,
-                    lambda: self._ai_player().assassinate(
-                        state,
-                        assassin.id,
-                        profile,
-                        public_events=self._public_events_for_ai(game_id),
-                    ),
-                )
-                step_result = self._step_runner.apply_player_action(
-                    state,
-                    assassin.id,
-                    "assassinate",
-                    {"target_player_id": result.decision.target_player_id},
-                )
-                step_result = self._attach_ai_decision(
-                    step_result,
-                    game_id,
-                    assassin.id,
-                    Phase.ASSASSINATION,
-                    "assassination",
-                    profile,
-                    result,
-                )
-                state = self._committer.commit_step(game_id, state, step_result)
-            elif state.phase == Phase.LADY_OF_LAKE:
-                holder_id = state.lady_of_lake_holder_player_id
-                if holder_id is None:
-                    self._set_state(game_id, state)
-                    return state
-                holder = next(player for player in state.players if player.id == holder_id)
-                if holder.is_human:
-                    self._set_state(game_id, state)
-                    return state
-                profile = self._profile_for_ai(game_id, holder.id)
-                result = self._run_ai_turn(
-                    game_id,
-                    holder.id,
-                    Phase.LADY_OF_LAKE,
-                    "lady_of_lake",
-                    profile,
-                    lambda: self._ai_player().use_lady_of_lake(
-                        state,
-                        holder.id,
-                        profile,
-                        public_events=self._public_events_for_ai(game_id),
-                    ),
-                )
-                step_result = self._step_runner.apply_player_action(
-                    state,
-                    holder.id,
-                    "use_lady_of_lake",
-                    {"target_player_id": result.decision.target_player_id},
-                )
-                step_result = self._attach_ai_decision(
-                    step_result,
-                    game_id,
-                    holder.id,
-                    Phase.LADY_OF_LAKE,
-                    "lady_of_lake",
-                    profile,
-                    result,
-                )
-                state = self._committer.commit_step(game_id, state, step_result)
-            else:
-                self._set_state(game_id, state)
-                return state
-        raise RuntimeError("AI auto-advance exceeded safety limit")
 
 
 def apply_replay_event(state: GameState, event: EventRecord) -> GameState:
@@ -710,7 +473,7 @@ def apply_replay_event(state: GameState, event: EventRecord) -> GameState:
             str(public_payload["assassin_player_id"]),
             str(public_payload["target_player_id"]),
         )
-    return state
+    raise ValueError(f"unsupported game event type: {event.event_type}")
 
 
 def _human_player(state: GameState) -> Player:

@@ -56,15 +56,27 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(public_dict["api_key_masked"], "test********cdef")
         self.assertEqual(public_dict["reasoning_effort"], "high")
         self.assertNotIn("temperature", public_dict)
-        self.assertEqual(public_dict["timeout_retries"], 5)
+        self.assertEqual(public_dict["transport_retries"], 5)
         self.assertNotIn("max_tokens", public_dict)
 
     def test_profiles_default_to_five_timeout_retries(self):
         profile_input = LlmProfileInput(**_profile_input_kwargs())
         profile = LlmProfile(**_profile_kwargs())
 
-        self.assertEqual(profile_input.timeout_retries, 5)
-        self.assertEqual(profile.timeout_retries, 5)
+        self.assertEqual(profile_input.transport_retries, 5)
+        self.assertEqual(profile.transport_retries, 5)
+        self.assertEqual(profile.parse_retries, 5)
+
+    def test_legacy_retry_fields_fill_only_missing_new_fields(self):
+        for extra, expected in (
+            ({"timeout_retries": 2}, (2, 2)),
+            ({"timeout_retries": 2, "transport_retries": 1}, (1, 2)),
+            ({"timeout_retries": 2, "parse_retries": 0}, (2, 0)),
+        ):
+            with self.subTest(extra=extra):
+                profile = LlmProfile(**(_profile_kwargs() | extra))
+                self.assertEqual((profile.transport_retries, profile.parse_retries), expected)
+                self.assertNotIn("timeout_retries", profile.model_dump())
 
     def test_input_validation_rejects_invalid_runtime_values(self):
         with self.assertRaises(ValueError):

@@ -117,7 +117,7 @@ class LlmProfileRepositoryTests(unittest.TestCase):
                 migrated_profile = migrated_payload["profiles"][0]
 
                 self.assertEqual(loaded.reasoning_effort, "medium")
-                self.assertEqual(loaded.timeout_retries, 5)
+                self.assertEqual(loaded.transport_retries, 5)
                 self.assertEqual(migrated_profile["reasoning_effort"], "high")
                 self.assertNotIn("temperature", migrated_profile)
             finally:

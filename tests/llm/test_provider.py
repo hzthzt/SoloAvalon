@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 import httpx
-from openai import APIConnectionError, APITimeoutError, AuthenticationError, RateLimitError
+from openai import APIConnectionError, APIStatusError, APITimeoutError, AuthenticationError, RateLimitError
 
 from backend.app.ai.player import AiDecisionError, AiPlayer
 from backend.app.game.rules import create_five_player_game
@@ -119,8 +119,8 @@ class LlmProviderTests(unittest.TestCase):
 
         self.assertEqual(requests, [])
 
-    def test_sdk_retries_transport_failures_until_success(self):
-        for exception_type in (httpx.ReadTimeout, httpx.ConnectError):
+    def test_provider_retries_timeouts_until_success(self):
+        for exception_type in (httpx.ReadTimeout,):
             with self.subTest(exception_type=exception_type):
                 attempts = []
 
@@ -150,13 +150,13 @@ class LlmProviderTests(unittest.TestCase):
                     attempts.append(request)
                     raise cause("test connection failure", request=request)
 
-                profile = test_profile().model_copy(update={"timeout_retries": 2})
+                profile = test_profile().model_copy(update={"transport_retries": 2})
                 with patch("time.sleep"), self.assertRaises(expected_error):
                     LlmProvider(transport=httpx.MockTransport(handle)).chat_completion(profile, [])
 
-                self.assertEqual(len(attempts), 3)
+                self.assertEqual(len(attempts), 3 if cause is httpx.ReadTimeout else 1)
 
-    def test_sdk_retries_retryable_http_statuses(self):
+    def test_sdk_does_not_retry_http_statuses(self):
         for status in (408, 409, 429, 500):
             with self.subTest(status=status):
                 attempts = []
@@ -167,13 +167,9 @@ class LlmProviderTests(unittest.TestCase):
                         return httpx.Response(status, json={"error": {"message": "try again"}})
                     return completion_response()
 
-                with patch("time.sleep"):
-                    result = LlmProvider(transport=httpx.MockTransport(handle)).chat_completion(
-                        test_profile(), []
-                    )
-
-                self.assertEqual(result.content, "{}")
-                self.assertEqual(len(attempts), 2)
+                with self.assertRaises(APIStatusError):
+                    LlmProvider(transport=httpx.MockTransport(handle)).chat_completion(test_profile(), [])
+                self.assertEqual(len(attempts), 1)
 
     def test_sdk_does_not_retry_authentication_errors(self):
         requests = []
@@ -197,7 +193,7 @@ class LlmProviderTests(unittest.TestCase):
 
         provider = LlmProvider(transport=httpx.MockTransport(handle))
         state = create_five_player_game(seed=21)
-        profile = test_profile().model_copy(update={"timeout_retries": 2})
+        profile = test_profile().model_copy(update={"transport_retries": 2})
         with patch("time.sleep"), self.assertRaises(AiDecisionError) as captured:
             AiPlayer(provider=provider).propose_team(state, state.players[0].id, profile)
 
@@ -211,13 +207,13 @@ class LlmProviderTests(unittest.TestCase):
             requests.append(request)
             return httpx.Response(429, json={"error": {"message": "rate limited"}})
 
-        profile = test_profile().model_copy(update={"timeout_retries": 0})
+        profile = test_profile().model_copy(update={"transport_retries": 0})
         with self.assertRaises(RateLimitError):
             LlmProvider(transport=httpx.MockTransport(handle)).chat_completion(profile, [])
 
         self.assertEqual(len(requests), 1)
 
-    def test_empty_output_is_left_for_ai_output_retries(self):
+    def test_provider_retries_empty_output_not_ai_parse_layer(self):
         requests = []
 
         def handle(request):
@@ -227,7 +223,29 @@ class LlmProviderTests(unittest.TestCase):
         with self.assertRaises(EmptyModelOutputError):
             LlmProvider(transport=httpx.MockTransport(handle)).chat_completion(test_profile(), [])
 
-        self.assertEqual(len(requests), 1)
+        self.assertEqual(len(requests), test_profile().transport_retries + 1)
+
+    def test_empty_output_transport_retry_can_recover(self):
+        attempts = []
+
+        def handle(request):
+            attempts.append(request)
+            return completion_response(" " if len(attempts) < 3 else '{}')
+
+        result = LlmProvider(transport=httpx.MockTransport(handle)).chat_completion(test_profile(), [])
+        self.assertEqual(result.content, '{}')
+        self.assertEqual(len(attempts), 3)
+
+    def test_connection_errors_are_not_retried(self):
+        attempts = []
+
+        def handle(request):
+            attempts.append(request)
+            raise httpx.ConnectError("unreachable", request=request)
+
+        with self.assertRaises(APIConnectionError):
+            LlmProvider(transport=httpx.MockTransport(handle)).chat_completion(test_profile(), [])
+        self.assertEqual(len(attempts), 1)
 
     def test_missing_choices_or_content_are_reported(self):
         for payload, expected in (
