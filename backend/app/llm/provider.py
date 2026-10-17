@@ -3,9 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from openai import APITimeoutError, DefaultHttpxClient, OpenAI
+from openai import APITimeoutError, OpenAI
 from openai.types.chat import ChatCompletion
 
+from .http_client import create_http_client
 from .profiles import LlmProfile, validate_base_url
 
 if TYPE_CHECKING:
@@ -32,11 +33,7 @@ class LlmProvider:
         messages: list[dict[str, str]],
     ) -> LlmCompletionResult:
         base_url = _client_base_url(profile.base_url)
-        http_client = (
-            DefaultHttpxClient(transport=self._transport)
-            if self._transport is not None
-            else None
-        )
+        http_client = create_http_client(self._transport)
         with OpenAI(
             base_url=base_url,
             api_key=profile.api_key,

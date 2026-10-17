@@ -136,6 +136,11 @@ $env:SOLOAVALON_DB="E:\path\to\soloavalon.sqlite3"
 $env:SOLOAVALON_LLM_CONFIG="E:\path\to\llm_profiles.json"
 ```
 
+模型请求默认遵循运行环境的代理设置，不强制直连。代理环境变量优先；
+Windows 下未设置代理环境变量时，读取系统代理。针对 Python 3.10 将系统中
+不带协议的 HTTPS 代理地址误补为 `https://` 的问题，模型网络适配层使用
+`http://` 连接该代理；显式配置的代理协议保持不变，无需修改系统设置。
+
 ## 前端准备
 
 安装前端依赖：
