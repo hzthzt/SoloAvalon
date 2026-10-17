@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from backend.app.ai.player import AiDecisionError
+from backend.app.errors import describe_error, public_error
 from backend.app.game.models import Faction, Phase, Role
 from .event_visibility import public_event_dicts
 from .game_flow import GameReplayError, GameStepRunner
@@ -161,6 +162,7 @@ class GameRunner:
                 with GameUnitOfWork(self.database, write=True) as work:
                     summary = work.games.get_game_summary(game_id)
                     if isinstance(error, GameAdvanceError) and _same_execution(summary, error.snapshot):
+                        work.events.append_event(game_id, "runner_error", describe_error(error))
                         work.games.update_runtime(game_id, advance_mode=summary.advance_mode, status="error_paused")
                 self.notifier.notify(game_id)
             except Exception:
@@ -175,7 +177,7 @@ class GameRunner:
         with GameUnitOfWork(self.database, write=True) as work:
             summary = work.summary(game_id)
             if _executable(summary):
-                work.events.append_event(game_id, "runner_error", {"error": "advance step limit exceeded"})
+                work.events.append_event(game_id, "runner_error", public_error("advance_limit"))
                 work.games.update_runtime(game_id, advance_mode=summary.advance_mode, status="error_paused")
                 changed = True
         if changed:
@@ -236,13 +238,15 @@ class GameRunner:
             if latest.phase != state.phase or _actor(latest, current.advance_mode) != (player_id, action):
                 return StepOutcome("discarded")
             if failure is not None:
+                logger.error("Game advance failed for %s", game_id,
+                             exc_info=(type(failure), failure, failure.__traceback__))
                 if isinstance(failure, AiDecisionError) and profile is not None:
                     decision, audit = self.decisions.error_audit(game_id, state, player_id, action, profile, failure)
                     work.committer.commit_ai_error(game_id, decision, audit)
-                else:
-                    work.events.append_event(game_id, "runner_error", {
-                        "error_type": type(failure).__name__, "error": str(failure),
-                    })
+                detail = describe_error(failure, ai=isinstance(failure, AiDecisionError))
+                if profile is not None and not all((profile.base_url, profile.api_key, profile.model)):
+                    detail = public_error("llm_configuration")
+                work.events.append_event(game_id, "runner_error", detail)
                 work.games.update_runtime(game_id, advance_mode=current.advance_mode, status="error_paused")
                 self.diagnostics[game_id] = str(failure)
                 outcome = "paused"

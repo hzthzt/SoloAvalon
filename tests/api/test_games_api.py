@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 from fastapi import FastAPI
@@ -92,6 +93,110 @@ class GamesApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 400)
         self.assertEqual(self.api.get_game(game["id"]), game)
 
+    def test_model_failures_publish_safe_persistent_pause_reasons(self):
+        cases = ((400, "llm_request_rejected"), (401, "llm_authentication"),
+                 (403, "llm_permission"), (404, "llm_model_not_found"),
+                 (408, "llm_timeout"), (422, "llm_request_rejected"),
+                 (429, "llm_rate_limit"), (503, "llm_service"))
+        for status, code in cases:
+            with self.subTest(status=status):
+                def fail(request):
+                    return httpx.Response(status, json={"error": {
+                        "message": "Authorization: Bearer test-key; secret-body; https://private.test/?token=hidden",
+                    }})
+
+                self.service.decisions.player = AiPlayer(provider=LlmProvider(transport=httpx.MockTransport(fail)))
+                game = self.create()
+                path = f"/api/games/{game['id']}"
+                self.service.application.request_human_ai(game["id"], game["revision"])
+                self.assertEqual(self.service.runner.advance_one(game["id"]).status, "paused")
+                response = self.client.get(path)
+                paused = response.json()
+                self.assertEqual(paused["status"], "error_paused")
+                self.assertFalse(paused["is_advancing"])
+                self.assertEqual(paused["pause_error"]["code"], code)
+                self.assertTrue(paused["pause_error"]["category"])
+                self.assertTrue(paused["pause_error"]["suggestion"])
+                for secret in ("test-key", "secret-body", "private.test", "traceback", "Authorization"):
+                    self.assertNotIn(secret, response.text)
+                self.assertEqual(self.client.get(path).json(), paused)
+                self.assertEqual(self.client.get(path + "/export").json()["game"]["pause_error"], paused["pause_error"])
+                self.assertEqual(paused["events"], game["events"])
+                with GameUnitOfWork(self.service.database) as work:
+                    self.assertNotIn("test-key", str(work.ai_decisions.list_decisions(game["id"])[-1].output))
+                resumed = self.client.post(path + "/retry").json()
+                self.assertIsNone(resumed["pause_error"])
+                self.assertTrue(resumed["is_advancing"])
+
+    def test_timeout_invalid_output_and_missing_configuration_are_distinct(self):
+        def timeout(request):
+            raise httpx.ReadTimeout("timeout with test-key", request=request)
+
+        def invalid_output(request):
+            return httpx.Response(200, json={"choices": [{"message": {"content": "not valid JSON"}}]})
+
+        for handler, code in ((timeout, "llm_timeout"), (invalid_output, "llm_output_invalid")):
+            with self.subTest(code=code):
+                self.service.decisions.player = AiPlayer(provider=LlmProvider(transport=httpx.MockTransport(handler)))
+                game = self.create()
+                self.service.application.request_human_ai(game["id"], game["revision"])
+                paused = drain(self.service, game["id"])
+                self.assertEqual(paused["pause_error"]["code"], code)
+                self.assertNotIn("test-key", json.dumps(paused))
+        game = self.service.application.create_game(seed=2)
+        self.service.application.request_human_ai(game["id"], game["revision"])
+        self.assertEqual(drain(self.service, game["id"])["pause_error"]["code"], "llm_configuration")
+
+    def test_internal_and_legacy_errors_never_expose_free_text(self):
+        game = self.create()
+        self.service.application.request_human_ai(game["id"], game["revision"])
+        with patch.object(self.service.decisions, "decide", side_effect=RuntimeError("test-key internal secret")):
+            paused = drain(self.service, game["id"])
+        self.assertEqual(paused["pause_error"]["code"], "internal_error")
+        self.assertNotIn("test-key", json.dumps(paused))
+        for kind, public, private, code in (
+            ("runner_error", {"error_type": "AuthenticationError", "error": "test-key"}, None, "llm_authentication"),
+            ("ai_decision", {"validation_status": "error", "strategy_summary": "test-key"},
+             {"error_type": "RateLimitError", "error_message": "test-key"}, "llm_rate_limit"),
+        ):
+            with self.subTest(kind=kind), GameUnitOfWork(self.service.database, write=True) as work:
+                work.events.append_event(game["id"], kind, public, private)
+            response = self.client.get(f"/api/games/{game['id']}")
+            self.assertEqual(response.json()["pause_error"]["code"], code)
+            self.assertNotIn("test-key", response.text)
+
+    def test_http_errors_hide_exception_messages_and_tracebacks(self):
+        with patch.object(self.service.queries, "get_game", side_effect=RuntimeError("Authorization test-key")):
+            response = self.client.get("/api/games/unknown")
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.json()["detail"]["code"], "internal_error")
+        self.assertNotIn("test-key", response.text)
+        self.assertNotIn("traceback", response.text)
+
+    def test_legacy_error_audits_remain_safe_after_game_completes(self):
+        game = self.create()
+        self.service.application.request_human_ai(game["id"], game["revision"])
+        with patch.object(self.service.decisions.player._provider, "chat_completion",
+                          side_effect=TimeoutError("test-key legacy secret")):
+            drain(self.service, game["id"])
+        with GameUnitOfWork(self.service.database, write=True) as work:
+            work.connection.execute(
+                "update ai_decisions set strategy_summary=?, output=? where game_id=?",
+                ("test-key legacy secret", json.dumps({"error_type": "TimeoutError", "error_message": "test-key"}),
+                 game["id"]),
+            )
+            work.events.append_event(game["id"], "ai_decision",
+                                     {"validation_status": "error", "strategy_summary": "test-key"},
+                                     {"error_type": "TimeoutError", "error_message": "test-key"})
+            work.events.append_event(game["id"], "runner_error", {"error": "test-key", "error_type": "TimeoutError"})
+        self.service.application.resume_game(game["id"])
+        play_to_completion(self.service, game["id"])
+        path = f"/api/games/{game['id']}"
+        for route in ("/room", "/events?include_private=true", "/export?include_private=true"):
+            response = self.client.get(path + route)
+            self.assertEqual(response.status_code, 200)
+            self.assertNotIn("test-key", response.text)
+
     def test_human_ai_acceptance_returns_before_model_and_old_revision_cannot_repeat(self):
         game = self.create()
         path = f"/api/games/{game['id']}/ai-actions/human"
@@ -168,6 +273,29 @@ class GamesApiTests(unittest.TestCase):
 
 
 class GamesEventStreamTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sse_publishes_safe_pause_reason_without_private_audit(self):
+        class FailingProvider:
+            def chat_completion(self, profile, messages):
+                raise TimeoutError("Authorization: secret-key")
+
+        service = GameService(":memory:", ai_player=AiPlayer(provider=FailingProvider()))
+        self.addCleanup(service.database.close)
+        game = service.application.create_game(seed=2)
+        service.application.request_human_ai(game["id"], game["revision"])
+        with GameUnitOfWork(service.database) as work:
+            profile = service.decisions.profile_for(work.load(game["id"])[0], work.summary(game["id"]), "player_1")
+        # Supply a configured profile so this test exercises timeout rather than missing config.
+        profile = profile.model_copy(update={"base_url": "https://example.test", "api_key": "secret-key"})
+        with patch.object(service.decisions, "profile_for", return_value=profile):
+            drain(service, game["id"])
+        subscription = service.event_notifier.subscribe(game["id"])
+        stream = game_event_stream_frames(GamesApi(service), game["id"], _OpenRequest(), subscription, after=2)
+        frame = await stream.__anext__()
+        self.assertIn('"code":"llm_timeout"', frame)
+        self.assertNotIn("secret-key", frame)
+        self.assertNotIn("ai_decision", frame)
+        await stream.aclose()
+
     async def test_state_only_change_notifies_stream_without_advancing_public_cursor(self):
         service = GameService(":memory:")
         self.addCleanup(service.database.close)

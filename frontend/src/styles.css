@@ -135,6 +135,31 @@ label {
   padding: 6px 10px;
 }
 
+.notice > span {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.advance-error {
+  background: #fff7ed;
+  border: 1px solid #edc49c;
+  border-radius: 8px;
+  color: #813c16;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  overflow-wrap: anywhere;
+}
+
+.advance-error p {
+  line-height: 1.6;
+  margin: 0;
+}
+
+.advance-error code {
+  font-size: 12px;
+}
+
 .game-layout {
   align-items: start;
   display: grid;

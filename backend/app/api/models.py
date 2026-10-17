@@ -84,12 +84,21 @@ class MissionView(BaseModel):
     fail_cards_required: int
 
 
+class PublicErrorView(BaseModel):
+    code: str
+    error_type: str
+    category: str
+    message: str
+    suggestion: str
+
+
 class GameView(BaseModel):
     id: str
     display_name: str
     status: str
     revision: int
     is_advancing: bool
+    pause_error: PublicErrorView | None = None
     player_count: int
     phase: str
     current_round: int

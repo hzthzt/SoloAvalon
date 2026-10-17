@@ -156,10 +156,11 @@ def _call(handler):
     except AiDecisionError as exc:
         if HTTPException is None:
             raise
-        message = f"AI 决策失败：{exc.error_message}"
+        detail = error_detail(exc)
+        detail["message"] = f"AI 决策失败：{detail['message']}"
         raise HTTPException(
             status_code=_ai_decision_status_code(exc),
-            detail=error_detail(exc, message),
+            detail=detail,
         ) from exc
     except GameConflict as exc:
         raise HTTPException(status_code=409, detail={

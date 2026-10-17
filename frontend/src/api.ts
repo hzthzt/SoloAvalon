@@ -18,9 +18,18 @@ export type GameEvent = {
   created_at: string;
 };
 
+export type PublicError = {
+  code: string;
+  error_type: string;
+  category: string;
+  message: string;
+  suggestion: string;
+};
+
 export type GameState = {
   revision: number;
   is_advancing: boolean;
+  pause_error?: PublicError | null;
   id: string;
   display_name: string;
   status: string;
@@ -292,10 +301,13 @@ function formatErrorDetail(detail: unknown, fallback: string) {
   const record = detail as Record<string, unknown>;
   const lines = [typeof record.message === "string" ? record.message : fallback];
   if (typeof record.error_type === "string") {
-    lines.push(`错误类型：${record.error_type}`);
+    lines.push(`错误类型：${typeof record.category === "string" ? record.category : record.error_type}`);
   }
-  if (typeof record.traceback === "string" && record.traceback.trim()) {
-    lines.push("堆栈：", record.traceback);
+  if (typeof record.code === "string") {
+    lines.push(`错误代码：${record.code}`);
+  }
+  if (typeof record.suggestion === "string") {
+    lines.push(`处理建议：${record.suggestion}`);
   }
   return lines.join("\n");
 }

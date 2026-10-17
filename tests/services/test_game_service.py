@@ -205,12 +205,14 @@ class GameServiceTests(unittest.TestCase):
                 first.application.request_human_ai(game["id"], game["revision"])
                 if paused:
                     self.assertEqual(first.runner.advance_one(game["id"]).status, "paused")
+                    pause_error = first.queries.get_game(game["id"])["pause_error"]
                 first.database.close()
                 second = self.service(path)
                 second.runner.recover()
                 if paused:
+                    self.assertEqual(second.queries.get_game(game["id"])["pause_error"], pause_error)
                     self.assertEqual(second.runner.advance_one(game["id"]).status, "blocked")
-                    second.application.resume_game(game["id"])
+                    self.assertIsNone(second.application.resume_game(game["id"])["pause_error"])
                 result = drain(second, game["id"])
                 self.assertEqual(result["next_human_action"], "speak")
                 self.assertFalse(result["is_advancing"])
@@ -300,7 +302,8 @@ class GameServiceTests(unittest.TestCase):
         paused = service.queries.get_game(game["id"])
         self.assertEqual(paused["status"], "error_paused")
         with GameUnitOfWork(service.database) as work:
-            self.assertEqual(work.events.list_events(game["id"])[-1].public_payload["error"], "advance step limit exceeded")
+            self.assertEqual(work.events.list_events(game["id"])[-1].public_payload["code"], "advance_limit")
+        self.assertEqual(paused["pause_error"]["code"], "advance_limit")
         service.application.archive_game(game["id"])
         with GameUnitOfWork(service.database) as work:
             self.assertIsNone(work.summary(game["id"]).advance_mode)

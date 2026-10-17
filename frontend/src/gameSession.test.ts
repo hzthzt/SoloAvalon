@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ApiError, newerGameState, submitAction, submitHumanAiAction } from "./api.js";
+import { ApiError, getGame, newerGameState, submitAction, submitHumanAiAction } from "./api.js";
 import type { GameEvent, GameState } from "./api.js";
 import { subscribeGameEvents, waitForGameIdle } from "./gameSession.js";
 
@@ -89,5 +89,27 @@ test("action requests carry revisions and do not replay a conflict", async () =>
     assert.deepEqual(calls.map((call) => call.body.expected_revision), [6, 7, 7]);
     assert.equal(calls[0].body.action_type, "speak");
     assert.equal(calls.length, 3);
+  } finally { globalThis.fetch = original; }
+});
+
+test("HTTP errors display categories and advice but ignore raw tracebacks", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ detail: {
+    message: "模型服务拒绝了身份验证。",
+    error_type: "AuthenticationError",
+    category: "模型鉴权失败",
+    code: "llm_authentication",
+    suggestion: "请检查模型配置。",
+    traceback: "Authorization: Bearer secret-key"
+  } }), { status: 502, headers: { "Content-Type": "application/json" } });
+  try {
+    let error: unknown;
+    try { await getGame("game_1"); } catch (failure) { error = failure; }
+    assert.equal(error instanceof ApiError, true);
+    const message = (error as ApiError).message;
+    assert.equal(message.includes("错误类型：模型鉴权失败"), true);
+    assert.equal(message.includes("错误代码：llm_authentication"), true);
+    assert.equal(message.includes("处理建议：请检查模型配置。"), true);
+    assert.equal(message.includes("secret-key"), false);
   } finally { globalThis.fetch = original; }
 });

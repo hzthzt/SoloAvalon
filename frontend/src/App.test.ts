@@ -196,10 +196,14 @@ test("error paused games expose a generic retry advance action", () => {
   assert.equal(source.includes("重试推进"), true);
 });
 
-test("api errors include structured backend error details and tracebacks", () => {
+test("paused games show safe reasons and API errors do not display tracebacks", () => {
+  assert.equal(source.includes("game.pause_error.category"), true);
+  assert.equal(source.includes("game.pause_error?.message"), true);
+  assert.equal(source.includes("game.pause_error?.suggestion"), true);
+  assert.equal(source.includes("停止位置"), true);
   assert.equal(apiSource.includes("formatErrorDetail"), true);
   assert.equal(apiSource.includes("error_type"), true);
-  assert.equal(apiSource.includes("traceback"), true);
+  assert.equal(apiSource.includes("record.traceback"), false);
 });
 
 test("model edit form keeps saved api keys masked and toggles new values", () => {

@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Any
 
 from backend.app.ai.player import AiDecisionError, AiPlayer, AiTurnResult
+from backend.app.errors import describe_error
 from backend.app.game.models import GameState, Phase
 from backend.app.llm.profiles import LlmProfile
 from backend.app.storage.llm_profile_repository import LlmProfileRepository
@@ -59,10 +60,9 @@ class AiDecisionRunner:
         profile: LlmProfile,
         error: AiDecisionError,
     ) -> tuple[AiDecisionInput, PendingEvent]:
-        output = {
-            "error_type": error.error_type,
-            "error_message": error.error_message,
-        }
+        detail = describe_error(error, ai=True)
+        output = {**detail, "error_message": detail["message"]}
+        strategy_summary = f"AI 决策失败：{detail['message']}"
         return (
             AiDecisionInput(
                 game_id=game_id,
@@ -70,7 +70,7 @@ class AiDecisionRunner:
                 phase=phase.value,
                 decision_type=decision_type,
                 input_summary=error.input_summary,
-                strategy_summary=error.strategy_summary,
+                strategy_summary=strategy_summary,
                 output=output,
                 model_name=profile.model,
                 llm_profile_id=None if profile.id == "unconfigured" else profile.id,
@@ -97,14 +97,13 @@ class AiDecisionRunner:
                     "phase": phase.value,
                     "decision_type": decision_type,
                     "validation_status": error.validation_status,
-                    "strategy_summary": error.strategy_summary,
+                    "strategy_summary": strategy_summary,
                 },
                 {
                     "input_summary": error.input_summary,
                     "output_raw": error.output_raw,
                     "output_parsed": error.output_parsed,
-                    "error_type": error.error_type,
-                    "error_message": error.error_message,
+                    **output,
                     "prompt_template_name": error.prompt_template_name,
                     "prompt_template_version": error.prompt_template_version,
                     "prompt_messages": error.prompt_messages,

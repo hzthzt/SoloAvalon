@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Callable
 
+from backend.app.errors import public_error, saved_error
 from backend.app.game.events import build_private_view_payloads
 from backend.app.game.models import GameState
 from backend.app.game.rules import eligible_lady_of_lake_target_ids
@@ -73,11 +74,11 @@ class _Projection:
 
     def private_events(self, game_id, after=0):
         self.require_complete(game_id)
-        return [asdict(event) for event in self.events.list_events_after(game_id, after)]
+        return [_audit_event_view(event) for event in self.events.list_events_after(game_id, after)]
 
     def review(self, game_id):
         self.require_complete(game_id)
-        decisions = [asdict(decision) for decision in self.work.ai_decisions.list_decisions(game_id)]
+        decisions = [_decision_view(decision) for decision in self.work.ai_decisions.list_decisions(game_id)]
         players = {player.id: player.name for player in self.games.list_players(game_id)}
         return {"game": self.get_game(game_id), "events": self.private_events(game_id),
                 "ai_decisions": decisions, "usage_by_player": _usage_by_player(decisions, players),
@@ -85,6 +86,7 @@ class _Projection:
 
     def _public_state(self, game_id: str, state: GameState) -> dict[str, Any]:
         summary = self.games.get_game_summary(game_id)
+        events = self.events.list_events(game_id)
         human = _human_player(state)
         view_payload = build_private_view_payloads(state, human.id)[1]
         visible_roles = view_payload["visible_roles"]
@@ -94,6 +96,7 @@ class _Projection:
             "revision": summary.revision,
             "is_advancing": summary.status == "active" and summary.archived_at is None and summary.advance_mode is not None,
             "status": summary.status if summary else ("complete" if state.winner else "active"),
+            "pause_error": self._pause_error(summary, events),
             "player_count": len(state.players),
             "phase": state.phase.value,
             "current_round": state.current_round,
@@ -143,9 +146,39 @@ class _Projection:
             "winner": state.winner.value if state.winner else None,
             "assassination_target_id": state.assassination_target_id,
             "next_human_action": next_human_action(state),
-            "events": public_event_dicts(self.events.list_events(game_id)),
+            "events": public_event_dicts(events),
         }
 
+    def _pause_error(self, summary, events):
+        if summary.status != "error_paused":
+            return None
+        for event in reversed(events):
+            if event.event_type == "runner_error":
+                return saved_error(event.public_payload)
+            if event.event_type == "ai_decision" and event.public_payload.get("validation_status") == "error":
+                return saved_error(event.private_payload or {}, ai=True)
+        return public_error("internal_error")
+
+
+def _decision_view(decision):
+    view = asdict(decision)
+    if decision.validation_status == "error":
+        detail = saved_error(decision.output, ai=True)
+        view["output"] = {**detail, "error_message": detail["message"]}
+        view["strategy_summary"] = f"AI 决策失败：{detail['message']}"
+    return view
+
+
+def _audit_event_view(event):
+    view = asdict(event)
+    if event.event_type == "runner_error":
+        view["public_payload"] = saved_error(event.public_payload)
+        view["private_payload"] = None
+    elif event.event_type == "ai_decision" and event.public_payload.get("validation_status") == "error":
+        detail = saved_error(event.private_payload or {}, ai=True)
+        view["public_payload"]["strategy_summary"] = f"AI 决策失败：{detail['message']}"
+        view["private_payload"] = {**(event.private_payload or {}), **detail, "error_message": detail["message"]}
+    return view
 
 
 def _usage_by_player(

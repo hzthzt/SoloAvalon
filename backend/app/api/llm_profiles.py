@@ -70,9 +70,8 @@ class LlmProfilesApi:
                 "profile_id": profile.id,
                 "model": profile.model,
                 "base_url": profile.base_url,
-                "error": _mask_secret(detail["message"], profile.api_key),
-                "error_type": detail["error_type"],
-                "traceback": _mask_secret(detail["traceback"], profile.api_key),
+                **detail,
+                "error": detail["message"],
             }
         return {
             "status": "ok",
@@ -122,9 +121,3 @@ def _call(handler):
         if HTTPException is None:
             raise
         raise HTTPException(status_code=500, detail=error_detail(exc)) from exc
-
-
-def _mask_secret(message: str, secret: str) -> str:
-    if not secret:
-        return message
-    return message.replace(secret, "[redacted]")

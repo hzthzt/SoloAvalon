@@ -841,14 +841,21 @@ export function App() {
               </div>
             )}
             {game.status === "error_paused" && (
-              <div className="button-row">
-                <button
-                  className="primary"
-                  disabled={busy || autoPlaying || game?.is_advancing}
-                  onClick={sendPausedGameRetry}
-                >
-                  <RefreshCw size={18} /> 重试推进
-                </button>
+              <div className="advance-error" role="alert">
+                <strong>推进已暂停{game.pause_error ? `：${game.pause_error.category}` : ""}</strong>
+                <p>停止位置：第 {game.current_round} 轮 · {phaseLabel(game.phase)}</p>
+                <p>{game.pause_error?.message ?? "当前行动处理失败，未能继续推进。历史记录中没有可用的详细错误分类。"}</p>
+                <p>处理建议：{game.pause_error?.suggestion ?? "请重试推进；若持续失败，请检查后端日志。"}</p>
+                {game.pause_error && <code>错误代码：{game.pause_error.code}</code>}
+                <div className="button-row">
+                  <button
+                    className="primary"
+                    disabled={busy || autoPlaying || game?.is_advancing}
+                    onClick={sendPausedGameRetry}
+                  >
+                    <RefreshCw size={18} /> 重试推进
+                  </button>
+                </div>
               </div>
             )}
             {activeAction && (

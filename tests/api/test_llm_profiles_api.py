@@ -88,8 +88,10 @@ class LlmProfilesApiTests(unittest.TestCase):
 
             self.assertEqual(result["status"], "failed")
             self.assertEqual(result["profile_id"], "profile_1")
-            self.assertIn("bad key", result["error"])
-            self.assertNotIn("test-key-1234567890abcdef", result["error"])
+            self.assertEqual(result["code"], "internal_error")
+            self.assertNotIn("bad key", str(result))
+            self.assertNotIn("test-key-1234567890abcdef", str(result))
+            self.assertNotIn("traceback", result)
 
     def test_profile_update_preserves_secret_when_api_key_is_blank(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -191,7 +193,7 @@ class LlmProfilesApiTests(unittest.TestCase):
 
             self.assertEqual(repository.list_profiles(), [])
 
-    def test_route_wrapper_reports_profile_errors_with_traceback(self):
+    def test_route_wrapper_reports_safe_profile_validation_errors(self):
         def fail_with_value_error():
             raise ValueError("unknown llm profile id: missing")
 
@@ -204,11 +206,11 @@ class LlmProfilesApiTests(unittest.TestCase):
             llm_profiles_module.HTTPException = original_http_exception
 
         self.assertEqual(captured.exception.status_code, 400)
-        self.assertEqual(captured.exception.detail["message"], "unknown llm profile id: missing")
-        self.assertEqual(captured.exception.detail["error_type"], "ValueError")
-        self.assertIn("ValueError: unknown llm profile id: missing", captured.exception.detail["traceback"])
+        self.assertEqual(captured.exception.detail["code"], "invalid_request")
+        self.assertNotIn("unknown llm profile id: missing", str(captured.exception.detail))
+        self.assertNotIn("traceback", captured.exception.detail)
 
-    def test_route_wrapper_reports_unexpected_profile_errors_with_traceback(self):
+    def test_route_wrapper_reports_safe_unexpected_profile_errors(self):
         def fail_with_runtime_error():
             raise RuntimeError("profile store unavailable")
 
@@ -221,9 +223,9 @@ class LlmProfilesApiTests(unittest.TestCase):
             llm_profiles_module.HTTPException = original_http_exception
 
         self.assertEqual(captured.exception.status_code, 500)
-        self.assertEqual(captured.exception.detail["message"], "profile store unavailable")
-        self.assertEqual(captured.exception.detail["error_type"], "RuntimeError")
-        self.assertIn("RuntimeError: profile store unavailable", captured.exception.detail["traceback"])
+        self.assertEqual(captured.exception.detail["code"], "internal_error")
+        self.assertNotIn("profile store unavailable", str(captured.exception.detail))
+        self.assertNotIn("traceback", captured.exception.detail)
 
 
 def _api(tmpdir, provider=None):
