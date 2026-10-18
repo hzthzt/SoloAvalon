@@ -17,7 +17,14 @@
 
 ```text
 config.example/prompt_templates.json
+config.example/prompts/system/*.md
+config.example/prompts/roles/<role>/description.md
+config.example/prompts/roles/<role>/gameplay.md
+config.example/prompts/roles/<role>/strategy.md
+config.example/prompts/actions/<action>/*.md
 ```
+
+Markdown 是系统要求、角色说明与策略、行动说明的唯一正文来源，每个原始文本项对应一个独立文件。JSON 保留版本、文件引用及其顺序、角色标签、事件模板、机制配置和动作输出契约。
 
 本地可通过环境变量覆盖：
 
@@ -25,7 +32,51 @@ config.example/prompt_templates.json
 $env:SOLOAVALON_PROMPT_CONFIG="E:\path\to\prompt_templates.json"
 ```
 
+Markdown 文件路径相对于引用它的 JSON 配置文件解析，不依赖启动目录。复制配置时也应复制对应的 `prompts/` 目录，或调整文件引用。原有内联正文的纯 JSON 配置仍可读取。
+
 真实模型配置仍位于被 git 忽略的 `config/llm_profiles.json`，不要把真实 API Key 或供应商配置写入提示词配置。
+
+### Markdown 正文约定
+
+| 文件 | 内容 |
+| --- | --- |
+| `prompts/system/01-player-perspective.md` 等 | 每条通用系统要求各一个文件 |
+| `prompts/roles/merlin/description.md` 等 | 每个角色的公开身份机制说明各一个文件 |
+| `prompts/roles/merlin/gameplay.md` 等 | 每个角色的基础玩法各一个文件 |
+| `prompts/roles/merlin/strategy.md` 等 | 每个角色的进阶策略各一个文件 |
+| `prompts/actions/speak/01-table-action.md` 等 | 每个行动的每条说明各一个文件 |
+
+每个文件的全文就是一个文本项，不再使用二级标题分节，也不按空行拆分。读取时仅去掉首尾空白，正文中的换行、空行和 Markdown 标题都会保留并发送给模型，不应在文件中附加维护说明。原有 `{players}` 等占位符仍按原来的渲染规则使用。
+
+系统要求和行动说明按 JSON 数组中的引用顺序加载，不扫描目录，也不按文件名排序；数字前缀只用于方便人工浏览。角色正文按角色标识符分别引用。要新增一条独立说明，应新建文件并在对应数组中添加引用，而不是合并到其他条目的文件中。
+
+JSON 中的文件引用示例：
+
+```json
+{
+  "system_lines": [
+    {"file": "prompts/system/01-player-perspective.md"},
+    {"file": "prompts/system/02-action-goals.md"}
+  ],
+  "role_gameplay": {
+    "merlin": {"file": "prompts/roles/merlin/gameplay.md"},
+    "percival": {"file": "prompts/roles/percival/gameplay.md"}
+  },
+  "action_prompts": {
+    "speak": {
+      "lines": [
+        {"file": "prompts/actions/speak/01-table-action.md"},
+        {"file": "prompts/actions/speak/02-identity-triggers.md"}
+      ],
+      "json": "{\"public_message\":\"公开发言\",\"private_reason_summary\":\"私下判断\"}"
+    }
+  }
+}
+```
+
+该片段仅展示引用方式，不是完整配置。引用对象只包含 `file`，不再使用 `section`。原有内联字符串和文件引用可以混用，但默认配置的正文只在 Markdown 中维护。动作说明与 JSON 输出契约仍分开维护，模型回答继续使用 JSON。缺失文件或空文件会在加载时报错，并指出对应文件与配置项。
+
+修改后重启后端以重新加载。正文或契约有行为变化时更新 JSON 中的 `version`；本次仅迁移存储方式，仍保持 `prompt.v41`，不改变消息顺序、玩家视角、稳定前缀或输出内容。
 
 ## 发送给模型的结构
 
@@ -288,15 +339,17 @@ $env:SOLOAVALON_PROMPT_CONFIG="E:\path\to\prompt_templates.json"
 - `backend/app/ai/context.py`：构造 `AiContext`、`stable_prefix`、`stable_prefix_hash`、动态上下文和当前阶段合法动作。
 - `backend/app/prompting/templates.py`：渲染开局视角、逐条活动历史、个人判断、私有信息和末尾行动。
 - `backend/app/prompting/prefix.py`：生成四类常用动作的固定规则及 JSON 契约。
-- `backend/app/prompting/config.py`：加载和校验 `prompt_templates.json`。
+- `backend/app/prompting/config.py`：加载和校验 JSON 配置及其引用的 Markdown 正文。
 - `backend/app/prompting/schemas.py`：解析和校验模型 JSON 输出，非法输出会交由后端规则校验或触发 AI 决策错误。
 - `backend/app/llm/provider.py`：把 `messages` 放入 OpenAI-compatible Chat Completions 请求体，并读取 token 与缓存命中用量。
-- `config.example/prompt_templates.json`：可提交的默认提示词文案、角色标签、事件模板和动作输出契约。
+- `config.example/prompt_templates.json`：可提交的默认文件引用、角色标签、事件模板、机制配置和动作输出契约。
+- `config.example/prompts/`：系统要求、角色说明与策略、行动说明的 Markdown 正文。
 
 ## 维护建议
 
 - 修改提示词展示结构时，优先检查最终生成的 `prompt_messages`，不要只看配置文件。
-- 修改文案、角色标签、事件模板或动作输出契约时，优先看 `config.example/prompt_templates.json`。
+- 修改系统要求、角色玩法或行动说明时，编辑 `config.example/prompts/` 下对应的 Markdown 文件，不要在 JSON 中再维护一份正文。
+- 修改角色标签、事件模板、机制配置、文件引用或动作输出契约时，编辑 `config.example/prompt_templates.json`。
 - 修改拼接顺序、消息 role、玩家视角、活动日志或本次行动格式时，优先看 `backend/app/prompting/templates.py` 和 `backend/app/ai/context.py`。
 - 稳定前缀放固定系统规则、四类常用动作规则、对应 JSON 契约和本局固定配置；玩家视角与历史放在其后，当前状态和合法参数只放末尾。
 - 当前“增量”优化指让每次请求的前文保持一致，并让活动日志按事件时间顺序追加，避免重排、合并改写旧记录或重复声明常用动作 JSON 格式；OpenAI-compatible Chat Completions 仍然是无状态请求，不应假设 API 只接收 delta 或自动记住上一轮上下文。

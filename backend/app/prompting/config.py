@@ -42,21 +42,21 @@ def load_prompt_template_config(path: str | Path | None = None) -> PromptTemplat
     return PromptTemplateConfig(
         version=_required_string(payload, "version"),
         section_titles=_required_string_dict(payload, "section_titles"),
-        system_lines=_required_string_list(payload, "system_lines"),
+        system_lines=_prompt_lines(payload.get("system_lines"), config_path, "system_lines"),
         labels=_required_string_dict(payload, "labels"),
         role_labels=_required_string_dict(payload, "role_labels"),
         faction_labels=_required_string_dict(payload, "faction_labels"),
         vote_labels=_required_string_dict(payload, "vote_labels"),
         quest_result_labels=_required_string_dict(payload, "quest_result_labels"),
-        role_descriptions=_required_string_dict(payload, "role_descriptions"),
-        role_gameplay=_required_string_dict(payload, "role_gameplay"),
-        role_strategy_tips=_required_string_dict(payload, "role_strategy_tips"),
+        role_descriptions=_required_string_dict(payload, "role_descriptions", config_path),
+        role_gameplay=_required_string_dict(payload, "role_gameplay", config_path),
+        role_strategy_tips=_required_string_dict(payload, "role_strategy_tips", config_path),
         role_tip_detail=_optional_role_tip_detail(payload),
         extra_information=_required_string_dict(payload, "extra_information"),
         recommended_role_setups=_required_role_setups(payload),
         optional_mechanics=_required_optional_mechanics(payload),
         event_templates=_required_string_dict(payload, "event_templates"),
-        action_prompts=_required_action_prompts(payload),
+        action_prompts=_required_action_prompts(payload, config_path),
         source_path=config_path,
     )
 
@@ -75,21 +75,48 @@ def _required_string(payload: dict[str, Any], key: str) -> str:
     return value
 
 
-def _required_string_list(payload: dict[str, Any], key: str) -> list[str]:
-    value = payload.get(key)
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise ValueError(f"invalid prompt template config field: {key}")
-    return list(value)
+def _prompt_lines(value: Any, config_path: Path, field: str) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"invalid prompt template config field: {field}")
+    return [
+        _prompt_text(item, config_path, f"{field}[{index}]")
+        for index, item in enumerate(value)
+    ]
 
 
-def _required_string_dict(payload: dict[str, Any], key: str) -> dict[str, str]:
+def _required_string_dict(
+    payload: dict[str, Any], key: str, config_path: Path | None = None
+) -> dict[str, str]:
     value = payload.get(key)
+    if config_path is not None and isinstance(value, dict):
+        value = {
+            item_key: _prompt_text(item_value, config_path, f"{key}.{item_key}")
+            for item_key, item_value in value.items()
+        }
     if not isinstance(value, dict) or not all(
         isinstance(item_key, str) and isinstance(item_value, str)
         for item_key, item_value in value.items()
     ):
         raise ValueError(f"invalid prompt template config field: {key}")
     return dict(value)
+
+
+def _prompt_text(value: Any, config_path: Path, field: str) -> str:
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, dict) or value.keys() != {"file"}:
+        raise ValueError(f"invalid prompt template markdown reference: {field}")
+    filename = value["file"]
+    if not isinstance(filename, str) or not filename:
+        raise ValueError(f"invalid prompt template markdown reference: {field}")
+    path = config_path.parent / filename
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError as exc:
+        raise ValueError(f"prompt template markdown file not found: {path} ({field})") from exc
+    if not text:
+        raise ValueError(f"empty prompt template markdown: {path} ({field})")
+    return text
 
 
 def _required_role_setups(payload: dict[str, Any]) -> dict[int, dict[str, list[str]]]:
@@ -171,7 +198,9 @@ def _required_optional_mechanics(payload: dict[str, Any]) -> dict[str, dict[str,
     return mechanics
 
 
-def _required_action_prompts(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def _required_action_prompts(
+    payload: dict[str, Any], config_path: Path
+) -> dict[str, dict[str, Any]]:
     value = payload.get("action_prompts")
     if not isinstance(value, dict):
         raise ValueError("invalid prompt template config field: action_prompts")
@@ -181,8 +210,7 @@ def _required_action_prompts(payload: dict[str, Any]) -> dict[str, dict[str, Any
             raise ValueError("invalid prompt template action prompt")
         lines = prompt.get("lines")
         json_contract = prompt.get("json")
-        if not isinstance(lines, list) or not all(isinstance(line, str) for line in lines):
-            raise ValueError(f"invalid prompt template action lines: {action}")
+        lines = _prompt_lines(lines, config_path, f"action_prompts.{action}.lines")
         if not isinstance(json_contract, str):
             raise ValueError(f"invalid prompt template action json: {action}")
         prompts[action] = {"lines": list(lines), "json": json_contract}

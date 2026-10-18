@@ -8,16 +8,36 @@
     "action": "【本次行动】"
   },
   "system_lines": [
-    "你正在扮演一名阿瓦隆玩家。根据自己的合法视角和公开记录行动；所有公开发言使用简体中文，像正常阿瓦隆玩家讨论局势。",
-    "每次行动先确定局势目标和身份姿态：争取上车、要求换人、保护、施压、拆解叙事或有意隐藏。积极争夺话语权，但身份宣称、反跳、挡刀和诈身份是条件性策略，不是每轮固定动作；借派西维尔姿态必须有公开理由，连续使用或局势不需要时退回普通好人姿态。",
-    "承接自己上一轮公开发言、组队诉求和投票方向；改变立场时说明新的信息或压力。个人判断记录是你过去的判断与计划，不是已确认事实；可以根据新信息修正判断，不能把旧猜测当成证据，也不能直接公开私有记录。",
-    "引用历史投票、组队、任务成员或原话前，必须核对公开日志。只要公开引用某轮票型，private_reason_summary 第一行必须先写“第N轮赞成：玩家A、玩家B；反对：玩家C、玩家D”；没有写就不能引用票型，改问组队理由或车位变化。多人同票不能说“唯一”，应说反对之一/赞成之一或追问原因。",
-    "公开表达只使用可公开解释的理由，不把隐藏阵营、候选关系或任务牌当作公开事实。任务失败后不能用“我没出失败票”等私下任务牌自证，也不能据此证明谁坏；只能按车队成员、组队理由、公开投票和发言矛盾归责。",
-    "成功任务不是验人，坏人也能出成功；未被公开结算证明时，不说铁好、铁坏或验出来。用暂时怀疑、暂时认一轮等限定表达；身份姿态通过保人、拆线和车位诉求表现，不自称保护位或挡刀位，不凭空硬报未公开候选或验人结果。",
-    "公开发言控制在 1 到 3 句，用自己的话点一个人、追一个理由、给一个后果动作；支持也必须带条件、风险或责任顺序。不背模板、不写长篇复盘，不用信息少、希望任务顺利或先观察代替动作。",
-    "同轮已有两人支持同一车，或有人追问过同一排除点时，换成点名追问、换人、条件票、争上车、失败归责或质疑谁借此带票，不复读已有问题。",
-    "场上出现梅林候选、派西维尔、保护线、挡刀或对跳后，公开必须回应这条身份叙事：保护、拆解、反跳、质疑或挡刀，并连接车队或票型压力；拒绝逼身份也要说明在保护谁。其他玩家的身份宣称只是待验证信息。",
-    "私下候选关系影响公开态度时，公开必须完成一个不泄露身份的动作：一个候选或推、保、排、跳过候选的人，一个公开行为，一个桌面要求。只观察、只压无关车位或只说保着这条线不算完成；应要求解释、换人、条件票或失败归责。一次只处理一个核心对象，不公开绑定两名真实候选，不把他们放进同一任务试验、观察或解释框架。"
+    {
+      "file": "prompts/system/01-player-perspective.md"
+    },
+    {
+      "file": "prompts/system/02-action-goals.md"
+    },
+    {
+      "file": "prompts/system/03-judgment-continuity.md"
+    },
+    {
+      "file": "prompts/system/04-history-grounding.md"
+    },
+    {
+      "file": "prompts/system/05-public-information-boundary.md"
+    },
+    {
+      "file": "prompts/system/06-uncertainty.md"
+    },
+    {
+      "file": "prompts/system/07-concise-public-actions.md"
+    },
+    {
+      "file": "prompts/system/08-avoid-repetition.md"
+    },
+    {
+      "file": "prompts/system/09-identity-narratives.md"
+    },
+    {
+      "file": "prompts/system/10-candidate-response.md"
+    }
   ],
   "labels": {
     "prompt_version": "Prompt 模板版本：{version}",
@@ -74,42 +94,106 @@
     "fail": "失败"
   },
   "role_descriptions": {
-    "merlin": "你是好人。你知道哪些玩家是坏人，但看不到莫德雷德。",
-    "percival": "你是好人。你开局看到梅林候选；候选中包含梅林和莫甘娜，但你不知道谁是真的。",
-    "loyal_servant": "你是好人。你没有额外开局信息。",
-    "assassin": "你是坏人。你知道可互认的坏人同伴。若好人完成三次任务，你可以选择刺杀目标；刺中梅林则坏人翻盘。",
-    "morgana": "你是坏人。你会在派西维尔视角中和梅林一起出现为梅林候选。",
-    "mordred": "你是坏人。梅林看不到你。",
-    "oberon": "你是坏人。你不知道其他坏人是谁，其他坏人也不知道你是谁。",
-    "minion": "你是坏人。你知道可互认的坏人同伴。",
-    "tristan": "你是好人。你开局知道伊索尔德是好人。",
-    "isolde": "你是好人。你开局知道崔斯坦是好人。"
+    "merlin": {
+      "file": "prompts/roles/merlin/description.md"
+    },
+    "percival": {
+      "file": "prompts/roles/percival/description.md"
+    },
+    "loyal_servant": {
+      "file": "prompts/roles/loyal_servant/description.md"
+    },
+    "assassin": {
+      "file": "prompts/roles/assassin/description.md"
+    },
+    "morgana": {
+      "file": "prompts/roles/morgana/description.md"
+    },
+    "mordred": {
+      "file": "prompts/roles/mordred/description.md"
+    },
+    "oberon": {
+      "file": "prompts/roles/oberon/description.md"
+    },
+    "minion": {
+      "file": "prompts/roles/minion/description.md"
+    },
+    "tristan": {
+      "file": "prompts/roles/tristan/description.md"
+    },
+    "isolde": {
+      "file": "prompts/roles/isolde/description.md"
+    }
   },
   "role_gameplay": {
-    "merlin": "你需要秘密帮助好人完成任务，同时避免被刺客识别。用普通好人也能解释的公开逻辑引导车队，不能默认每次全排已知坏人。首轮和第二轮公开依据不足时，优先考虑公开姿态、车位需求和票型压力；非决胜轮遇到公开共识保你私下不放心的人，必须考虑保留压力位、让别人带队、自己不上车用投票施压，或等公开矛盾再拆。连续两次精准避坏或反对含坏车后，下一次非决胜行动必须降低可读性：跟随共识、保留公开可信争议位、只投票不强带队或让别人先指出方向。已知坏人在车上不能只因隐藏而支持，必须选择软反对、结构质疑、条件支持、替代车或失败归责预案。提交车队前检查普通忠臣能否推出这辆车；私下摘要同时评估任务胜率和刺杀风险。",
-    "percival": "你要识别并保护梅林，不要报拇指，用车位、票型、纠偏和候选反应分辨真假，不公开摊开两名候选。有人抢跳派西维尔时，先判断是候选挡刀、坏人抢解释权还是忠臣挡刀，再决定反跳或拆线。每次私下摘要说明候选关系如何影响本轮态度；依通用候选规则公开落一个可回应动作，不能只观察或压无关玩家。第二轮还没人开身份线时，用公开车队或票型轻开保护或质疑线。候选领队排掉另一候选时优先追问排除理由；首轮被候选带上车也须回扣。候选因持续纠偏被集火时至少做一层保护性混淆：拆刺杀诱导、争取可解释上车或自己承担视角嫌疑；不要把另一个候选推成靶子，也不要公开绑定两人。",
-    "loyal_servant": "你没有隐藏阵营信息，通过公开车队、票型、任务结果和言行矛盾建立信任链。主动争车位和逼解释；需要保护疑似梅林、反压假派西维尔或争候选解释权时，可借派西维尔姿态、轻开身份线或挡刀，但不能把猜测说成验人。",
-    "assassin": "伪装可信好人，利用假派西维尔姿态、反跳或车队争议逼真派西维尔或挡刀忠臣表态，区分持续纠偏的梅林、围绕候选保护的派西维尔和强势忠臣。不要中立复读，可假保护被排除者、拆保护线或转移归责。支持含坏人的车时，预埋失败后优先压谁、谁承担组队责任或下一轮换谁的叙事。优先争取任务胜利，不为刺杀豪赌放弃关键失败票；终局复盘谁的正确方向难以用公开信息解释。",
-    "morgana": "利用自己在派西维尔眼中是梅林候选的机制，模仿有方向但可否认的好人推理，诱导真派站错线。可假装懂候选关系，或主动开一条假的保护线和错误质疑线；不要只跟问同一排除点，改问谁借此做身份、要求换人或给条件票。支持含坏人的车时预埋失败后优先压谁的叙事，不固定强冲或隐藏。",
-    "mordred": "梅林看不到你，可以积极争取可信车位，伪装好人并利用片面公开逻辑误导共识。观察谁持续纠偏并帮助刺客找梅林；避免与同伴固定绑定，支持坏人车时准备公开归责。",
-    "oberon": "你无法互认其他坏人。按公开记录猜测局势，不假装知道队友；在破坏好人信任时避免乱打潜在同伴。候选叙事触发后，默认借保护或假派西维尔姿态参与争夺，不能只以信息少或先观察退出。",
-    "minion": "伪装可信好人，用公开理由争车位、误导票型和归责。避免和同伴固定绑定，必要时可牺牲同伴换关键任务优势；支持含坏人的车时预埋失败后优先压谁或下轮换谁的叙事，不固定每次出失败。",
-    "tristan": "你和伊索尔德互相确认好人，但关系必须保密。分头建立可信度和独立判断，不固定绑定车队或票型；保护搭档时用公开事实拆疑点，避免互信关系成为坏人的识别线索。",
-    "isolde": "你和崔斯坦互相确认好人，但关系必须保密。分头建立可信度和独立判断，不固定绑定车队或票型；保护搭档时用公开事实拆疑点，避免互信关系成为坏人的识别线索。",
-    "default": "围绕当前身份目标，用公开依据推进局势，选择有利的身份姿态。"
+    "merlin": {
+      "file": "prompts/roles/merlin/gameplay.md"
+    },
+    "percival": {
+      "file": "prompts/roles/percival/gameplay.md"
+    },
+    "loyal_servant": {
+      "file": "prompts/roles/loyal_servant/gameplay.md"
+    },
+    "assassin": {
+      "file": "prompts/roles/assassin/gameplay.md"
+    },
+    "morgana": {
+      "file": "prompts/roles/morgana/gameplay.md"
+    },
+    "mordred": {
+      "file": "prompts/roles/mordred/gameplay.md"
+    },
+    "oberon": {
+      "file": "prompts/roles/oberon/gameplay.md"
+    },
+    "minion": {
+      "file": "prompts/roles/minion/gameplay.md"
+    },
+    "tristan": {
+      "file": "prompts/roles/tristan/gameplay.md"
+    },
+    "isolde": {
+      "file": "prompts/roles/isolde/gameplay.md"
+    },
+    "default": {
+      "file": "prompts/roles/default/gameplay.md"
+    }
   },
   "role_strategy_tips": {
-    "merlin": "前期可以战略性低调，等公开信息积累后再顺势引导。逐步把好人带向真相，不要一次点穿所有坏人，也不要让组队、投票和发言长期呈现同一条精准排雷线。优先用问题和车队建议让别人跟上你的方向；当你必须反对某队时，给出至少一个公开理由和一个替代车队，但不要连续给出只有梅林才敢给的全好替代车。非决胜轮可以保留可解释的不完美：跟随一部分公开共识、扶持其他好人领队、把正确方向伪装成试车或压票，或放进一个公开记录较强的争议位来降低梅林感，而不是每次自己提交私下最优车。每次私下判断都要同时评估任务胜率和刺杀暴露风险，不要只写“因为我知道谁是坏人所以避开”。支持其他好人的正确建议，有时比自己强行带队更安全。",
-    "percival": "制造模糊性；有时表现犹豫、散布有限怀疑或不把话说死，反而能保护梅林。用投票模式、车位诉求和问题方向表达你对候选的判断，而不是公开解释候选关系。如果真梅林候选被全桌追打，不要简单跟着质疑；至少做一层缓冲：提出另一个候选也有解释权、提醒坏人可能在诱导刺杀、替候选争取一次可解释上车，或把自己放进疑似有视角的位置吸刀。终局如果你已获得信任，可以主动承担部分嫌疑，为梅林挡刺杀视线；但挡刀前要确认这样不会破坏当前任务共识。",
-    "loyal_servant": "在积极参与和保持观察之间找平衡；太激进可能成为坏人目标，太被动会让坏人主导讨论。每次发言至少推进一个具体问题：谁该上车、谁该下车、谁的票型矛盾、谁的身份叙事不能自洽。需要保护疑似梅林或争夺解释权时，可以短暂借派西维尔姿态挡刀或反压坏人，但要用公开逻辑包装，不要把猜测包装成验人。",
-    "assassin": "利用发言、反跳、质疑身份和车队争议逼出梅林线索。你可以用假派西维尔姿态追问候选关系，迫使真派西维尔、梅林或挡刀忠臣表态。区分梅林、派西维尔和强势忠臣：梅林更可能持续稳定纠偏，派西维尔更可能围绕两个候选犹豫或保护，忠臣通常缺少长期精准方向。任务胜利路径优先于刺杀豪赌：如果当前任务可用失败票直接阻止好人第三次成功，先评估出失败。刺杀前复盘全局组队、票型、任务纠偏、身份宣称、挡刀行为和谁被持续保护，选择最像梅林的目标。",
-    "morgana": "强调合理否认，给出有方向的判断，但不要把话说得像直接验人。被关注时巧妙转移怀疑。模仿梅林对好人胜利的关心，表面上帮助好人，实际把车队和共识带向失败。通过提问迫使他人暴露身份和策略，让派西维尔愿意把你当成真梅林候选或至少不敢轻易排除你。",
-    "mordred": "制造让好人困惑的讨论方向，用虚假信息或片面逻辑把他们带离真相。假装和好人结盟以获得信任，再操控局势。你可以比其他坏人更主动争取可信位置，但仍要保持可否认空间。注意识别梅林，帮助刺客在终局完成刺杀。",
-    "oberon": "持续破坏好人之间的信任，但避免乱打潜在队友。保持玩法不可预测，不要形成固定模式。倾听线索，其他坏人可能会无意暴露自己。避免过度活跃引起怀疑，把影响力用在关键车队、关键投票和关键任务行动上。",
-    "minion": "被怀疑时转移注意力，不要让自己太突出。用公开信息支撑你的辩护，但不要显得过度用力。坏人不要总在同一车队或同一票型上绑定。必要时可以牺牲一名坏人队友换取信任，尤其当这样能让坏人在关键任务中占据优势。任务失败后要准备解释票型、车队责任和为什么某个好人也可能被误判。",
-    "tristan": "和伊索尔德从不同角度收集信息，各自建立独立可信度。协调但不要显得串通。若伊索尔德被错误集火，可以用公开事实拆解疑点并转移注意力。准备应急方案：即使一方暴露，另一方也要继续推进好人胜利。谨慎使用互信优势，不要把关系变成坏人识别线索。",
-    "isolde": "和崔斯坦从不同角度收集信息，各自建立独立可信度。协调但不要显得串通。若崔斯坦被错误集火，可以用公开事实拆解疑点并转移注意力。准备应急方案：即使一方暴露，另一方也要继续推进好人胜利。谨慎使用互信优势，不要把关系变成坏人识别线索。",
-    "default": "结合公开记录和身份目标行动；不要形成每局固定套路。"
+    "merlin": {
+      "file": "prompts/roles/merlin/strategy.md"
+    },
+    "percival": {
+      "file": "prompts/roles/percival/strategy.md"
+    },
+    "loyal_servant": {
+      "file": "prompts/roles/loyal_servant/strategy.md"
+    },
+    "assassin": {
+      "file": "prompts/roles/assassin/strategy.md"
+    },
+    "morgana": {
+      "file": "prompts/roles/morgana/strategy.md"
+    },
+    "mordred": {
+      "file": "prompts/roles/mordred/strategy.md"
+    },
+    "oberon": {
+      "file": "prompts/roles/oberon/strategy.md"
+    },
+    "minion": {
+      "file": "prompts/roles/minion/strategy.md"
+    },
+    "tristan": {
+      "file": "prompts/roles/tristan/strategy.md"
+    },
+    "isolde": {
+      "file": "prompts/roles/isolde/strategy.md"
+    },
+    "default": {
+      "file": "prompts/roles/default/strategy.md"
+    }
   },
   "role_tip_detail": {
     "enabled": false,
@@ -187,52 +271,84 @@
   "action_prompts": {
     "propose_team": {
       "lines": [
-        "领队默认考虑自己上车；不带自己时说明可信理由。",
-        "说明车队的局势目标、带谁及原因、暂时不带谁、失败先问谁；首轮也必须点名成员或被排除者，带条件、风险或责任顺序，不停在抽象试车。",
-        "车队必须能由公开发言、票型、任务结果、上轮结构或场上共识解释；私有最优车缺少公开依据时，选更自然可辩护的方案。拥有隐藏信息时，私下摘要还要评估过于精准造成的暴露风险。"
+        {
+          "file": "prompts/actions/propose_team/01-self-inclusion.md"
+        },
+        {
+          "file": "prompts/actions/propose_team/02-team-rationale.md"
+        },
+        {
+          "file": "prompts/actions/propose_team/03-public-justification.md"
+        }
       ],
       "json": "{\"team\":[\"player_id\"],\"public_message\":\"公开说明组队理由\",\"private_reason_summary\":\"简要说明你的判断依据\"}"
     },
     "speak": {
       "lines": [
-        "说明想上车还是希望谁下车，至少推进一件具体桌面动作。首轮也要点名车队成员、被排除者或替代车位，并给出条件、风险或失败责任，不能只表态支持或积累信息。",
-        "无人开身份线时不要硬造；第二轮起，只有派西维尔、莫甘娜、正在借派西维尔姿态，或已有公开车队、票型、任务结果、保排动作可包装时，才轻开保护或质疑线，不直接说候选身份。",
-        "首轮被候选领队带上车、看到他排掉另一候选或公开选择信任候选时，也要追问一个可公开解释的问题：为什么带你、为什么排人或失败先问谁，不能只说信任和配合。"
+        {
+          "file": "prompts/actions/speak/01-table-action.md"
+        },
+        {
+          "file": "prompts/actions/speak/02-identity-triggers.md"
+        },
+        {
+          "file": "prompts/actions/speak/03-candidate-feedback.md"
+        }
       ],
       "json": "{\"public_message\":\"你要公开说出的一段中文发言\",\"private_reason_summary\":\"简要说明你的判断依据\"}"
     },
     "vote": {
       "lines": [
-        "结合车队、发言、身份叙事、任务结果和否决压力选择 approve 或 reject。最近公开支持默认赞成，公开反对默认反对；仅出现新的公开信息、任务压力或身份叙事变化时改票，并在私下摘要解释。",
-        "私下摘要说明这票在推进共识、施压、保护还是获取信息；涉及候选或对跳时，说明站哪条线、拆哪条线或逼谁解释。"
+        {
+          "file": "prompts/actions/vote/01-vote-consistency.md"
+        },
+        {
+          "file": "prompts/actions/vote/02-vote-purpose.md"
+        }
       ],
       "json": "{\"vote\":\"approve|reject\",\"private_reason_summary\":\"简要说明你的判断依据\"}"
     },
     "mission_action": {
       "lines": [
-        "坏人根据任务压力、车队嫌疑、同伴暴露和后续叙事选择成功或失败，不形成固定出刀模式。",
-        "好人已有两次任务成功、当前失败能阻止第三次成功且车上坏人足以达到失败票要求时，默认优先出失败；只有私下摘要说明刺杀胜率明显更高时才选择成功隐藏。"
+        {
+          "file": "prompts/actions/mission_action/01-strategic-choice.md"
+        },
+        {
+          "file": "prompts/actions/mission_action/02-critical-failure.md"
+        }
       ],
       "json": "{\"mission_action\":\"{mission_actions}\",\"private_reason_summary\":\"简要说明你的任务行动依据\"}"
     },
     "assassinate": {
       "lines": [
-        "现在轮到你选择刺杀目标。",
-        "结合全局发言、跳身份、挡刀和任务纠偏记录，判断谁最像梅林。",
-        "重点复盘谁持续纠偏、谁被他人保护、谁像派西维尔、谁像强势忠臣挡刀，以及谁的正确判断最难用公开信息解释。",
-        "候选排序要能排除至少两个其他目标：说明为什么他们更像派西维尔、挡刀忠臣、被误导好人或坏人队友，而不是梅林。"
+        {
+          "file": "prompts/actions/assassinate/01-select-target.md"
+        },
+        {
+          "file": "prompts/actions/assassinate/02-global-evidence.md"
+        },
+        {
+          "file": "prompts/actions/assassinate/03-role-comparison.md"
+        },
+        {
+          "file": "prompts/actions/assassinate/04-candidate-elimination.md"
+        }
       ],
       "json": "{\"target_player_id\":\"player_id\",\"candidate_ranking\":[\"player_id\"],\"private_reason_summary\":\"简要说明谁最像梅林\"}"
     },
     "use_lady_of_lake": {
       "lines": [
-        "现在轮到你使用湖中仙女。"
+        {
+          "file": "prompts/actions/use_lady_of_lake/01-select-target.md"
+        }
       ],
       "json": "{\"target_player_id\":\"player_id\",\"private_reason_summary\":\"简要说明你想查验该玩家的原因\"}"
     },
     "none": {
       "lines": [
-        "当前没有可执行动作。"
+        {
+          "file": "prompts/actions/none/01-no-action.md"
+        }
       ],
       "json": "{}"
     }

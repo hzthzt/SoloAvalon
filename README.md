@@ -51,10 +51,13 @@ backend/app/llm/         OpenAI-compatible provider 和模型配置类型
 backend/app/storage/     SQLite schema、对局仓储和文件型模型配置仓储
 backend/app/services/    对局编排、规则单步、事务提交、恢复、事件过滤与通知
 backend/app/api/         FastAPI 路由适配器和请求模型
+config.example/prompts/  Markdown 提示词正文（系统、角色、行动）
 frontend/src/            React UI、API client、样式
 tests/                   按后端层级组织的 unittest
 docs/                    架构说明和 Superpowers 规格/计划
 ```
+
+提示词正文在 `config.example/prompts/` 中按文本项分别维护，每段一个 Markdown 文件；`config.example/prompt_templates.json` 保留文件引用及其顺序、结构化配置和 JSON 输出契约。文件格式与维护方法见[提示词说明](docs/prompting.md)。
 
 ## 一键启动
 

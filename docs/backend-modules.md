@@ -67,7 +67,7 @@ flowchart TD
 
 `game/models.py` 定义领域状态和玩家视角；`game/rules.py` 是唯一规则裁判；`game/events.py` 构造开局事件。支持 5-10 人标准局、8-10 人湖女和 9-10 人 Tristan / Isolde。动作来源不提供规则豁免，善方任务固定成功也经过同一规则执行和提交路径。
 
-`ai/context.py` 使用合法私有视角及过滤后的公开历史构建上下文；`prompting/templates.py` 输出稳定规则前缀、玩家视角、动作格式、活动日志、本次行动五段消息。配置由 `SOLOAVALON_PROMPT_CONFIG` 或 `config.example/prompt_templates.json` 读取。`ai/player.py` 解析回答并返回 `AiTurnResult`，最终失败抛出带审计上下文的 `AiDecisionError`；没有确定性 fallback。
+`ai/context.py` 使用合法私有视角及过滤后的公开历史构建上下文；`prompting/templates.py` 输出稳定规则前缀、玩家视角、动作格式、活动日志、本次行动五段消息。配置由 `SOLOAVALON_PROMPT_CONFIG` 或 `config.example/prompt_templates.json` 读取，系统要求、角色说明与策略、行动说明从相对于配置文件的 Markdown 引用加载，默认正文位于 `config.example/prompts/`，每个文本项一个文件。加载器读取每个文件全文，列表顺序由 JSON 引用顺序决定，不再解析 Markdown 分节。JSON 保留结构化配置及输出契约，原有内联 JSON 配置仍可读取。`ai/player.py` 解析回答并返回 `AiTurnResult`，最终失败抛出带审计上下文的 `AiDecisionError`；没有确定性 fallback。
 
 `llm/provider.py` 使用 OpenAI Python SDK，支持自定义 API 前缀和兼容完整 `/chat/completions` 地址。结果统一为 `LlmCompletionResult`，包含文本及可选 Token、缓存用量。SDK 自带重试关闭，项目只对明确捕获的超时和空回答执行 `transport_retries`；输出解析或决策校验失败由 `AiPlayer` 的 `parse_retries` 控制，不对任意网络或 HTTP 错误重试。
 

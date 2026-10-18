@@ -161,7 +161,7 @@ stateDiagram-v2
 
 `transport_retries` 只重试明确超时和空回答，`parse_retries` 处理解析或决策格式错误，默认各 5 次额外尝试。SDK 自带网络／状态码重试关闭。旧 `timeout_retries` 分别填补缺失的新字段；保存时只写新字段。推理参数使用 `reasoning_effort`，旧 `temperature` 被忽略。
 
-配置路径：模型使用 `SOLOAVALON_LLM_CONFIG` 或 `config/llm_profiles.json`；Prompt 使用 `SOLOAVALON_PROMPT_CONFIG` 或 `config.example/prompt_templates.json`。文件修改进程内串行，用临时文件替换保存。SQLite 不保存 API Key，公开配置仅提供脱敏值，编辑时留空保留旧 key。
+配置路径：模型使用 `SOLOAVALON_LLM_CONFIG` 或 `config/llm_profiles.json`；Prompt 使用 `SOLOAVALON_PROMPT_CONFIG` 或 `config.example/prompt_templates.json`，每个正文文本项由 JSON 单独引用一个 Markdown 文件，路径相对于该配置文件，默认位于 `config.example/prompts/`。JSON 保留引用顺序、结构化配置与输出契约。模型配置文件修改进程内串行，用临时文件替换保存。SQLite 不保存 API Key，公开配置仅提供脱敏值，编辑时留空保留旧 key。
 
 ## 6. 数据存储与事务
 
